@@ -8,6 +8,7 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+. "$here/_github_fixture.sh"
 echo "help"
 check "help lists every skill" sh -c "for s in \$(ls '$P/skills'); do '$P/scripts/help.sh' | grep -q \"^| \$s |\" || exit 1; done"
 check "help <skill> shows one" sh -c "'$P/scripts/help.sh' gate | grep -q '/flow:gate'"
@@ -43,7 +44,7 @@ echo "sweep"
 # The fake gh answers pr view with the PR in its state file, whatever the URL. One pool
 # worktree is free here, so each case claims it in turn.
 fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":sys.argv[4],"headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2" "${3:-}"; }
-commit_in() { printf '%s\n' "$2" > "$1/$2.txt" && git -C "$1" add -- "$2.txt" && git -C "$1" commit -qm "$2" && git -C "$1" rev-parse HEAD; }
+. "$here/_worktree_helpers.sh"
 sc="$("$P/adapters/local/create.sh" task "Closed, claimed")"; wc_="$("$P/scripts/steward.sh" claim "$sc")"
 "$P/adapters/local/close.sh" "$sc" >/dev/null
 check "sweep --dry-run: names the closed item's worktree and touches nothing" sh -c "'$P/scripts/steward.sh' sweep --dry-run | grep -q '$sc: would release' && [ -f '$wc_/.flow/claim.json' ]"

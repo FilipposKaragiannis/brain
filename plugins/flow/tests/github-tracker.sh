@@ -9,6 +9,7 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+. "$here/_github_fixture.sh"
 echo "github blips (fake gh)"
 # $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.
 export FLOW_GH_RETRY_WAIT="0 0"
@@ -315,7 +316,7 @@ check "reviewers: codex and claude when reviews.reviewers is unset" [ "$("$P/scr
 printf 'reviews:\n  reviewers: [codex, copilot]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
 check "reviewers: the config list, inline" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex copilot " ]
 "$P/scripts/comments.sh" request-review 91 "please review the diff. @claude <!-- flow:chase codex -->" >/dev/null
-pr_field() { python3 -c "import json,sys; print(json.dumps(json.load(open('$FAKE_GH_DIR/issues.json'))['pr'].get(sys.argv[1])))" "$1"; }
+. "$here/_review_fixture.sh"
 check "request-review: codex gets one mention comment with the request marker" sh -c "python3 -c \"import json,sys; c=[b for b in json.loads(sys.argv[1]) if 'flow:review-request codex' in b]; assert len(c)==1 and c[0].startswith('@codex please review the diff.'), c\" '$(pr_field comments)'"
 check "request-review: copilot is asked through the reviewers API" [ "$(pr_field reviewers)" = '["@copilot"]' ]
 check "request-review: a reviewer not in the list is not asked" sh -c "! printf '%s' '$(pr_field comments)' | grep -q '@claude'"
@@ -331,7 +332,6 @@ check "reviewers --host claude: the claude list of the map" [ "$("$P/scripts/com
 check "reviewers --host codex: the codex list of the map, in block form" [ "$("$P/scripts/comments.sh" reviewers --host codex | tr '\n' ' ')" = "mona " ]
 check "reviewers with no host: the default list of the map" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "hubot " ]
 check "reviewers --host: a host other than claude or codex is refused" sh -c "! '$P/scripts/comments.sh' reviewers --host shell"
-asked() { python3 -c "import json,re; print(' '.join(re.findall(r'flow:review-request (\S+) -->', ' '.join(json.load(open('$FAKE_GH_DIR/issues.json'))['pr'].get('comments', [])))))"; }
 pr_as() { python3 -c "import json,sys; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName=sys.argv[1], body=sys.argv[2], comments=[]); json.dump(d, open(p,'w'))" "$1" "$2"; }
 claude_footer="Adds the slide.
 
@@ -359,30 +359,6 @@ check "reviewers --host codex: a map with no codex list and no default gets code
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [octo-cat]\n' >> .flow/config.yaml
 check "reviewers --host claude: a plain list is the list of every host" [ "$("$P/scripts/comments.sh" reviewers --host claude | tr '\n' ' ')" = "octo-cat " ]
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
-seed() { # seed <request age s> <codex status> <+1 count> [chase|reply <body>|lookalike]: one request by the owner and the Codex summary
-  python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY2'
-import json, sys, time
-p, age, status, plus, extra = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), sys.argv[5:]
-iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
-asked = time.time() - age
-owner, codex = {"login": "owner", "type": "User"}, {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}
-d = json.load(open(p)); pr = d["pr"]; pr["headRefOid"] = "abc1234def5678"; pr["comments"] = []; pr["reviews"] = []
-state = '{"code_review":{"commit_sha":"abc1234def5678","status":"%s"}}' % status
-pr["rest_comments"] = [{"id": 7, "user": owner, "body": "@codex please review", "created_at": iso(asked), "updated_at": iso(asked), "reactions": {"+1": plus}},
-                       {"id": 8, "user": codex, "created_at": iso(asked - 3600), "updated_at": iso(asked + 5),
-                        "body": "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 %s -->" % state, "reactions": {}}]
-later = lambda user, body: {"id": 9, "user": user, "body": body, "created_at": iso(asked + 1), "updated_at": iso(asked + 1), "reactions": {}}
-if extra[:1] == ["chase"]:
-    pr["rest_comments"].append(later(owner, "@codex review\n\n<!-- flow:chase codex -->"))
-elif extra[:1] == ["reply"]:
-    pr["rest_comments"].append(later(codex, extra[1]))
-elif extra[:1] == ["lookalike"]:
-    pr["rest_comments"].append(later({"login": "xcodex", "type": "User"}, "Looks good to me."))
-json.dump(d, open(p, "w"))
-PY2
-}
-posted() { python3 -c "import json; print(len(json.load(open('$FAKE_GH_DIR/issues.json'))['pr']['comments']))"; }
-answered() { "$P/scripts/comments.sh" reviews 91 | python3 -c "import json,sys; print(json.loads(sys.stdin.readline())['answered'])"; }
 seed 7200 running 0
 check "reviews: a Codex summary still running is no answer" [ "$(answered)" = False ]
 check "reviews: the wait counts from the request" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"waiting\": 72[0-9][0-9], \"chases\": 0'"

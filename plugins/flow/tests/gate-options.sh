@@ -9,6 +9,8 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+. "$here/_github_fixture.sh"
+. "$here/_cost_hosts_fixture.sh"
 echo "reserve: the owner's own worktree"
 rroot="$work/reserve"; mkdir -p "$rroot"
 git init -q -b main "$rroot/app" && cd "$rroot/app" || exit 1

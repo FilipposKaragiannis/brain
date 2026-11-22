@@ -9,9 +9,10 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+. "$here/_github_fixture.sh"
+. "$here/_review_fixture.sh"
 echo "jobs (fake hosts)"
-export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"
-for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/$h"; chmod +x "$work/bin/$h"; done
+. "$here/_jobs_fixture.sh"
 "$P/adapters/github/write-state.sh" 'gh#21' step=pr && "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/90
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: runs the skill per open PR from the main worktree when the item holds none" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
@@ -315,8 +316,6 @@ check_all "comments job: a PR skipped for its held lock is named in use in the r
 check "comments job: a lock the run did not take is left to its holder" [ -d ".flow/item:$(item_slug "$par").lock" ]
 rm -rf ".flow/item:$(item_slug "$par").lock"
 check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
-mark_comments_log() { comments_log_mark="$(wc -l < .flow/log/comments.log | tr -d ' ')"; }
-comments_logged_since_mark() { tail -n "+$((comments_log_mark + 1))" .flow/log/comments.log | grep -q "$1"; }
 mark_comments_log; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
 check "WorkersOfZerosOnly_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
 check_all "WorkersOfZerosOnly_StartsNoPass: no pass is addressed on a zero worker count" '! comments_logged_since_mark "addressing "'
@@ -412,7 +411,6 @@ rm -rf .flow/pr:90.lock
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['headRefName']='flow/gh-21'; json.dump(d, open(p,'w'))"
 cap="$("$P/adapters/github/create.sh" task "A PR for the second run")"
 "$P/adapters/github/write-state.sh" "$cap" step=pr >/dev/null && "$P/adapters/github/link-pr.sh" "$cap" https://gh/pull/90 >/dev/null
-POLL_LIMIT=150
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
 printf 'start %s\n' "\$*" >> "$work/runs.log"
@@ -420,9 +418,6 @@ case "\$*" in *"comments gh#21."*) poll_count=0; while [ ! -f "$work/release" ] 
 printf 'end %s\n' "\$*" >> "$work/runs.log"
 EOF
 chmod +x "$work/bin/claude"
-wait_for() { # wait_for <condition...>: polls up to 15 s
-  poll_count=0; while ! "$@" 2>/dev/null && [ "$poll_count" -lt "$POLL_LIMIT" ]; do sleep 0.1; poll_count=$((poll_count + 1)); done
-}
 jobscfg '  comments_workers: 2\n'; bump 2026-10-25T04:20:00Z; rm -f "$work/release"; : > "$work/runs.log"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
 wait_for grep -q '^start .*comments gh#21\.' "$work/runs.log"
@@ -462,7 +457,6 @@ wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
 check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" comments_logged_since_mark 'addressing gh#21'
 # The path names jobs/comments.sh because the job's liveness check matches that in a command line.
-mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
 GUARD_HOLD_SECONDS=2
 "$work/fake/jobs/comments.sh" >/dev/null 2>&1 & live_taker=$!
 bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.999999; : > "$HOST_LOG"
@@ -603,7 +597,6 @@ check "CommentsRunLockOfAPidARestartGaveAway_IsRemoved: a pid that runs somethin
 check "CommentsRunLockOfAPidARestartGaveAway_LeavesThatProcessAlone: only the lock goes" kill -0 "$other"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
-home2="$work/home2"; mkdir -p "$home2"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > "$home2/config.yaml"
 check "next job: a bad jobs.claude.effort stops it before it picks: its steps with no agent run on the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'stopped: exit 2' && grep -q 'jobs.claude.effort is bogus' '$home2/log/next.log'"
 check "next job: a bad jobs.claude.effort is named in the run's status line" sh -c "grep '\"job\":\"next\"' '$home2/log/runs.jsonl' | tail -1 | grep -q 'jobs.claude.effort is bogus'"

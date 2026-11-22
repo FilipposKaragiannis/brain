@@ -8,6 +8,7 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+. "$here/_github_fixture.sh"
 echo "health"
 hroot="$work/health"; mkdir -p "$hroot"
 git init -q --bare "$hroot/origin.git"
@@ -23,7 +24,7 @@ git clone -q "$hroot/origin.git" "$hroot/other" 2>/dev/null
 git -C "$hroot/other" config user.email t@t && git -C "$hroot/other" config user.name t
 hs() { "$P/scripts/steward.sh" health "$@"; }
 hitem() { "$P/adapters/local/create.sh" task "$1" --size S --body "x"; }
-hold() { "$P/scripts/next.sh" "$1" >/dev/null && "$P/scripts/steward.sh" find "$1"; }
+. "$here/_worktree_helpers.sh"
 rec() { printf '%s/.flow/runs/%s.json' "$hroot/app" "$(item_slug "$1")"; }
 age_run() { python3 -c '
 import json, sys, time
@@ -531,10 +532,7 @@ unset FLOW_HEALTH_PROCS
 cd "$repo"
 
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
-plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
-init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
-mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
-codex_rules="$HOME/.codex/rules/flow.rules"   # this repo has no .codex folder, so the user's
+. "$here/_init_fixture.sh"
 check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -qF '	$codex_rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
 check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: the fresh config has an empty model and effort pair per host, and no old jobs.model" sh -c "for k in claude.model claude.effort codex.model codex.effort; do grep -q \"^  \${k%%.*}:\" .flow/config.yaml || exit 1; [ -z \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.\$k)\" ] || exit 1; done; ! grep -q '^  model:' .flow/config.yaml && grep -q 'Empty means the host.s own default' .flow/config.yaml"

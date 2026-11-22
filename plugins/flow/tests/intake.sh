@@ -8,6 +8,8 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+. "$here/_github_fixture.sh"
+. "$here/_jobs_fixture.sh"
 echo "intake (fake hosts)"
 cat > "$work/notes.md" <<'MD'
 # Notes:
