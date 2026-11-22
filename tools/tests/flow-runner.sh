@@ -30,180 +30,7 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
-stop_grace_seconds=2; stop_margin_seconds=3; cleanup_seconds=1; signal_exit_base=128
-cat > "$suite/sessions.sh" <<STUB
-trap '' TERM
-echo "  ok   Stub_DeafToTerm"
-echo \$\$ > "$work/deaf-suite"
-: > "$work/deaf-suite-ready"
-sleep $child_seconds
-STUB
-cat > "$suite/base-claim.sh" <<STUB
-sh -c 'trap "" TERM; echo \$\$ > "$work/deaf-descendant"; : > "$work/deaf-descendant-ready"; exec sleep $child_seconds' &
-sleep $child_seconds
-STUB
-cat > "$suite/verify-scope.sh" <<STUB
-(trap 'sleep $cleanup_seconds; echo cleaned > "$work/cleanup"; exit 0' TERM; : > "$work/cleaning-suite-ready"; sleep $child_seconds) &
-sleep $child_seconds
-STUB
-all_ready() { for ready in deaf-suite-ready deaf-descendant-ready cleaning-suite-ready; do [ -f "$work/$ready" ] || return 1; done; }
-FLOW_SUITE_STOP_GRACE_SECONDS="$stop_grace_seconds" python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 &
-runner=$!
-ticks=0; until all_ready || [ "$ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
-kill -TERM "$runner"; stop_sent_at="$(date +%s)"
-runner_state="$(process_state "$runner")"; runner_seconds="$(($(date +%s) - stop_sent_at))"
-if wait "$runner"; then runner_code=0; else runner_code=$?; fi
-expect 'RunnerGivenTermWhileASuiteIgnoresTerm_EndsWithinTheGraceTime because a suite deaf to TERM must not hold up cancellation' "$(if [ "$runner_state" = ended ] && [ "$runner_seconds" -le "$((stop_grace_seconds + stop_margin_seconds))" ]; then echo within-grace; else echo "$runner_state after ${runner_seconds}s"; fi)" within-grace
-expect 'RunnerGivenTermWhileASuiteIgnoresTerm_EndsThatSuite because a stopped run leaves no suite behind' "$(process_state "$(cat "$work/deaf-suite")")" ended
-expect 'RunnerGivenTermWhileADescendantIgnoresTerm_EndsThatDescendant because a stopped run leaves no check behind' "$(process_state "$(cat "$work/deaf-descendant")")" ended
-expect 'RunnerGivenTermWhileASuiteIgnoresTerm_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see the run was stopped' "$runner_code" "$((signal_exit_base + $(kill -l TERM)))"
-expect 'RunnerGivenTermWhileASuiteIgnoresTerm_NamesThatSuiteAsStopped because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
-expect 'RunnerGivenTermWhileASuiteCleansUp_LetsItFinishItsCleanup because the grace time lasts until the whole group is gone' "$(cat "$work/cleanup" 2>/dev/null)" cleaned
-rm "$work/deaf-suite" "$work/deaf-suite-ready" "$work/deaf-descendant" "$work/deaf-descendant-ready" "$work/cleaning-suite-ready" "$work/cleanup"
-git restore plugins/flow/tests/sessions.sh plugins/flow/tests/base-claim.sh plugins/flow/tests/verify-scope.sh
-later_signal_seconds=3; many_stop_grace_seconds=4; one_grace_margin_seconds=2; late_start_grace_seconds=5; ticks_per_second=10
-verify_stop_grace_seconds="$(FLOW_PLUGIN="$root/plugins/flow"; . "$root/plugins/flow/lib/verify.sh"; echo "$VERIFY_STOP_GRACE")"
-write_deaf_suites() {
-  for deaf_name in sessions base-claim verify-scope; do
-    cat > "$suite/$deaf_name.sh" <<STUB
-trap '' TERM
-echo \$\$ > "$work/deaf-$deaf_name"
-: > "$work/deaf-$deaf_name-ready"
-sleep $child_seconds
-STUB
-  done
-}
-all_deaf_ready() { for deaf_name in sessions base-claim verify-scope; do [ -f "$work/deaf-$deaf_name-ready" ] || return 1; done; }
-deaf_states() { for deaf_name in sessions base-claim verify-scope; do process_state "$(cat "$work/deaf-$deaf_name")"; done | tr '\n' ' ' | sed 's/ $//'; }
-stop_runner_of_deaf_suites() {
-  write_deaf_suites
-  env ${1:+"FLOW_SUITE_STOP_GRACE_SECONDS=$1"} python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 &
-  deaf_runner=$!
-  deaf_ready_ticks=0; until all_deaf_ready || [ "$deaf_ready_ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; deaf_ready_ticks=$((deaf_ready_ticks + 1)); done
-  kill -"$2" "$deaf_runner"; deaf_stop_sent_at="$(date +%s)"; shift 2
-  if [ "$#" -gt 0 ]; then sleep "$later_signal_seconds"; for deaf_later_signal in "$@"; do kill -"$deaf_later_signal" "$deaf_runner" 2> /dev/null || true; done; fi
-  deaf_end_ticks=0; while process_running "$deaf_runner" && [ "$deaf_end_ticks" -lt "$((verify_stop_grace_seconds * ticks_per_second))" ]; do sleep "$poll_seconds"; deaf_end_ticks=$((deaf_end_ticks + 1)); done
-  deaf_runner_state="$(process_state "$deaf_runner")"; deaf_runner_seconds="$(($(date +%s) - deaf_stop_sent_at))"
-  if wait "$deaf_runner"; then deaf_runner_code=0; else deaf_runner_code=$?; fi
-}
-forget_deaf_suites() { for deaf_name in sessions base-claim verify-scope; do rm "$work/deaf-$deaf_name" "$work/deaf-$deaf_name-ready"; done; git restore plugins/flow/tests/sessions.sh plugins/flow/tests/base-claim.sh plugins/flow/tests/verify-scope.sh; }
-within_one_grace() { if [ "$deaf_runner_state" = ended ] && [ "$deaf_runner_seconds" -le "$((many_stop_grace_seconds + one_grace_margin_seconds))" ]; then echo within-grace; else echo "$deaf_runner_state after ${deaf_runner_seconds}s"; fi; }
-stop_runner_of_deaf_suites "$many_stop_grace_seconds" INT
-expect 'RunnerGivenIntWhileSeveralSuitesIgnoreTerm_EndsWithinOneGraceTime because all running suites share one grace time and not one each' "$(within_one_grace)" within-grace
-expect 'RunnerGivenIntWhileSeveralSuitesIgnoreTerm_EndsEverySuite because a stopped run leaves no suite behind' "$(deaf_states)" 'ended ended ended'
-expect 'RunnerGivenIntWhileSeveralSuitesIgnoreTerm_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see which signal stopped the run' "$deaf_runner_code" "$((signal_exit_base + $(kill -l INT)))"
-forget_deaf_suites
-stop_runner_of_deaf_suites "$many_stop_grace_seconds" HUP TERM INT
-expect 'RunnerGivenHupThenMoreSignalsLateInTheGrace_EndsWithinOneGraceTime because a later signal must not restart or lengthen the wait' "$(within_one_grace)" within-grace
-expect 'RunnerGivenHupThenMoreSignalsLateInTheGrace_ExitsWith128PlusTheFirstSignalNumber because a later signal must not stop the run a second time' "$deaf_runner_code" "$((signal_exit_base + $(kill -l HUP)))"
-expect 'RunnerGivenHupThenMoreSignalsLateInTheGrace_PrintsNoTraceback because a signal must not raise from inside the handler' "$(grep -c Traceback "$work/output")" 0
-expect 'RunnerGivenHupThenMoreSignalsLateInTheGrace_EndsEverySuite because a stopped run leaves no suite behind' "$(deaf_states)" 'ended ended ended'
-forget_deaf_suites
-stop_runner_of_deaf_suites '' TERM
-expect 'RunnerGivenTermWithTheDefaultGrace_EndsBeforeVerifyKillsIt because verify kills only the runner and each suite runs in a session of its own' "$(if [ "$deaf_runner_state" = ended ] && [ "$deaf_runner_seconds" -lt "$verify_stop_grace_seconds" ]; then echo before-verify; else echo "$deaf_runner_state after ${deaf_runner_seconds}s"; fi)" before-verify
-expect 'RunnerGivenTermWithTheDefaultGrace_EndsEverySuite because a stopped run leaves no suite behind' "$(deaf_states)" 'ended ended ended'
-forget_deaf_suites
-cat > "$work/late-start-runner.py" <<'PY'
-import signal
-import sys
-import threading
-import time
-from pathlib import Path
-sys.path.append(sys.argv[1])
-import flow_clock
-import flow_process_groups
-import flow_selection
-import flow_suites
-
-AWAIT_LIMIT_SECONDS = 30
-LATE_START_LINE = "flow: late started"
-
-
-class ClockThatTellsWhenTheStopIsUnderWay:
-    def __init__(self) -> None:
-        self.stop_under_way = threading.Event()
-
-    def now(self) -> flow_clock.Instant:
-        if threading.current_thread() is threading.main_thread():
-            self.stop_under_way.set()
-        return flow_clock.Instant(time.monotonic())
-
-    def sleep(self, duration: flow_clock.Duration) -> None:
-        time.sleep(duration.seconds)
-
-
-class OutputThatStopsTheRunAsTheLateSuiteStarts:
-    def __init__(self, output, stop_under_way: threading.Event) -> None:
-        self.output = output
-        self.buffer = output.buffer
-        self.stop_under_way = stop_under_way
-
-    def write(self, text: str) -> int:
-        self.output.write(text)
-        if text == LATE_START_LINE:
-            self.output.flush()
-            signal.pthread_kill(threading.main_thread().ident, signal.SIGTERM)
-            self.stop_under_way.wait(AWAIT_LIMIT_SECONDS)
-        return len(text)
-
-    def flush(self) -> None:
-        self.output.flush()
-
-
-first_script, late_script, logs, grace = sys.argv[2:]
-clock = ClockThatTellsWhenTheStopIsUnderWay()
-sys.stdout = OutputThatStopsTheRunAsTheLateSuiteStarts(sys.stdout, clock.stop_under_way)
-settings = flow_suites.settings_from({"FLOW_SUITE_LANES": "1", "FLOW_SUITE_STOP_GRACE_SECONDS": grace}, clock, flow_process_groups.PROCESS_TABLE)
-suites = {flow_selection.SuiteName("first"): flow_selection.SuiteCommand(Path(first_script), None), flow_selection.SuiteName("late"): flow_selection.SuiteCommand(Path(late_script), None)}
-sys.exit(flow_suites.report_run(flow_suites.run_selected(suites, flow_suites.SuiteLogs(Path(logs)), settings)))
-PY
-printf 'sleep %s\n' "$lane_hold_seconds" > "$work/first-suite.sh"
-printf 'trap "" TERM\necho $$ > "%s"\nsleep %s\n' "$work/late-suite" "$child_seconds" > "$work/late-suite.sh"
-mkdir "$work/late-logs"
-python3 -I -B "$work/late-start-runner.py" "$project/tools/lib" "$work/first-suite.sh" "$work/late-suite.sh" "$work/late-logs" "$late_start_grace_seconds" > "$work/output" 2>&1 &
-late_runner=$!; late_started_at="$(date +%s)"
-late_runner_state="$(process_state "$late_runner")"; late_runner_seconds="$(($(date +%s) - late_started_at))"
-if wait "$late_runner"; then late_runner_code=0; else late_runner_code=$?; fi
-expect 'SuiteALaneStartsAfterTheStop_EndsTheRunWithoutAGraceTime because the runner must not wait on a suite it never let run' "$(if [ "$late_runner_state" = ended ] && [ "$late_runner_seconds" -lt "$((lane_hold_seconds + late_start_grace_seconds))" ]; then echo at-once; else echo "$late_runner_state after ${late_runner_seconds}s"; fi)" at-once
-expect 'SuiteALaneStartsAfterTheStop_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see the run was stopped' "$late_runner_code" "$((signal_exit_base + $(kill -l TERM)))"
-expect 'SuiteALaneStartsAfterTheStop_LeavesNoProcessBehind because a stopped run leaves no suite behind' "$(if [ -f "$work/late-suite" ]; then process_state "$(cat "$work/late-suite")"; else echo ended; fi)" ended
-rm -r "$work/late-start-runner.py" "$work/first-suite.sh" "$work/late-suite.sh" "$work/late-logs"; rm -f "$work/late-suite"
-cat > "$work/early-stop-runner.py" <<'PY'
-import signal
-import sys
-import threading
-from pathlib import Path
-sys.path.append(sys.argv[1])
-import flow_clock
-import flow_process_groups
-import flow_selection
-import flow_suites
-
-start_of_a_thread = threading.Thread.start
-
-
-def start_a_lane_then_stop_the_run(lane: threading.Thread) -> None:
-    start_of_a_thread(lane)
-    signal.raise_signal(signal.SIGTERM)
-
-
-threading.Thread.start = start_a_lane_then_stop_the_run
-early_script, logs = sys.argv[2:]
-settings = flow_suites.settings_from({}, flow_clock.SystemClock(), flow_process_groups.PROCESS_TABLE)
-suites = {flow_selection.SuiteName("early"): flow_selection.SuiteCommand(Path(early_script), None)}
-sys.exit(flow_suites.report_run(flow_suites.run_selected(suites, flow_suites.SuiteLogs(Path(logs)), settings)))
-PY
-printf 'echo $$ > "%s"\nsleep %s\n' "$work/early-suite" "$child_seconds" > "$work/early-suite.sh"
-mkdir "$work/early-logs"
-python3 -I -B "$work/early-stop-runner.py" "$project/tools/lib" "$work/early-suite.sh" "$work/early-logs" > "$work/output" 2>&1 &
-early_runner=$!
-early_runner_state="$(process_state "$early_runner")"
-if wait "$early_runner"; then early_runner_code=0; else early_runner_code=$?; fi
-expect 'RunnerGivenTermWhileItHandsASuiteToALane_Ends because a stop that lands as the suites are handed out must not hang the run' "$early_runner_state" ended
-expect 'RunnerGivenTermWhileItHandsASuiteToALane_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see the run was stopped' "$early_runner_code" "$((signal_exit_base + $(kill -l TERM)))"
-expect 'RunnerGivenTermWhileItHandsASuiteToALane_LeavesNoProcessBehind because a stopped run leaves no suite behind' "$(if [ -f "$work/early-suite" ]; then process_state "$(cat "$work/early-suite")"; else echo ended; fi)" ended
-rm -r "$work/early-stop-runner.py" "$work/early-suite.sh" "$work/early-logs"; rm -f "$work/early-suite"
-limit_seconds=3; default_limit_seconds=1800; grace_seconds=5; stop_bound_seconds=1
+limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=5; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
 sleep $child_seconds &
@@ -346,10 +173,12 @@ cat > "$work/membership.py" <<'PY'
 import sys
 from pathlib import Path
 sys.path.append(sys.argv[1])
+import flow_clock
 import flow_process_groups
 
+LISTING_LIMIT_SECONDS = 10
 reader, group = sys.argv[2], flow_process_groups.ProcessGroupId(int(sys.argv[3]))
-membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group)
+membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group, flow_clock.Duration(LISTING_LIMIT_SECONDS))
 print(membership.value)
 PY
 member_group=77; other_group=88; fake_table="$work/fake-proc"; name_not_utf8="$(printf 'cut\303')"

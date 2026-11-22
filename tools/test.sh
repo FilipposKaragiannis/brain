@@ -76,6 +76,7 @@ for part in $parts; do
       clean tools/tests/lint-baseline.sh || status=1
       clean sh tools/tests/flow-selection.sh || status=1
       clean sh tools/tests/flow-runner.sh || status=1
+      clean sh tools/tests/flow-runner-stop.sh || status=1
       clean sh tools/tests/named-parts.sh || status=1
       clean sh tools/tests/build-workflow.sh || status=1
       clean tools/tests/suite-parity.sh || status=1

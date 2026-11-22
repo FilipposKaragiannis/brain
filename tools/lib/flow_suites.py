@@ -20,14 +20,14 @@ from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
 from flow_clock import Clock, Duration, Ending, SystemClock, ending_within  # noqa: E402
-from flow_process_groups import PROCESS_TABLE, LedGroup, ProcessGroupId, ProcessTable, kill_group, stop_groups  # noqa: E402
+from flow_process_groups import PROCESS_TABLE, LedGroup, ProcessGroupId, ProcessTable, stop_groups  # noqa: E402
+from flow_running_suites import Admitted, RunningSuites  # noqa: E402
 from flow_selection import Checkout, ComparisonBase, SuiteCommand, SuiteName, commands, selection  # noqa: E402
 from flow_shards import WHOLE_RUN, Shard, shard_from, suites_in  # noqa: E402
 
@@ -57,9 +57,6 @@ class SuiteLogs:
     folder: Path
 
 
-_NO_TIME = Duration(0)
-
-
 @dataclass(frozen=True)
 class Settings:
     lanes: LaneCount
@@ -69,52 +66,10 @@ class Settings:
     process_table: ProcessTable
 
 
-class _Admission(Enum):
-    OPEN = "open"
-    CLOSED = "closed"
-
-
-@dataclass(frozen=True)
-class _Admitted:
-    suite: LedGroup
-    time_limit: Duration
-
-
-def _killed_at_once(suite: LedGroup) -> _Admitted:
-    kill_group(suite)
-    return _Admitted(suite, _NO_TIME)
-
-
-class _RunningSuites:
-    def __init__(self) -> None:
-        self._suites: "set[LedGroup]" = set()
-        self._admission = _Admission.OPEN
-        self._lock = threading.RLock()
-
-    @contextmanager
-    def track(self, suite: LedGroup, time_limit: Duration) -> Iterator[_Admitted]:
-        with self._lock:
-            self._suites.add(suite)
-            admitted = _Admitted(suite, time_limit) if self._admission is _Admission.OPEN else _killed_at_once(suite)
-        try:
-            yield admitted
-        finally:
-            with self._lock:
-                self._suites.discard(suite)
-
-    def close(self) -> None:
-        with self._lock:
-            self._admission = _Admission.CLOSED
-
-    def still_running(self) -> "frozenset[LedGroup]":
-        with self._lock:
-            return frozenset(self._suites)
-
-
 @dataclass(frozen=True)
 class _Lanes:
     directory: Path
-    running: _RunningSuites
+    running: RunningSuites
     output: threading.Lock
 
 
@@ -137,7 +92,7 @@ def _stop(suites: "frozenset[LedGroup]", settings: Settings) -> None:
     stop_groups(suites, settings.stop_grace, settings.clock, settings.process_table)
 
 
-def _wait_or_stop_at(admitted: _Admitted, settings: Settings) -> Ending:
+def _wait_or_stop_at(admitted: Admitted, settings: Settings) -> Ending:
     ending = ending_within(lambda: admitted.suite.leader.poll() is not None, admitted.time_limit, settings.clock)
     if ending is Ending.TIMED_OUT:
         _stop(frozenset({admitted.suite}), settings)
@@ -188,33 +143,39 @@ def _stop_running(submitted: "Mapping[Future, SuiteName]", lanes: _Lanes, settin
     _stop(lanes.running.still_running(), settings)
 
 
-def _report_stopped(number: int, unfinished: "set[SuiteName]", lanes: _Lanes) -> None:
-    for name in sorted(name for name in unfinished if (lanes.directory / name.text).exists()):
-        _print_output(name, lanes.directory / name.text)
-        print(f"flow: {name.text} stopped", flush=True)
-    sys.exit(_SIGNAL_EXIT_BASE + number)
+def _report_stopped(unfinished: "set[SuiteName]", lanes: _Lanes) -> None:
+    with lanes.output:
+        for name in sorted(name for name in unfinished if (lanes.directory / name.text).exists()):
+            _print_output(name, lanes.directory / name.text)
+            print(f"flow: {name.text} stopped", flush=True)
 
 
-def _stop_on_signals(submitted: "Mapping[Future, SuiteName]", unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes, settings: Settings) -> None:
-    def stop(number: int, frame: object) -> None:
-        _ignore_further_stop_signals()
-        _stop_running(submitted, lanes, settings)
-        _report_stopped(number, unfinished(), lanes)
+def _exit_on_stop_signal(number: int, frame: object) -> None:
+    _ignore_further_stop_signals()
+    raise SystemExit(_SIGNAL_EXIT_BASE + number)
 
+
+@contextmanager
+def _stopping_on_signal(submitted: "Mapping[Future, SuiteName]", unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes, settings: Settings) -> Iterator[None]:
     for stop_signal in _STOP_SIGNALS:
-        signal.signal(stop_signal, stop)
+        signal.signal(stop_signal, _exit_on_stop_signal)
+    try:
+        yield
+    except SystemExit:
+        _stop_running(submitted, lanes, settings)
+        _report_stopped(unfinished(), lanes)
+        raise
 
 
 def run_selected(suites: "Mapping[SuiteName, SuiteCommand]", logs: SuiteLogs, settings: Settings) -> "frozenset[SuiteName]":
     outcomes = {}
-    running: "dict[Future, SuiteName]" = {}
-    lanes = _Lanes(logs.folder, _RunningSuites(), threading.Lock())
-    with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers:
-        _stop_on_signals(running, lambda: suites.keys() - outcomes.keys(), lanes, settings)
+    submitted: "dict[Future, SuiteName]" = {}
+    lanes = _Lanes(logs.folder, RunningSuites(), threading.Lock())
+    with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers, _stopping_on_signal(submitted, lambda: suites.keys() - outcomes.keys(), lanes, settings):
         for name, command in suites.items():
-            running[workers.submit(_run_suite, name, command, settings, lanes)] = name
-        for finished in as_completed(running):
-            name = running[finished]
+            submitted[workers.submit(_run_suite, name, command, settings, lanes)] = name
+        for finished in as_completed(submitted):
+            name = submitted[finished]
             outcomes[name] = finished.result()
             _report_suite(name, outcomes[name], lanes, settings.time_limit)
     return frozenset(name for name, outcome in outcomes.items() if outcome.failed())

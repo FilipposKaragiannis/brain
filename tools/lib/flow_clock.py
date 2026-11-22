@@ -39,10 +39,13 @@ class Ending(Enum):
 _POLL_INTERVAL = Duration(0.1)
 
 
-def ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> Ending:
-    deadline = clock.now().seconds + limit.seconds
+def ending_by(ended: Callable[[], bool], deadline: Instant, clock: Clock) -> Ending:
     while not ended():
-        if clock.now().seconds >= deadline:
+        if clock.now().seconds >= deadline.seconds:
             return Ending.TIMED_OUT
         clock.sleep(_POLL_INTERVAL)
     return Ending.EXITED
+
+
+def ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> Ending:
+    return ending_by(ended, Instant(clock.now().seconds + limit.seconds), clock)
