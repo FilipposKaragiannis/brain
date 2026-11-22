@@ -350,7 +350,8 @@ python_finding_passes() {
   check "$1: exit 0 and no rule named, because $2 are not turned on yet" passes_without_finding "$code" "$out"
 }
 python_finding_passes "UnannotatedFunction_Passes" "annotation rules" 'import os\n\n\ndef describe(name):\n    return os.name + name\n\n\nprint(describe("x"))\n'
-python_finding_passes "LongLine_Passes" "formatting checks" "import os\n\nprint(os.name, \"$(printf 'x%.0s' $(seq 1 120))\")\n"
+line_longer_than_the_limit=120
+python_finding_passes "LongLine_Passes" "formatting checks" "import os\n\nprint(os.name, \"$(printf "%0${line_longer_than_the_limit}d" 0)\")\n"
 python_finding_passes "TrailingWhitespace_Passes" "formatting checks" 'import os\n\nprint(os.name) \n'
 fresh_linted
 printf '#!/bin/sh\necho $1\n' >> "$linted/plugins/demo/clean.sh"
@@ -375,6 +376,9 @@ unquoted_substitution
 out="$(baseline_check)"; code=$?
 check "FindingReturningAfterUpdate_Fails: exit 1 and the file named, because update lowers the baseline to what was fixed" \
   fails_naming "$code" "$out" SC2046 plugins/demo/clean.sh
+fresh_linted
+out="$(cd "$work" && env -u CI "$python" -I "$root/tools/lib/lint_baseline.py" check "$(basename "$linted")" 2>&1)"; code=$?
+check "RootRelativeToTheWorkingFolder_Passes: exit 0 and no rule named, because a relative ROOT must still lead Ruff to the root's configuration" passes_without_finding "$code" "$out"
 fresh_linted
 out="$("$python" -I "$root/tools/lib/lint_baseline.py" check "$work/no-such-folder" 2>&1)"; code=$?
 check "CheckOnFolderWithoutConfig_Fails: a nonzero exit, because a mistyped root must not pass in silence" [ "$code" -ne 0 ]
@@ -412,16 +416,16 @@ check "LintWithNewRuffFinding_FailsAndNamesFileAndRule: tools/lint.sh exits 1 na
   fails_naming "$code" "$out" F401 plugins/demo/new_finding.py
 check "LintOnTheCommittedTree_Passes: exit 0 and no rule named, because the committed baseline records today's findings" \
   passes_without_finding "$committed_tree_code" "$committed_tree_out"
-real_ruff="$(command -v ruff)"; mkdir -p "$work/other-ruff"
-printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo "ruff 0.0.1"; exit 0; }\nexec "%s" "$@"\n' "$real_ruff" > "$work/other-ruff/ruff"; chmod +x "$work/other-ruff/ruff"
+real_ruff="$(command -v ruff)"; mkdir -p "$work/other-ruff"; unpinned_ruff_version=0.0.1
+printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo "ruff %s"; exit 0; }\nexec "%s" "$@"\n' "$unpinned_ruff_version" "$real_ruff" > "$work/other-ruff/ruff"; chmod +x "$work/other-ruff/ruff"
 fresh_linted
 cp "$root/tools/requirements-lint.txt" "$linted/tools/"
 out="$(baseline_check "PATH=$work/other-ruff:$PATH")"; code=$?
 check "RuffAtAnotherVersionLocally_NotesAndPasses: exit 0 and the installed version named, because a developer's version is a note and not a failure" \
-  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -qF 0.0.1' sh "$code" "$out"
+  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -qF "$3"' sh "$code" "$out" "$unpinned_ruff_version"
 out="$(baseline_check "PATH=$work/other-ruff:$PATH" CI=1)"; code=$?
 check "RuffAtAnotherVersionInCi_Fails: exit 1 and the installed version named, because CI must run the pinned version the baseline came from" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -qF 0.0.1' sh "$code" "$out"
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -qF "$3"' sh "$code" "$out" "$unpinned_ruff_version"
 
 echo "test.sh fails a part named on the command line that cannot run"
 # The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.
