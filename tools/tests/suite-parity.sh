@@ -98,6 +98,18 @@ compare_candidate "$work/moved.log" "$hand/mapping.json"
 check "CompareOfACheckInTheWrongSuite_FailsAndNamesBothSuites: the mapping puts it in core, the candidate in beta" \
   fails_naming "moved: beta: Alpha_Two: the second check (from suite core)"
 
+{ cat "$hand/beta.out"; echo "  ok   Alpha_Two: the second check"; } > "$work/beta-twice.out"
+parity_tool inventory --shape old --log "$hand/old.log" --headers "$hand/old-sections.txt" \
+  --child "beta=$work/beta-twice.out" --output "$work/old-twice.json"
+sed 's/^\[core\]   ok   Alpha_Two/[beta]   ok   Alpha_Two/' "$hand/new-same.log" > "$work/moved-twice.log"
+echo "[beta]   ok   Alpha_Two: the second check" >> "$work/moved-twice.log"
+parity_tool inventory --shape new --log "$work/moved-twice.log" --output "$work/candidate-twice.json"
+parity_tool compare --baseline "$work/old-twice.json" --candidate "$work/candidate-twice.json" \
+  --mapping "$hand/mapping.json" > "$work/compare.out" 2>&1
+compare_code=$?
+check "CompareOfACheckMovedIntoASuiteThatHasItToo_NamesItAsMoved: the copy already there does not hide the move" \
+  fails_naming "moved: beta: Alpha_Two: the second check (from suite core)"
+
 awk '/a repeated check/ && !dropped { dropped = 1; next } { print }' "$hand/new-same.log" > "$work/once.log"
 compare_candidate "$work/once.log" "$hand/mapping.json"
 check "CompareOfARepeatedNameRunOnceLess_FailsByCount: names compare as multisets, so two becoming one is a loss" \

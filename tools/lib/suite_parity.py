@@ -55,23 +55,61 @@ import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from enum import Enum
+from typing import Dict, List, NewType, Optional, Sequence, Set, Tuple, Type, TypeVar
 
 INVENTORY_FORMAT = "flow-parity-inventory/1"
-KIND_SECTION = "section"
-KIND_CHILD = "child"
-KIND_SUITE = "suite"
-UNIT_KINDS = (KIND_SECTION, KIND_CHILD, KIND_SUITE)
-SHAPE_OLD = "old"
-SHAPE_NEW = "new"
-OUTCOME_OK = "ok"
-OUTCOME_FAIL = "FAIL"
-OUTCOME_SKIP = "skip"
-OUTCOMES = (OUTCOME_OK, OUTCOME_FAIL, OUTCOME_SKIP)
-DIFFERENCE_KINDS = ("loss", "addition", "duplicate", "skip", "failure", "moved")
-EXIT_CLEAN = 0
-EXIT_DIFFERENT = 1
-EXIT_BAD_INPUT = 2
+
+
+class UnitKind(str, Enum):
+    SECTION = "section"
+    CHILD = "child"
+    SUITE = "suite"
+
+
+class Shape(str, Enum):
+    OLD = "old"
+    NEW = "new"
+
+
+class Outcome(str, Enum):
+    OK = "ok"
+    FAIL = "FAIL"
+    SKIP = "skip"
+
+
+class DifferenceKind(str, Enum):
+    LOSS = "loss"
+    ADDITION = "addition"
+    DUPLICATE = "duplicate"
+    SKIP = "skip"
+    FAILURE = "failure"
+    MOVED = "moved"
+    UNMAPPED = "unmapped"
+    WRAPPER = "wrapper"
+    STALE = "stale"
+
+
+ALLOWABLE_KINDS = (DifferenceKind.LOSS, DifferenceKind.ADDITION, DifferenceKind.DUPLICATE,
+                   DifferenceKind.SKIP, DifferenceKind.FAILURE, DifferenceKind.MOVED)
+
+MOVABLE_EXCESS_KINDS = (DifferenceKind.ADDITION, DifferenceKind.DUPLICATE)
+
+SuiteName = NewType("SuiteName", str)
+UnitName = NewType("UnitName", str)
+CheckName = NewType("CheckName", str)
+NamePrefix = NewType("NamePrefix", str)
+Location = NewType("Location", str)
+Label = NewType("Label", str)
+Reason = NewType("Reason", str)
+Detail = NewType("Detail", str)
+CheckCount = NewType("CheckCount", int)
+SuiteCount = NewType("SuiteCount", int)
+ExitCode = NewType("ExitCode", int)
+
+EXIT_CLEAN = ExitCode(0)
+EXIT_DIFFERENT = ExitCode(1)
+EXIT_BAD_INPUT = ExitCode(2)
 BYTE_ORDER_MARK = chr(0xFEFF)
 GITHUB_LOG_PREFIX = re.compile(r"^[^\t]*\t[^\t]*\t\d{4}-\d{2}-\d{2}T[\d:.]+Z ?(.*)$")
 TEMPORARY_FOLDER = re.compile(r"(?:/[^/\s\[\]]+)*/tmp\.[A-Za-z0-9]+")
@@ -80,34 +118,36 @@ RESULT_LINE = re.compile(r"^  (ok   |FAIL |skip )(.*)$")
 SUITE_PREFIX = re.compile(r"^\[([^\]]+)\] (.*)$")
 CHILD_ARGUMENT = re.compile(r"^([^=]+)=(.+)$")
 
+MemberType = TypeVar("MemberType", bound=Enum)
+
 
 @dataclass(frozen=True)
-class Outcome:
-    outcome: str
-    name: str
+class ResultLine:
+    outcome: Outcome
+    name: CheckName
 
 
 @dataclass(frozen=True, order=True)
 class Result:
-    kind: str
-    unit: str
-    name: str
-    outcome: str
+    kind: UnitKind
+    unit: UnitName
+    name: CheckName
+    outcome: Outcome
 
 
 @dataclass(frozen=True)
 class Entry:
-    kind: str
-    unit: str
-    name: str
-    outcome: str
-    count: int
+    kind: UnitKind
+    unit: UnitName
+    name: CheckName
+    outcome: Outcome
+    count: CheckCount
 
 
 @dataclass(frozen=True)
 class Inventory:
-    label: str
-    shape: str
+    label: Label
+    shape: Shape
     entries: Tuple[Entry, ...]
 
 
@@ -131,9 +171,9 @@ class ParsedLog:
 
 @dataclass(frozen=True)
 class Route:
-    kind: str
-    unit: str
-    suite: str
+    kind: UnitKind
+    unit: UnitName
+    suite: SuiteName
 
 
 @dataclass(frozen=True)
@@ -144,17 +184,17 @@ class RouteLoad:
 
 @dataclass(frozen=True)
 class Wrapper:
-    section: str
-    name_prefix: str
-    child: str
+    section: UnitName
+    name_prefix: NamePrefix
+    child: UnitName
 
 
 @dataclass(frozen=True)
 class Allowance:
-    kind: str
-    suite: str
-    name: str
-    reason: str
+    kind: DifferenceKind
+    suite: SuiteName
+    name: CheckName
+    reason: Reason
 
 
 @dataclass(frozen=True)
@@ -184,29 +224,29 @@ class AllowanceLoad:
 
 @dataclass(frozen=True)
 class UnitReference:
-    kind: str
-    unit: str
+    kind: UnitKind
+    unit: UnitName
 
 
 @dataclass(frozen=True, order=True)
 class CheckKey:
-    suite: str
-    name: str
-    outcome: str
+    suite: SuiteName
+    name: CheckName
+    outcome: Outcome
 
 
 @dataclass(frozen=True)
 class Count:
-    suite: str
-    name: str
-    outcome: str
-    count: int
+    suite: SuiteName
+    name: CheckName
+    outcome: Outcome
+    count: CheckCount
 
 
 @dataclass(frozen=True)
 class WrapperHits:
     wrapper: Wrapper
-    hits: int
+    hits: CheckCount
 
 
 @dataclass(frozen=True)
@@ -218,18 +258,18 @@ class MappedInventory:
 
 @dataclass(frozen=True, order=True)
 class Difference:
-    kind: str
-    suite: str
-    name: str
-    outcome: str
-    count: int
-    detail: str
+    kind: DifferenceKind
+    location: Location
+    name: CheckName
+    outcome: Outcome
+    count: CheckCount
+    detail: Detail
 
 
 @dataclass(frozen=True)
 class Explained:
     difference: Difference
-    reason: str
+    reason: Reason
 
 
 @dataclass(frozen=True)
@@ -240,7 +280,7 @@ class Allowed:
 
 @dataclass(frozen=True)
 class CommandResult:
-    exit_code: int
+    exit_code: ExitCode
     output_lines: Tuple[str, ...]
     error_lines: Tuple[str, ...]
 
@@ -249,9 +289,15 @@ class CommandResult:
 class Report:
     unexplained: Tuple[Difference, ...]
     explained: Tuple[Explained, ...]
-    checks: int
-    suites: int
-    wrappers: int
+    checks: CheckCount
+    suites: SuiteCount
+    wrappers: CheckCount
+
+
+def member_of(kind: Type[MemberType], value: object) -> Optional[MemberType]:
+    """The member of the enum whose text is the value, or None when the value is not one."""
+    members = {member.value: member for member in kind}
+    return members.get(value) if isinstance(value, str) else None
 
 
 def unframe(raw: str) -> str:
@@ -275,12 +321,13 @@ def read_header_lines(path: str) -> List[str]:
         return [raw.rstrip("\r\n") for raw in handle if raw.strip()]
 
 
-def result_of(line: str) -> Optional[Outcome]:
+def result_of(line: str) -> Optional[ResultLine]:
     """The outcome and name of a result line, or None for any other line."""
     matched = RESULT_LINE.match(line)
     if not matched:
         return None
-    return Outcome(matched.group(1).strip(), TEMPORARY_FOLDER.sub(TEMPORARY_FOLDER_TOKEN, matched.group(2)))
+    return ResultLine(Outcome(matched.group(1).strip()),
+                      CheckName(TEMPORARY_FOLDER.sub(TEMPORARY_FOLDER_TOKEN, matched.group(2))))
 
 
 def cut_window(lines: Sequence[str], start_after: str, stop_at: str) -> Window:
@@ -309,7 +356,7 @@ def parse_old_log(lines: Sequence[str], headers: Sequence[str]) -> ParsedLog:
         if line in known:
             section = line
         elif found is not None and section:
-            results.append(Result(KIND_SECTION, section, found.name, found.outcome))
+            results.append(Result(UnitKind.SECTION, UnitName(section), found.name, found.outcome))
         elif found is not None:
             problems.append("result before any section header: %s" % found.name)
     return ParsedLog(tuple(results), tuple(problems))
@@ -318,7 +365,7 @@ def parse_old_log(lines: Sequence[str], headers: Sequence[str]) -> ParsedLog:
 def parse_child_log(lines: Sequence[str], child: str) -> ParsedLog:
     """Each result line of one child run's own output."""
     found = [result_of(line) for line in lines]
-    return ParsedLog(tuple(Result(KIND_CHILD, child, result.name, result.outcome)
+    return ParsedLog(tuple(Result(UnitKind.CHILD, UnitName(child), result.name, result.outcome)
                            for result in found if result is not None), ())
 
 
@@ -329,29 +376,29 @@ def parse_new_log(lines: Sequence[str]) -> ParsedLog:
         prefixed = SUITE_PREFIX.match(line)
         found = result_of(prefixed.group(2)) if prefixed else None
         if prefixed and found is not None:
-            results.append(Result(KIND_SUITE, prefixed.group(1), found.name, found.outcome))
+            results.append(Result(UnitKind.SUITE, UnitName(prefixed.group(1)), found.name, found.outcome))
     return ParsedLog(tuple(results), ())
 
 
-def build_inventory(label: str, shape: str, results: Sequence[Result]) -> Inventory:
+def build_inventory(label: Label, shape: Shape, results: Sequence[Result]) -> Inventory:
     counted = Counter(results)
-    entries = [Entry(result.kind, result.unit, result.name, result.outcome, counted[result])
+    entries = [Entry(result.kind, result.unit, result.name, result.outcome, CheckCount(counted[result]))
                for result in sorted(counted)]
     return Inventory(label, shape, tuple(entries))
 
 
 def render_inventory(inventory: Inventory) -> str:
     """The inventory as JSON text, one entry to a line so a change reads in a diff."""
-    head = json.dumps({"format": INVENTORY_FORMAT, "label": inventory.label, "shape": inventory.shape})
-    rows = [json.dumps({"kind": entry.kind, "unit": entry.unit, "name": entry.name,
-                        "outcome": entry.outcome, "count": entry.count}, ensure_ascii=False)
+    head = json.dumps({"format": INVENTORY_FORMAT, "label": inventory.label, "shape": inventory.shape.value})
+    rows = [json.dumps({"kind": entry.kind.value, "unit": entry.unit, "name": entry.name,
+                        "outcome": entry.outcome.value, "count": entry.count}, ensure_ascii=False)
             for entry in inventory.entries]
     return '{"head": %s,\n"entries": [\n%s\n]}\n' % (head, ",\n".join(rows))
 
 
 def parse_inventory(document: object) -> InventoryLoad:
     """An inventory read from decoded JSON, with a problem for each part that is not valid."""
-    empty = Inventory("", "", ())
+    empty = Inventory(Label(""), Shape.OLD, ())
     if not isinstance(document, dict) or not isinstance(document.get("head"), dict):
         return InventoryLoad(empty, ("inventory has no head",))
     head = document["head"]
@@ -364,36 +411,38 @@ def parse_inventory(document: object) -> InventoryLoad:
     parsed = [parse_entry(row) for row in rows]
     problems += ["inventory entry %d is not valid" % index for index, entry in enumerate(parsed) if entry is None]
     label = head.get("label") if isinstance(head.get("label"), str) else ""
-    shape = head.get("shape") if isinstance(head.get("shape"), str) else ""
+    shape = member_of(Shape, head.get("shape"))
+    if shape is None:
+        problems.append("inventory shape is not old or new")
     entries = tuple(entry for entry in parsed if entry is not None)
-    return InventoryLoad(Inventory(label, shape, entries), tuple(problems))
+    return InventoryLoad(Inventory(Label(label), shape or Shape.OLD, entries), tuple(problems))
 
 
 def parse_entry(row: object) -> Optional[Entry]:
     if not isinstance(row, dict):
         return None
-    kind, unit, name = row.get("kind"), row.get("unit"), row.get("name")
-    outcome, count = row.get("outcome"), row.get("count")
-    if kind not in UNIT_KINDS or outcome not in OUTCOMES:
+    kind, unit, name = member_of(UnitKind, row.get("kind")), row.get("unit"), row.get("name")
+    outcome, count = member_of(Outcome, row.get("outcome")), row.get("count")
+    if kind is None or outcome is None:
         return None
     if not isinstance(unit, str) or not isinstance(name, str):
         return None
     if not isinstance(count, int) or isinstance(count, bool) or count < 1:
         return None
-    return Entry(kind, unit, name, outcome, count)
+    return Entry(kind, UnitName(unit), CheckName(name), outcome, CheckCount(count))
 
 
 def parse_routes(document: Dict[str, object]) -> RouteLoad:
     routes: List[Route] = []
     problems: List[str] = []
-    for field, kind in (("sections", KIND_SECTION), ("children", KIND_CHILD)):
+    for field, kind in (("sections", UnitKind.SECTION), ("children", UnitKind.CHILD)):
         pairs = document.get(field) or {}
         valid = isinstance(pairs, dict) and all(isinstance(unit, str) and isinstance(suite, str)
                                                 for unit, suite in pairs.items())
         if not valid:
             problems.append("mapping %s is not an object of text to text" % field)
             continue
-        routes.extend(Route(kind, unit, suite) for unit, suite in sorted(pairs.items()))
+        routes.extend(Route(kind, UnitName(unit), SuiteName(suite)) for unit, suite in sorted(pairs.items()))
     return RouteLoad(tuple(routes), tuple(problems))
 
 
@@ -434,24 +483,25 @@ def parse_wrapper(row: object) -> Optional[Wrapper]:
         return None
     if not (section and prefix and child):
         return None
-    return Wrapper(section, prefix, child)
+    return Wrapper(UnitName(section), NamePrefix(prefix), UnitName(child))
 
 
 def parse_allowance(row: object) -> Optional[Allowance]:
     if not isinstance(row, dict):
         return None
-    kind, suite, name, reason = row.get("kind"), row.get("suite"), row.get("name"), row.get("reason")
-    if kind not in DIFFERENCE_KINDS:
+    kind = member_of(DifferenceKind, row.get("kind"))
+    suite, name, reason = row.get("suite"), row.get("name"), row.get("reason")
+    if kind not in ALLOWABLE_KINDS:
         return None
     if not (isinstance(suite, str) and isinstance(name, str) and isinstance(reason, str)):
         return None
     if not (suite and name and reason.strip()):
         return None
-    return Allowance(kind, suite, name, reason)
+    return Allowance(kind, SuiteName(suite), CheckName(name), Reason(reason))
 
 
 def matching_wrapper(entry: Entry, wrappers: Sequence[Wrapper]) -> Optional[Wrapper]:
-    if entry.kind != KIND_SECTION:
+    if entry.kind != UnitKind.SECTION:
         return None
     for wrapper in wrappers:
         if entry.unit == wrapper.section and entry.name.startswith(wrapper.name_prefix):
@@ -467,7 +517,7 @@ def map_inventory(inventory: Inventory, mapping: Mapping) -> MappedInventory:
     unmapped: Set[UnitReference] = set()
     for entry in inventory.entries:
         wrapper = matching_wrapper(entry, mapping.wrappers)
-        suite = entry.unit if entry.kind == KIND_SUITE else suites.get(UnitReference(entry.kind, entry.unit), "")
+        suite = SuiteName(entry.unit) if entry.kind == UnitKind.SUITE else suites.get(UnitReference(entry.kind, entry.unit))
         if wrapper is not None:
             wrapper_hits[wrapper] += entry.count
         elif suite:
@@ -475,67 +525,70 @@ def map_inventory(inventory: Inventory, mapping: Mapping) -> MappedInventory:
         else:
             unmapped.add(UnitReference(entry.kind, entry.unit))
     return MappedInventory(
-        tuple(Count(key.suite, key.name, key.outcome, counts[key]) for key in sorted(counts)),
-        tuple(WrapperHits(wrapper, wrapper_hits[wrapper]) for wrapper in mapping.wrappers),
+        tuple(Count(key.suite, key.name, key.outcome, CheckCount(counts[key])) for key in sorted(counts)),
+        tuple(WrapperHits(wrapper, CheckCount(wrapper_hits[wrapper])) for wrapper in mapping.wrappers),
         tuple(sorted(unmapped, key=lambda reference: (reference.kind, reference.unit))),
     )
 
 
 def wrapper_differences(wrappers: Sequence[WrapperHits], inventory: Inventory) -> List[Difference]:
-    children = {entry.unit for entry in inventory.entries if entry.kind == KIND_CHILD}
-    found = [Difference("wrapper", hit.wrapper.section, hit.wrapper.name_prefix, OUTCOME_OK, hit.hits,
-                        "matches %d baseline results, not one" % hit.hits) for hit in wrappers if hit.hits != 1]
-    found += [Difference("wrapper", hit.wrapper.section, hit.wrapper.name_prefix, OUTCOME_OK, 0,
-                         "child %s has no results in the baseline" % hit.wrapper.child)
+    children = {entry.unit for entry in inventory.entries if entry.kind == UnitKind.CHILD}
+    found = [Difference(DifferenceKind.WRAPPER, Location(hit.wrapper.section), CheckName(hit.wrapper.name_prefix),
+                        Outcome.OK, hit.hits, Detail("matches %d baseline results, not one" % hit.hits))
+             for hit in wrappers if hit.hits != 1]
+    found += [Difference(DifferenceKind.WRAPPER, Location(hit.wrapper.section), CheckName(hit.wrapper.name_prefix),
+                         Outcome.OK, CheckCount(0), Detail("child %s has no results in the baseline" % hit.wrapper.child))
               for hit in wrappers if hit.wrapper.child not in children]
     return found
 
 
-def excess_kind(before: int, outcome: str) -> str:
-    if outcome == OUTCOME_SKIP:
-        return "skip"
-    if outcome == OUTCOME_FAIL:
-        return "failure"
-    return "duplicate" if before > 0 else "addition"
+def excess_kind(before: int, outcome: Outcome) -> DifferenceKind:
+    if outcome == Outcome.SKIP:
+        return DifferenceKind.SKIP
+    if outcome == Outcome.FAIL:
+        return DifferenceKind.FAILURE
+    return DifferenceKind.DUPLICATE if before > 0 else DifferenceKind.ADDITION
 
 
 def count_differences(baseline: Counter, candidate: Counter) -> List[Difference]:
     found: List[Difference] = []
     for key in sorted(set(baseline) | set(candidate)):
         before, after = baseline[key], candidate[key]
-        detail = "baseline %d, candidate %d" % (before, after)
+        detail = Detail("baseline %d, candidate %d" % (before, after))
         if after < before:
-            found.append(Difference("loss", key.suite, key.name, key.outcome, before - after, detail))
+            found.append(Difference(DifferenceKind.LOSS, Location(key.suite), key.name, key.outcome,
+                                    CheckCount(before - after), detail))
         elif after > before:
-            found.append(Difference(excess_kind(before, key.outcome), key.suite, key.name, key.outcome,
-                                    after - before, detail))
+            found.append(Difference(excess_kind(before, key.outcome), Location(key.suite), key.name, key.outcome,
+                                    CheckCount(after - before), detail))
     return found
 
 
 def pair_moves(found: Sequence[Difference]) -> List[Difference]:
-    """The differences, with each loss that matches an addition in another suite merged into a move."""
-    losses = [difference for difference in found if difference.kind == "loss"]
-    additions = [difference for difference in found if difference.kind == "addition"]
+    """The differences, with each loss that matches an addition or an excess copy in another suite merged into a move."""
+    losses = [difference for difference in found if difference.kind == DifferenceKind.LOSS]
+    additions = [difference for difference in found if difference.kind in MOVABLE_EXCESS_KINDS]
     lost = {difference: difference.count for difference in losses}
     added = {difference: difference.count for difference in additions}
     moved: List[Difference] = []
     for loss, addition in [(loss, addition) for loss in losses for addition in additions
                            if loss.name == addition.name and loss.outcome == addition.outcome
-                           and loss.suite != addition.suite]:
+                           and loss.location != addition.location]:
         taken = min(lost[loss], added[addition])
         lost[loss] -= taken
         added[addition] -= taken
         if taken:
-            moved.append(Difference("moved", addition.suite, addition.name, addition.outcome, taken,
-                                    "from suite %s" % loss.suite))
-    rest = [Difference(difference.kind, difference.suite, difference.name, difference.outcome, left, difference.detail)
+            moved.append(Difference(DifferenceKind.MOVED, addition.location, addition.name, addition.outcome,
+                                    CheckCount(taken), Detail("from suite %s" % loss.location)))
+    rest = [Difference(difference.kind, difference.location, difference.name, difference.outcome, CheckCount(left),
+                       difference.detail)
             for table in (lost, added) for difference, left in table.items() if left]
-    return rest + moved + [difference for difference in found if difference.kind not in ("loss", "addition")]
+    return rest + moved + [difference for difference in found if difference.kind != DifferenceKind.LOSS and difference.kind not in MOVABLE_EXCESS_KINDS]
 
 
 def find_allowance(difference: Difference, allowances: Sequence[Allowance]) -> Optional[Allowance]:
     for allowance in allowances:
-        if (allowance.kind, allowance.suite, allowance.name) == (difference.kind, difference.suite, difference.name):
+        if (allowance.kind, Location(allowance.suite), allowance.name) == (difference.kind, difference.location, difference.name):
             return allowance
     return None
 
@@ -552,8 +605,8 @@ def apply_allowances(found: Sequence[Difference], allowances: Sequence[Allowance
         else:
             used.add(allowance)
             explained.append(Explained(difference, allowance.reason))
-    unexplained += [Difference("stale", allowance.suite, allowance.name, OUTCOME_OK, 0,
-                               "allowance for %s matches no difference" % allowance.kind)
+    unexplained += [Difference(DifferenceKind.STALE, Location(allowance.suite), allowance.name, Outcome.OK, CheckCount(0),
+                               Detail("allowance for %s matches no difference" % allowance.kind.value))
                     for allowance in allowances if allowance not in used]
     return Allowed(tuple(unexplained), tuple(explained))
 
@@ -561,8 +614,8 @@ def apply_allowances(found: Sequence[Difference], allowances: Sequence[Allowance
 def compare_inventories(baseline: Inventory, candidate: Inventory, mapping: Mapping) -> Report:
     before = map_inventory(baseline, mapping)
     after = map_inventory(candidate, mapping)
-    found = [Difference("unmapped", reference.unit, "", OUTCOME_OK, 0,
-                        "%s %s has no route in the mapping" % (reference.kind, reference.unit))
+    found = [Difference(DifferenceKind.UNMAPPED, Location(reference.unit), CheckName(""), Outcome.OK, CheckCount(0),
+                        Detail("%s %s has no route in the mapping" % (reference.kind.value, reference.unit)))
              for reference in before.unmapped + after.unmapped]
     found += wrapper_differences(before.wrappers, baseline)
     found += pair_moves(count_differences(counter_of(before), counter_of(after)))
@@ -570,9 +623,9 @@ def compare_inventories(baseline: Inventory, candidate: Inventory, mapping: Mapp
     return Report(
         tuple(sorted(allowed.unexplained)),
         tuple(sorted(allowed.explained, key=lambda item: item.difference)),
-        sum(count.count for count in after.counts),
-        len({count.suite for count in after.counts}),
-        sum(hit.hits for hit in before.wrappers),
+        CheckCount(sum(count.count for count in after.counts)),
+        SuiteCount(len({count.suite for count in after.counts})),
+        CheckCount(sum(hit.hits for hit in before.wrappers)),
     )
 
 
@@ -581,7 +634,7 @@ def counter_of(mapped: MappedInventory) -> Counter:
 
 
 def describe(difference: Difference) -> str:
-    return "%s: %s: %s (%s)" % (difference.kind, difference.suite, difference.name or "-", difference.detail)
+    return "%s: %s: %s (%s)" % (difference.kind.value, difference.location, difference.name or "-", difference.detail)
 
 
 def render_report(report: Report) -> List[str]:
@@ -637,10 +690,10 @@ def problem_lines(problems: Sequence[str]) -> Tuple[str, ...]:
 
 
 def run_inventory(arguments: argparse.Namespace) -> CommandResult:
-    parsed = collect_old_results(arguments) if arguments.shape == SHAPE_OLD else collect_new_results(arguments)
+    parsed = collect_old_results(arguments) if arguments.shape == Shape.OLD.value else collect_new_results(arguments)
     if parsed.problems:
         return CommandResult(EXIT_BAD_INPUT, (), problem_lines(parsed.problems))
-    inventory = build_inventory(arguments.label, arguments.shape, parsed.results)
+    inventory = build_inventory(Label(arguments.label), Shape(arguments.shape), parsed.results)
     write_text(arguments.output, render_inventory(inventory))
     return CommandResult(EXIT_CLEAN, (), ())
 
@@ -662,7 +715,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     inventory = commands.add_parser("inventory", help="write an inventory from a log",
                                     description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    inventory.add_argument("--shape", required=True, choices=(SHAPE_OLD, SHAPE_NEW))
+    inventory.add_argument("--shape", required=True, choices=tuple(shape.value for shape in Shape))
     inventory.add_argument("--log", required=True)
     inventory.add_argument("--output", required=True)
     inventory.add_argument("--headers", default="")
