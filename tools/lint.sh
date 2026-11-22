@@ -1,6 +1,6 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
-# JSON valid, shell scripts parse, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
+# JSON valid, shell scripts parse, ShellCheck and Ruff find nothing new, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
 # match the plugin's. Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
@@ -23,6 +23,9 @@ for f in $(find tools plugins -name '*.py' -not -path '*/evals/results/*' -not -
 done
 # py_compile writes bytecode whatever PYTHONDONTWRITEBYTECODE says; drop every cache it left.
 find tools plugins -name '__pycache__' -type d -not -path '*/node_modules/*' -prune -exec rm -rf {} +
+
+# ShellCheck and Ruff fail on a finding the baseline in tools/lint-baseline/ does not record.
+python3 -I tools/lib/lint_baseline.py check || status=1
 
 # Every skill has a SKILL.md whose name matches its directory and that has a description.
 for skill_dir in plugins/*/skills/*/; do
