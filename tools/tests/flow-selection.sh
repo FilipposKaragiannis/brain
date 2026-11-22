@@ -27,6 +27,7 @@ base="$(git rev-parse HEAD)"
 result() { if "$project/tools/test.sh" flow-since "$base" > "$work/output" 2>&1; then echo pass; else echo fail; fi; }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
 suites_reported() { grep -cE '^flow: [^ ]+ (pass|FAIL) \(' "$work/output"; }
+suite_outcomes() { grep -E '^flow: [^ ]+ (pass|FAIL) \(' "$work/output" | cut -d ' ' -f 2,3 | sort | tr '\n' ' ' | sed 's/ $//'; }
 lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300; child_seconds=120
 
 echo 'exit 0' >> "$suite/sessions.sh"
@@ -82,7 +83,9 @@ expect 'FullCoverageForANewFolder_IncludesJiraContract because every suite runs'
 rm -r plugins/flow/new-runtime
 mkdir -p plugins/flow/scripts
 touch plugins/flow/scripts/verify.sh
-expect 'VerifyImplementationChanges_RunItsIntegrationChecks because only the suites that run verify can be affected' "$(result)" pass
+expect 'VerifyImplementationChanges_Pass because every suite that runs verify passes' "$(result)" pass
+expect 'VerifyImplementationChanges_LeaveOutUnrelatedSuites because only the suites that run verify can be affected' "$(grep -c '^flow: contract-jira ' "$work/output")" 0
+expect 'VerifyImplementationChanges_RunEverySuiteThatRunsVerify because a suite left out would hide a broken verify' "$(suite_outcomes)" 'base-claim pass base-readers pass verify-report pass verify-scope pass'
 expect 'VerifyImplementationChanges_IncludeTheReportScenarios because standalone checks cover only part of verify' "$(grep -c '^flow: verify-report pass' "$work/output")" 1
 rm plugins/flow/scripts/verify.sh
 cat > "$suite/sessions.sh" <<'STUB'
