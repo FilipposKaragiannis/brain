@@ -1,68 +1,62 @@
 #!/bin/sh
-# lost-result.sh: what a step whose session left no result file does next, on the local adapter in
-# a throwaway repo, and how long a Claude step waits for the background subagents its session left
-# running. A lost result runs the same step again, and its attempts reach the escalation gate; a
-# failed result goes to its fix step as before. host_run waits an hour by default, and a ceiling
-# the owner exported wins.
+# lost-result.sh: tests for a step whose session left no result file, on the local adapter in a
+# throwaway repo, and for how long a Claude step waits for its background subagents.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-LOST_REVIEW='{"status":"fail","lost":true,"summary":"The review session ended with no result file."}'
 FAILED_REVIEW='{"status":"fail","summary":"Two blockers: a bare literal and a widened member."}'
 MAX_ATTEMPTS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$plugin/profiles.json")"
-ONE_HOUR_IN_MILLISECONDS=3600000
+DEFAULT_CEILING_IN_MILLISECONDS="$(sh -c '. "$FLOW_PLUGIN/lib/host.sh" && printf %s "$HOST_BACKGROUND_WAIT_MILLISECONDS"')"
 OWNER_CEILING_IN_MILLISECONDS=120000
-# end_review <item> <result>: the review step set and started on the item, ended with <result>.
-# The later attempts start whatever step the item is at, as the loop does.
-end_review() {
-  "$local_adapter/write-state.sh" "$1" step=review profile=task-S >/dev/null
-  start_step "$1"
-  step_result "$1" review "$2"
-  finish_step "$1"
+ONE_SESSION=1
+fake_claude_folder="$work/fake-claude"
+# set_at_review <item>: the item's state set to the review step of the small task profile.
+set_at_review() { "$local_adapter/write-state.sh" "$1" step=review profile=task-S >/dev/null; }
+# run_silent_sessions <item> <steps>: the unattended loop on the item for <steps> steps, each on the
+# offline claude, which writes no result file.
+run_silent_sessions() { "$plugin/templates/run-unattended.sh" claude "$1" --max-steps "$2" >/dev/null 2>&1; }
+# ceiling_seen_by_claude [arguments for the env command]: the background wait ceiling a Claude
+# session that host_run starts reads, printed back by a fake claude.
+ceiling_seen_by_claude() {
+  env "$@" PATH="$fake_claude_folder:$PATH" sh -c '. "$FLOW_PLUGIN/lib/host.sh" && host_run claude . hi' 2>/dev/null
 }
 
-echo "lost result: a review that left no result file runs again"
+echo "lost result: a review whose session left no result file"
 new_repo lost-review
 lost_once="$(new_task "Review whose session was cut short")"
-end_review "$lost_once" "$LOST_REVIEW"
-check "LostReviewResult_RunsTheReviewAgain: the session found nothing for implement to fix, so the review itself is the step to repeat" \
+set_at_review "$lost_once"
+run_silent_sessions "$lost_once" "$ONE_SESSION"
+check "SilentReviewSession_RunsTheReviewAgain: the session found nothing for implement to fix, so the review itself is the step to repeat" \
   '[ "$(state "$lost_once" step)" = review ]'
-check "LostReviewResult_CountsTheAttempt: a lost session is still a failed attempt, so it counts toward the gate" \
-  '[ "$(state "$lost_once" attempts)" = 1 ]'
+check "SilentReviewSession_CountsTheAttempt: a lost session is still a failed attempt, so it counts toward the gate" \
+  '[ "$(state "$lost_once" attempts)" = "$ONE_SESSION" ]'
 
-echo "lost result: a review lost every time reaches the escalation gate"
+echo "lost result: a review lost at every attempt"
 lost_always="$(new_task "Review whose session is cut short every time")"
-end_review "$lost_always" "$LOST_REVIEW"
-attempt=1
-while [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
-  start_step "$lost_always"
-  step_result "$lost_always" review "$LOST_REVIEW"
-  finish_step "$lost_always"
-  attempt=$((attempt + 1))
-done
+set_at_review "$lost_always"
+run_silent_sessions "$lost_always" "$MAX_ATTEMPTS"
 check "ReviewLostAtEveryAttempt_RaisesTheEscalationGate: a step that keeps losing its result needs the owner, not an endless loop" \
   '[ "$(state "$lost_always" gate)" = escalation ]'
 
-echo "lost result: a failed review still goes to its fix step"
+echo "failed result: a review that found blockers"
 failed="$(new_task "Review that found blockers")"
-end_review "$failed" "$FAILED_REVIEW"
+set_at_review "$failed"
+start_step "$failed"
+step_result "$failed" review "$FAILED_REVIEW"
+finish_step "$failed"
 check "FailedReviewResult_GoesToImplement: blockers are work for implement, so the item leaves the review" \
   '[ "$(state "$failed" step)" = implement ]'
 
-echo "background wait: a Claude step waits an hour for its background subagents"
-stub_path="$work/stub-claude"; ceiling_log="$work/ceiling.log"; mkdir -p "$stub_path"
-printf '#!/bin/sh\nprintf "%%s\\n" "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-unset}" >> "%s"\n' "$ceiling_log" > "$stub_path/claude"
-chmod +x "$stub_path/claude"
-: > "$ceiling_log"
-PATH="$stub_path:$PATH" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; unset CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS; host_run claude . hi' >/dev/null 2>&1
-check "ClaudeStepWithNoCeilingExported_WaitsAnHour: the host's own ten minutes stopped reviewers mid-run, so a step gets an hour" \
-  '[ "$(cat "$ceiling_log")" = "$ONE_HOUR_IN_MILLISECONDS" ]'
-: > "$ceiling_log"
-PATH="$stub_path:$PATH" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="$OWNER_CEILING_IN_MILLISECONDS" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
-check "ClaudeStepWithACeilingExported_KeepsTheOwnersCeiling: the owner's own setting wins over the default" \
-  '[ "$(cat "$ceiling_log")" = "$OWNER_CEILING_IN_MILLISECONDS" ]'
+echo "background wait: the ceiling a Claude session gets"
+mkdir -p "$fake_claude_folder"
+printf '#!/bin/sh\nprintf "%%s\\n" "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-unset}"\n' > "$fake_claude_folder/claude"
+chmod +x "$fake_claude_folder/claude"
+check "ClaudeStepWithNoCeilingExported_GetsTheFlowsCeiling: the host's own ten minutes stopped reviewers mid-run, so a step gets the flow's longer wait" \
+  '[ "$(ceiling_seen_by_claude -u CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS)" = "$DEFAULT_CEILING_IN_MILLISECONDS" ]'
+check "ClaudeStepWithACeilingExported_KeepsTheOwnersCeiling: the owner's own setting wins over the flow's" \
+  '[ "$(ceiling_seen_by_claude CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="$OWNER_CEILING_IN_MILLISECONDS")" = "$OWNER_CEILING_IN_MILLISECONDS" ]'
 
 echo "lost-result: $fails failure(s)"
 [ "$fails" -eq 0 ]

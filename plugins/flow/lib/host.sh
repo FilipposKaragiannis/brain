@@ -11,10 +11,6 @@
 # Claude's sessions write the 5-minute prompt cache (CLAUDE_CODE_PROMPT_CACHE_TTL, and its
 # subagent twin): a session that ends in minutes never uses the hour a subscription would buy at
 # twice the write price. A TTL the owner exported wins.
-# Claude waits up to an hour (CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS) for the background subagents a
-# session left running after its last turn: at the host's own 10 minutes a review's Unity or
-# physics reviewer was stopped mid-run, and the step ended with no result file. A ceiling the
-# owner exported wins.
 # Both hosts print JSON (claude --output-format json, codex --json), which scripts/_host.py turns
 # back into the text they would have printed; stderr streams as it comes. After the run,
 # host_usage holds the usage the host reported as JSON (with cost_usd and the models that ran),

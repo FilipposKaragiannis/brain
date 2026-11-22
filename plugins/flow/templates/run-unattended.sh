@@ -23,10 +23,8 @@
 # exit 4, so the job says it stopped at a gate and how many steps ran. A run for a named item
 # stops at its gate, and an escalation gate or a host stop ends any run, as before.
 # A step session that writes no result (it exits with <reports>/<step>.json missing or as it was
-# before the session, as when every write was denied) fails its step: the loop writes that fail
-# result, marked lost and quoting the session's last message, so advance.sh runs the same step
-# again, counts the attempt and raises the escalation gate at max_attempts, and the result in the
-# reports keeps the claim from the health job's empty-claim release.
+# before the session, as when every write was denied) gets the result status lost, quoting the
+# session's last message.
 set -u
 host="${1:-}"; shift || true
 [ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>] [--pick <name>]" >&2; exit 2; }
@@ -107,7 +105,7 @@ No $host session starts, on any item, until the gate on $on clears. $(host_stop_
     exit 4
   fi
   if [ -n "$reports" ] && { [ ! -f "$result_file" ] || [ "$(result_stamp "$result_file")" = "$result_before" ]; }; then
-    json_obj "status=fail" "lost:=true" "summary=The $(get step) session ended with no result file ($result_file). Its last message: ${host_last:-none}" > "$result_file"
+    json_obj "status=lost" "summary=The $(get step) session ended with no result file ($result_file). Its last message: ${host_last:-none}" > "$result_file"
     echo "run-unattended: $item step $(get step) ended with no result file; counted as a failed attempt"
   fi
   "$plugin/scripts/advance.sh" "$item"; code=$?
