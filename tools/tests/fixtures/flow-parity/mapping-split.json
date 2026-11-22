@@ -1,0 +1,676 @@
+{
+ "sections": {
+  "a cleared gate whose answer no step owns (gh#157)": "gate-options",
+  "a full pool: next skips what needs a new worktree": "pick",
+  "a full pool: one pass with no tracker read per unclaimed item": "pick",
+  "a pick passes over an item with nothing to run": "pick",
+  "a session cut by a time-window limit": "unattended",
+  "a step with no result file (gh#169)": "gate-options",
+  "auto_gates": "pick",
+  "board": "core-board",
+  "board graphs (local)": "core-board",
+  "comments plumbing (fake gh)": "github-tracker",
+  "config": "core-lifecycle",
+  "decomposition: a split parent and its children": "decomposition",
+  "digits stay strings, numbers stay numbers": "gate-list",
+  "flow jobs: the run ledger, pause and the schedule (fake launchctl)": "jobs",
+  "gate list --json": "gate-list",
+  "gate options, roles and conditions": "gate-options",
+  "github adapter (fake gh)": "core-board",
+  "github blips (fake gh)": "github-tracker",
+  "github fields, types and project (fake gh)": "github-tracker",
+  "github tracker scope (fake gh)": "github-tracker",
+  "health": "health",
+  "health: planned holds": "health",
+  "help": "prune-sweep",
+  "holds: an item a plan put behind another waits while that one is open": "pick",
+  "init: Codex in the repository or the user home": "init",
+  "init: a long pool, and the Slack webhook from the environment": "init",
+  "init: a repo that committed flow before": "init",
+  "init: from a linked worktree, and the pool it proposes": "init",
+  "init: nothing of flow is tracked": "init",
+  "init: the Claude worktree hooks in this user's local settings": "init",
+  "intake (fake hosts)": "intake",
+  "jira adapter (fake curl)": "jira-adapter",
+  "jira tracker scope (fake curl)": "jira-adapter",
+  "jobs (fake hosts)": "jobs",
+  "local adapter": "core-lifecycle",
+  "new item and pool growth": "worktree-pool",
+  "next and advance": "core-lifecycle",
+  "overlap": "core-lifecycle",
+  "parallel runs: the pick lock and --workers": "pick",
+  "parent and create": "core-board",
+  "pick filters: next --pick": "pick",
+  "prune": "prune-sweep",
+  "quiz: parse, grade, record and mark the draft ready (fake gh)": "gate-list",
+  "re-size and gates": "core-lifecycle",
+  "reserve: the owner's own worktree": "gate-options",
+  "review requests and chases (fake gh)": "github-tracker",
+  "session-start: the pool worktrees' plugin pins": "init",
+  "steward": "core-lifecycle",
+  "sweep": "prune-sweep",
+  "temporary worktrees": "worktree-pool",
+  "tracker scope: every read of the local tracker": "pick",
+  "trackers and readiness on every tracker (fake gh)": "github-tracker",
+  "unattended loop: a pick works on after a gate": "unattended",
+  "unattended steps: the model, the architect, the cache, the usage, a host stop (#65)": "unattended",
+  "verify runner": "verify-report",
+  "verify: gate paths and the mutation switch": "verify-report",
+  "verify: the report is never empty": "verify-report",
+  "worktree hooks": "core-board",
+  "worktree_create": "worktree-pool",
+  "worktree_name": "init"
+ },
+ "children": {
+  "adapter-contract-github": "contract-github",
+  "adapter-contract-jira": "contract-jira",
+  "adapter-contract-local": "contract-local",
+  "base-claim": "base-claim",
+  "base-readers": "base-readers",
+  "blockers": "blockers",
+  "branch-name": "branch-name",
+  "epic-closeout": "epic-closeout",
+  "epic-gates": "epic-gates",
+  "github-priority": "github-priority",
+  "graph-report": "graph-report",
+  "health-slow-steps": "health-slow-steps",
+  "holds": "holds",
+  "pr-without-pull-request": "pr-without-pull-request",
+  "sessions": "sessions",
+  "verify-detached": "verify-detached",
+  "verify-ends": "verify-ends",
+  "verify-scope": "verify-scope",
+  "worktree-setup": "worktree-setup"
+ },
+ "wrappers": [
+  {
+   "section": "a GitHub item reads its priority from a priority: label where no field is set (tests/github-priority.sh)",
+   "name_prefix": "github-priority: ",
+   "child": "github-priority"
+  },
+  {
+   "section": "a claim sets a pool worktree up again when a worktree_setup_paths file changed (tests/worktree-setup.sh)",
+   "name_prefix": "worktree-setup: ",
+   "child": "worktree-setup"
+  },
+  {
+   "section": "a claimed item waits while a native blocker is open (tests/blockers.sh)",
+   "name_prefix": "blockers: ",
+   "child": "blockers"
+  },
+  {
+   "section": "a pr step that opens no pull request leaves nothing to merge (tests/pr-without-pull-request.sh)",
+   "name_prefix": "pr-without-pull-request: ",
+   "child": "pr-without-pull-request"
+  },
+  {
+   "section": "a task branch is named from the branch template at claim and recorded (tests/branch-name.sh)",
+   "name_prefix": "branch-name: ",
+   "child": "branch-name"
+  },
+  {
+   "section": "a verify run started detached is waited on in short calls (tests/verify-detached.sh)",
+   "name_prefix": "verify-detached: ",
+   "child": "verify-detached"
+  },
+  {
+   "section": "adapter contract (adapters/README.md)",
+   "name_prefix": "the github adapter meets the contract: ",
+   "child": "adapter-contract-github"
+  },
+  {
+   "section": "adapter contract (adapters/README.md)",
+   "name_prefix": "the jira adapter meets the contract: ",
+   "child": "adapter-contract-jira"
+  },
+  {
+   "section": "adapter contract (adapters/README.md)",
+   "name_prefix": "the local adapter meets the contract: ",
+   "child": "adapter-contract-local"
+  },
+  {
+   "section": "an epic's closeout opens its pull request, and the merge closes the epic (tests/epic-closeout.sh)",
+   "name_prefix": "epic-closeout: ",
+   "child": "epic-closeout"
+  },
+  {
+   "section": "an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)",
+   "name_prefix": "sessions: ",
+   "child": "sessions"
+  },
+  {
+   "section": "an item's base is resolved once at claim (tests/base-claim.sh)",
+   "name_prefix": "base-claim: ",
+   "child": "base-claim"
+  },
+  {
+   "section": "an item's recorded base is read everywhere (tests/base-readers.sh)",
+   "name_prefix": "base-readers: ",
+   "child": "base-readers"
+  },
+  {
+   "section": "children wait on the parent's decomposition gate, and a gate is asked once (tests/epic-gates.sh)",
+   "name_prefix": "epic-gates: ",
+   "child": "epic-gates"
+  },
+  {
+   "section": "holds and the merge before verify (tests/holds.sh)",
+   "name_prefix": "holds: ",
+   "child": "holds"
+  },
+  {
+   "section": "stop and release end only the item's own verify run, and stop says when one outlives its wait (tests/verify-ends.sh)",
+   "name_prefix": "verify-ends: ",
+   "child": "verify-ends"
+  },
+  {
+   "section": "the graph report says what each step cost and which got slower (tests/graph-report.sh)",
+   "name_prefix": "graph-report: ",
+   "child": "graph-report"
+  },
+  {
+   "section": "the health job says when a step got slower (tests/health-slow-steps.sh)",
+   "name_prefix": "health-slow-steps: ",
+   "child": "health-slow-steps"
+  },
+  {
+   "section": "verify runs the build and test commands a change can affect, once per input (tests/verify-scope.sh)",
+   "name_prefix": "verify-scope: ",
+   "child": "verify-scope"
+  }
+ ],
+ "allowances": [
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "EventMessage_ShowsInTheNotifySendBodyLiterally: the body is shown whole",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "EventName_ShowsInTheNotificationTitleLiterally: the title is no more code than the body",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "EventName_ShowsInTheNotifySendTitleLiterally: the title is shown whole, not read as an option",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "EventText_RunsNoShellText: no command in it ran on the notify-send branch",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "GateMessage_RunsNoShellText: no command in it ran",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "GateMessage_ShowsInTheNotificationBodyLiterally: the notification shows it unchanged",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ItemTitle_ShowsInTheNotificationSubtitleLiterally: the quote swap is gone",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "LabelWithASpace_LeavesNoLabelOfTheFirstWord: the path was not split",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "LabelWithASpace_StaysWholeOnTheIssue: the path is one label",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "OldLabelWithAComma_IsLeftOnTheIssue: gh would remove it as two labels",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "OldLabelWithoutAComma_IsStillRemoved: the stale step label goes",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "PlanResultNamingAnUnknownGate_RecordsNoChanges: the overlap data hold.sh reads is untouched",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "PlanResultNamingAnUnknownGate_StopsAdvanceWithAUsageExit: the step does not report a gate that was never raised",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_LeavesTheItemsGateAlone: the tracker holds no gate",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_LogsNoGateEvent: the board shows nothing raised",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_RunsNoShellText: the name's command substitution did not run",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_StopsAdvanceWithAUsageExit: the step does not report a gate that was never raised",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_WritesNoAskedFile: the step is not marked as having asked",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_WritesNoCommentOrState: the item reads as it did before",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "ResultNamingAnUnknownGate_WritesNoGateRecord: nothing waits for an answer",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "SyncResultNamingAnUnknownGate_RunsNoShellText: the name's command substitution did not run",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "SyncResultNamingAnUnknownGate_StopsAdvanceWithAUsageExit: the sync step does not report a gate that was never raised",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "SyncResultNamingAnUnknownGate_WritesNoCommentOrState: the item reads as it did before",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "SyncResultNamingAnUnknownGate_WritesNoGateRecord: nothing waits for an answer",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_IsRefusedWithAUsageExit: the owner sees a clear stop, not a raised gate",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_LeavesTheItemsGateAlone: the tracker holds no gate",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_LogsNoGateEvent: the board shows nothing raised",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_NamesTheGatesThatExist: the message says what to use instead",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_NotifiesNobody: no desktop notification went out",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_RunsNoShellText: the name's command substitution did not run",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_WritesNoCommentOrState: the item reads as it did before",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "UnknownGate_WritesNoGateRecord: nothing waits for an answer",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "WorktreeWithAComma_IsRefusedWithAUsageExit: gh would read it as two labels",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-input",
+   "name": "WorktreeWithAComma_LeavesTheLabelsAlone: the issue holds what it held",
+   "reason": "added after the baseline by fix(flow): a gate name from a result file is checked and passed as data"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "AnswerHandedDownForAnotherFolder_IsIgnored: a value is trusted only in the folder it was found for",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "AnswerHandedDownForThisFolder_ReadsTheConfigOnNoListing: a child script in its parent's folder takes the parent's answer",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "BrokenGitShimFirstOnPath_SettlesOnXcodesGit: when the git on PATH cannot run, flow takes Xcode's git where it is installed",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "CdAndResolveInsideOneScript_ReadsThreeKeysOnTwoListings: a script that moves to another clone and resolves again lists once per folder",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "CdToAnotherRepositoryInsideOneScript_ResolvesTheOtherRepository: a script that moves between clones reads the clone it is in",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "ChildScriptStartedInALinkedWorktree_ResolvesToTheMainWorktreesFlowHome: the answer its parent found for another folder is not taken",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "ExplicitFlowHome_WinsOverTheMainWorktree: a caller that names the home gets that home",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "FolderThatIsNoRepository_UsesTheFolderItself: outside git the flow home is the working folder's",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "GitDirNamingAnotherRepository_IgnoresTheHandedDownAnswer: a repository the caller names wins over the answer found for the folder",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "GitProgramHandedDownForThisPath_IsTakenWithoutAProbe: a child script takes its parent's git where a probe would settle on another",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "GitProgramHandedDownThatIsNoKnownGit_IsProbedAgain: only git on PATH or Xcode's git is taken from the environment",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "LinkedWorktree_ResolvesToTheMainWorktreesFlowHome: every worktree of a clone shares one config",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "NestedRepository_ResolvesTheInnerRepository: a repository inside another one has its own home",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "NewTaskWithItsAdapterChildScripts_FilesTheTaskOnTwoListings: a flow command and the scripts it starts in its folder share one answer, where each config read once listed them",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "ScriptReadingThreeKeys_ReadsThemOnOneListing: config reads take the answer found when lib/flow.sh was sourced",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "StubGitPutOnPathForAChildOfAParentOnXcodesGit_AnswersForTheChild: a git probe found for another PATH is not taken",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "StubGitPutOnPathForAChild_AnswersForTheChild: a stub the caller puts first on PATH is asked though the parent handed down an answer for the same folder",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "main-worktree-once",
+   "name": "SuiteStartedWithTheHandedDownValues_DoesNotSeeThem: no test inherits a main worktree or a git probe from its caller",
+   "reason": "added after the baseline by perf(flow): the main worktree is resolved once per invocation tree"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-base-command",
+   "name": "ComparisonAgainstDifferentSource_Fails because a pass from the other base cannot prove this comparison",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-base-command",
+   "name": "ComparisonAgainstMatchingSource_Passes because the command compares the requested base",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-base-command",
+   "name": "UnresolvedBase_GivesTheCommandUnavailable because the command must know it cannot narrow its run",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-base-command",
+   "name": "UnresolvedBase_IsNamedInTheReport because a reader must see the comparison was unavailable",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-base-command",
+   "name": "UnresolvedBase_ReusesNoPassFromAResolvedBase because that pass proved a narrower comparison",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-base-command",
+   "name": "UnresolvedBase_RunsTheCheckWithPaths because an unknown change list cannot show that nothing under its paths changed",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "CheckStillRunning_HasItsOutputInTheLog because a run stopped at its limit must show where it stood",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "DeletedSuite_RunsEverySuite because what it covered is unknown",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "FailingAssertionInASuite_FailsVerify because a failed suite must fail the run",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "FailingAssertionInASuite_IsNamedInTheReport because the reader must know which suite failed",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "FileInANewFlowFolder_RunsEverySuite because verify must not skip what no path names",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "LaneCount1_RunsEverySuite because any whole count from 1 must work",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "LaneCount1_RunsOneSuiteAtATime because a single lane never starts a second suite",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "LaneCount3_RunsEverySuite because any whole count from 1 must work",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "LaneCount3_RunsSuitesSideBySide because the lanes exist to overlap suites",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "LaneCountZero_FailsTheFlowCheck because the variable reaches the runner through verify",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "OneChangedSuite_RunsAloneThroughVerify because the runner narrows a change to the suite it names",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "PassingSuite_HasItsLinesInTheLogUnderItsName because a pass needs its evidence",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "RenamedSuite_RunsEverySuite because the old path names no suite",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "RunStoppedAtTheLimit_NamesTheActiveSuite because the owner must see which suite stalled",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "RunStoppedAtTheLimit_ShowsTheActiveSuitesLastCheck because that is where the run stood",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "UnresolvedBaseAfterANarrowPass_RunsEverySuite because the narrow pass proved only the suite it ran",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "UnresolvedBase_RunsEverySuite because the change set is unknown",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-flow-runner",
+   "name": "UnresolvedBase_SaysTheBaseIsUnavailable because a full run must say why it ran",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "loss",
+   "suite": "verify-report",
+   "name": "verify under dash stopped by TERM leaves no temp file",
+   "reason": "renamed after the baseline by feat(flow): the suite runner never reports green with tests missing to VerifyStoppedBySignal_RemovesItsTemporaryFiles"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-report",
+   "name": "VerifyStoppedBySignal_RemovesItsTemporaryFiles because its scratch records are private to the run",
+   "reason": "the name feat(flow): the suite runner never reports green with tests missing gave to: verify under dash stopped by TERM leaves no temp file"
+  },
+  {
+   "kind": "loss",
+   "suite": "verify-report",
+   "name": "TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile: the cleanup is set before the file exists",
+   "reason": "renamed after the baseline by feat(flow): the suite runner never reports green with tests missing, which rewrote the text after the scenario name"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-report",
+   "name": "TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile because cleanup also owns the first allocation",
+   "reason": "the name feat(flow): the suite runner never reports green with tests missing gave to: TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile: the cleanup is set before the file exists"
+  },
+  {
+   "kind": "addition",
+   "suite": "verify-report",
+   "name": "VerifyWriterExits_CompletesAllWrites because the reader needs a completed observation window",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "addition",
+   "suite": "graph-report",
+   "name": "HistoryWriterStarts_HoldsTheLock because the contention check needs an active writer",
+   "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  }
+ ]
+}
