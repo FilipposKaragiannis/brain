@@ -1,0 +1,9 @@
+[
+  {
+    "file": "csharp.md",
+    "language": "C#",
+    "extensions": [
+      ".cs"
+    ]
+  }
+]

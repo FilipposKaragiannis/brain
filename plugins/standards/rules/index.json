@@ -546,7 +546,7 @@
     "file": "csharp.md"
   },
   "CS-09": {
-    "title": "Never `",
+    "title": "Never `.Result`, `.Wait()`, `.GetAwaiter().GetResult()`",
     "tag": "convention",
     "section": "Appendix A. C#",
     "file": "csharp.md"
@@ -564,7 +564,7 @@
     "file": "csharp.md"
   },
   "CS-12": {
-    "title": "`",
+    "title": "`.editorconfig` severities drive the Roslyn style and usage analyzers; `dotnet format` is the formatter",
     "tag": "convention",
     "section": "Appendix A. C#",
     "file": "csharp.md"
