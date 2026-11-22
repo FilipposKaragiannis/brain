@@ -100,8 +100,14 @@ check "DeletedSuite_RunsEverySuite because what it covered is unknown" 'every_su
 
 # lanes_overlapped: whether two stub suites held a lane at once in the last run.
 lanes_overlapped() { if [ -f "$work/overlaps" ]; then echo overlapped; else echo alone; fi; }
+mkdir "$work/holders"
 for stub in "$stub_suites"/[!_]*.sh; do
-  printf 'if mkdir "%s/lane" 2>/dev/null; then sleep %s; rmdir "%s/lane"; else echo overlap >> "%s/overlaps"; fi\n' "$work" "$lane_hold_seconds" "$work" "$work" > "$stub"
+  cat > "$stub" <<STUB
+: > "$work/holders/\$\$"
+[ "\$(ls "$work/holders" | wc -l | tr -d ' ')" -eq 1 ] || echo overlap >> "$work/overlaps"
+sleep $lane_hold_seconds
+rm "$work/holders/\$\$"
+STUB
 done
 commit_all "lane stubs"
 # run_with_lanes <count>: a fresh full run through verify with that many lanes.

@@ -90,7 +90,7 @@ def suites_by_path(suites) -> dict:
 
 def affected(path, suites):
     rules = suites_by_path(suites)
-    if path in rules:
+    if path in rules and rules[path] <= suites.keys() | {"verify"}:
         return rules[path]
     if path.parent == TESTS and path.suffix == ".sh" and path.stem in suites:
         return {path.stem}
@@ -128,12 +128,15 @@ def selection(root, base, suites) -> Selection:
     return narrowed(root, paths, suites)
 
 
-def run_suite(command, log, clock: Callable[[], float]):
+def run_suite(command, log, clock: Callable[[], float], running: set):
     started = clock()
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     with log.open("wb") as output:
-        result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT)
-    return result.returncode, clock() - started
+        with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT) as process:
+            running.add(process)
+            code = process.wait()
+    running.discard(process)
+    return code, clock() - started
 
 
 def print_output(name: str, log: Path) -> None:
@@ -151,8 +154,10 @@ def report_suite(name: str, outcome, log: Path) -> int:
     return code
 
 
-def report_stopped(workers: ThreadPoolExecutor, unfinished, directory: Path) -> None:
+def report_stopped(workers: ThreadPoolExecutor, unfinished, directory: Path, running: set) -> None:
     workers.shutdown(wait=False, cancel_futures=True)
+    for process in tuple(running):
+        process.terminate()
     for name in sorted(name for name in unfinished if (directory / name).exists()):
         print_output(name, directory / name)
         print(f"flow: {name} stopped", flush=True)
@@ -161,9 +166,10 @@ def report_stopped(workers: ThreadPoolExecutor, unfinished, directory: Path) -> 
 
 def run_selected(suites, directory, lanes: int, clock: Callable[[], float]) -> "list[str]":
     codes = {}
+    processes = set()
     with ThreadPoolExecutor(max_workers=lanes) as workers:
-        signal.signal(signal.SIGTERM, lambda number, frame: report_stopped(workers, suites.keys() - codes.keys(), directory))
-        running = {workers.submit(run_suite, command, directory / name, clock): name for name, command in suites.items()}
+        signal.signal(signal.SIGTERM, lambda number, frame: report_stopped(workers, suites.keys() - codes.keys(), directory, processes))
+        running = {workers.submit(run_suite, command, directory / name, clock, processes): name for name, command in suites.items()}
         for finished in as_completed(running):
             name = running[finished]
             codes[name] = report_suite(name, finished.result(), directory / name)

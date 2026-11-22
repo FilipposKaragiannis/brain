@@ -27,7 +27,7 @@ base="$(git rev-parse HEAD)"
 result() { if "$project/tools/test.sh" flow-since "$base" > "$work/output" 2>&1; then echo pass; else echo fail; fi; }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
 suites_reported() { grep -cE '^flow: [^ ]+ (pass|FAIL) \(' "$work/output"; }
-lane_hold_seconds=1
+lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300
 
 echo 'exit 0' >> "$suite/sessions.sh"
 mkdir -p plugins/flow/changelog.d
@@ -39,6 +39,23 @@ expect 'PassingSuite_KeepsItsSummaryLine because the verifier reads the outcome 
 printf 'echo "  FAIL StubCheck_Holds"\nexit 1\n' > "$suite/sessions.sh"
 expect 'SelectedSuiteFails_FailsVerification because a partial run must propagate failure' "$(result)" fail
 expect 'FailingSuite_PrintsItsLinesWithItsName because the failure must name its suite' "$(grep -c '^\[sessions\]   FAIL StubCheck_Holds$' "$work/output")" 1
+cat > "$suite/sessions.sh" <<STUB
+echo "  ok   Stub_FirstCheckHolds"
+ticks=0
+while [ "\$ticks" -lt $hang_ticks ]; do echo tick >> "$work/ticks"; sleep $poll_seconds; ticks=\$((ticks + 1)); done
+STUB
+python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 &
+runner=$!
+ticks=0; until [ -f "$work/ticks" ] || [ "$ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
+kill -TERM "$runner"
+ticks=0; while kill -0 "$runner" 2>/dev/null && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
+if kill -0 "$runner" 2>/dev/null; then runner_state=running; else runner_state=ended; fi
+ticks_at_stop="$(wc -l < "$work/ticks")"; sleep "$lane_hold_seconds"
+wait "$runner" || true
+expect 'RunnerGivenTerm_EndsWhileItsSuiteHangs because a hung suite must not block cancellation' "$runner_state" ended
+expect 'RunnerGivenTerm_StopsItsRunningSuite because a stopped run leaves no suite behind' "$(wc -l < "$work/ticks")" "$ticks_at_stop"
+expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
+rm "$work/ticks"
 git restore plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
@@ -82,6 +99,10 @@ expect 'DeletedSuite_RunsFullCoverage because what it covered is unknown' "$(res
 expect 'DeletedSuite_IncludesJiraContract because every suite still runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
 expect 'DeletedSuite_IsNotRun because its file is gone' "$(grep -c '^flow: base-readers ' "$work/output")" 0
 git restore --staged --worktree plugins/flow/tests/base-readers.sh
+git rm -q plugins/flow/tests/adapter-contract.sh
+result > /dev/null
+expect 'DeletedContractSuite_RunsTheRemainingSuites because what it covered is unknown' "$(grep -c '^flow: sessions pass' "$work/output")" 1
+git restore --staged --worktree plugins/flow/tests/adapter-contract.sh
 git mv plugins/flow/tests/sessions.sh plugins/flow/tests/renamed.sh
 expect 'RemovedSuite_RunsFullCoverage because its old path has no runnable suite' "$(result)" fail
 expect 'FullCoverage_IncludesJiraContract because each backend has its own contract run' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
@@ -92,8 +113,14 @@ git mv plugins/flow/tests/renamed.sh plugins/flow/tests/sessions.sh
 git tag unavailable HEAD
 expect 'MissingBaseWithARefOfThatName_RunsFullCoverage because a ref can take any name' "$(result)" fail
 expect 'MissingBaseWithARefOfThatName_IncludesJiraContract because every suite runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
+mkdir "$work/holders"
 for stub in "$suite"/*.sh; do
-  printf 'if mkdir "%s/lane" 2>/dev/null; then sleep %s; rmdir "%s/lane"; else echo overlap >> "%s/overlaps"; fi\n' "$work" "$lane_hold_seconds" "$work" "$work" > "$stub"
+  cat > "$stub" <<STUB
+: > "$work/holders/\$\$"
+[ "\$(ls "$work/holders" | wc -l | tr -d ' ')" -eq 1 ] || echo overlap >> "$work/overlaps"
+sleep $lane_hold_seconds
+rm "$work/holders/\$\$"
+STUB
 done
 overlapped() { if [ -f "$work/overlaps" ]; then echo overlapped; else echo alone; fi; }
 export FLOW_SUITE_LANES=1
