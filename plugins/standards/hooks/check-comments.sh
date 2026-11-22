@@ -22,6 +22,10 @@ commit_has_marker "$seg" "[why-comment]" && allow_line=1
 commit_has_marker "$seg" "[allow-docs]" && allow_doc=1
 [ "$allow_line" -eq 1 ] && [ "$allow_doc" -eq 1 ] && exit 0
 diff_args="$(commit_diff_args "$seg")"
+work_folder="$(mktemp -d)" || exit 0
+trap 'rm -rf "$work_folder"' EXIT
+mkdir "$work_folder/content"
+set -f
 hits=""
 count="$(json_length "$config" "languages")"
 i=0
@@ -38,14 +42,20 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
   [ -n "$line_tok" ] && [ -n "$globs" ] || continue
   # shellcheck disable=SC2086
-  diff="$(git diff $diff_args -U1 --no-color -- $globs 2>/dev/null || true)"
+  diff="$(git diff $diff_args --diff-filter=ACMRT -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
-  # The committed content of a file, for the enclosing-type lookup: the index, or the working tree
-  # when the commit reads it.
-  if [ "$diff_args" = "--cached" ]; then show="git show :"; else show="cat "; fi
-  found="$(printf '%s\n' "$diff" | awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
-      -v markers="$markers" -v kinds="$kinds" -v show="$show" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
-    BEGIN { nk = split(kinds, karr, " "); for (k = 1; k <= nk; k++) if (karr[k] != "") okkind[karr[k]] = 1 }
+  # shellcheck disable=SC2086 # diff_args and globs are lists of arguments
+  git diff $diff_args -z --name-only --diff-filter=ACMRT -- $globs > "$work_folder/names-null-separated" 2>/dev/null || true
+  LC_ALL=C xargs -0 sh -c 'for name; do printf "%s\n%s\n" "${#name}" "$name"; done' sh < "$work_folder/names-null-separated" > "$work_folder/names-with-lengths"
+  committed_content_root="./"
+  if [ "$diff_args" = "--cached" ]; then
+    git -c core.symlinks=false checkout-index -f -z --stdin --prefix="$work_folder/content/" < "$work_folder/names-null-separated" \
+      || block "the staged content could not be read" "  git checkout-index failed on the staged files."
+    committed_content_root="$work_folder/content/"
+  fi
+  found="$(printf '%s\n' "$diff" | LC_ALL=C awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
+      -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_folder/names-with-lengths" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
+    BEGIN { kind_count = split(kinds, kind_list, " "); for (k = 1; k <= kind_count; k++) if (kind_list[k] != "") allowed_kind[kind_list[k]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
     function kind_of(l,   m) {
       if (match(l, /(^|[^A-Za-z0-9_])(interface|enum|class|struct|record)[ \t]+[A-Za-z_]/)) {
@@ -53,23 +63,35 @@ while [ "$i" -lt "$count" ]; do
       }
       return ""
     }
-    function doc_allowed(file, line,   cmd, l, i, k, ind, li, kind, buf) {
-      # True when the declaration at line, or the nearest enclosing type declaration (the first
-      # type keyword above it at a smaller indentation), is one of the allowed kinds.
-      if (nk == 0) return 0
-      cmd = show "\047" file "\047"
-      i = 0; while ((cmd | getline l) > 0) buf[++i] = l
-      close(cmd)
-      if (line > i) return 0
-      kind = kind_of(buf[line]); if (kind != "") return (kind in okkind)
-      match(buf[line], /^[ \t]*/); ind = RLENGTH
-      for (k = line - 1; k >= 1; k--) {
-        l = buf[k]; if (l ~ /^[ \t]*$/) continue
-        match(l, /^[ \t]*/); li = RLENGTH
-        if (li >= ind) continue
-        kind = kind_of(l); if (kind != "") return (kind in okkind)
+    function next_name(   byte_count, name, continuation) {
+      if ((getline byte_count < names_path) <= 0) return ""
+      getline name < names_path
+      while (length(name) < byte_count) { getline continuation < names_path; name = name "\n" continuation }
+      return name
+    }
+    function read_committed_lines(file,   path, text, count) {
+      split("", committed_lines)
+      path = committed_content_root file
+      count = 0; while ((getline text < path) > 0) committed_lines[++count] = text
+      close(path)
+      return count
+    }
+    function indentation_of(text) { match(text, /^[ \t]*/); return RLENGTH }
+    function outer_kind(above, indentation,   kind) {
+      for (; above >= 1; above--) {
+        if (committed_lines[above] ~ /^[ \t]*$/ || indentation_of(committed_lines[above]) >= indentation) continue
+        kind = kind_of(committed_lines[above]); if (kind != "") return kind
       }
-      return 0
+      return ""
+    }
+    function declaration_or_enclosing_kind(line,   kind) {
+      kind = kind_of(committed_lines[line]); if (kind != "") return kind
+      return outer_kind(line - 1, indentation_of(committed_lines[line]))
+    }
+    function doc_allowed(file, line,   kind) {
+      if (kind_count == 0 || line > read_committed_lines(file)) return 0
+      kind = declaration_or_enclosing_kind(line)
+      return kind != "" && (kind in allowed_kind)
     }
     function settle(body) {
       # The line after a doc block decides it: an attribute keeps it pending, a public or
@@ -83,9 +105,9 @@ while [ "$i" -lt "$count" ]; do
       return 0
     }
     function is_public(b) { return pub != "" && b ~ ("(^|[^A-Za-z0-9_])" pub "([^A-Za-z0-9_]|$)") }
-    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); next }
-    /^--- /    { next }
-    /^@@ /     { flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+    /^diff --git / { in_hunk = 0; if ($0 != previous_header) f = next_name(); previous_header = $0; next }
+    !in_hunk && /^(---|\+\+\+) / { next }
+    /^@@ /     { in_hunk = 1; flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
     /^\+/ {
       body = substr($0, 2)
       if (doc_tok != "" && index(body, doc_tok) && body !~ /:\/\/\//) {
@@ -99,7 +121,8 @@ while [ "$i" -lt "$count" ]; do
     }
     /^ / { body = substr($0, 2); if (pending != "") settle(body); n++; next }
     /^-/ { flush(); next }
-    END { flush(); printf "%s", hits }')"
+    END { flush(); printf "%s", hits }')" \
+    || block "the comment check could not read the diff" "  awk failed on the diff of the staged files."
   hits="$hits$found"
 done
 [ -n "$hits" ] || exit 0
