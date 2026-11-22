@@ -36,6 +36,9 @@ LEAST_WHOLE_NUMBER = 1
 SIGNAL_EXIT_BASE = 128
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 PRESENCE_PROBE_SIGNAL = 0
+ZOMBIE_STATE = "Z"
+PROCESS_TABLE = Path("/proc")
+PROCESS_GROUP_FIELD = 2
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ class LaneCount:
 
 STOP_GRACE = Duration(10)
 POLL_INTERVAL = Duration(0.1)
+PROCESS_LISTING_LIMIT = Duration(10)
 
 
 class Clock(Protocol):
@@ -128,12 +132,34 @@ def signal_group(process: subprocess.Popen, number: signal.Signals) -> bool:
     return True
 
 
+def states_in_process_table(group: int) -> "list[str]":
+    states = []
+    for status in PROCESS_TABLE.glob("[0-9]*/stat"):
+        try:
+            fields = status.read_text().rpartition(")")[2].split()
+        except OSError:
+            continue
+        if int(fields[PROCESS_GROUP_FIELD]) == group:
+            states.append(fields[0])
+    return states
+
+
+def states_in_process_listing(group: int) -> "list[str]":
+    listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True, timeout=PROCESS_LISTING_LIMIT.seconds, check=False)
+    rows = (line.split() for line in listing.stdout.splitlines())
+    return [state for member_group, state in rows if int(member_group) == group]
+
+
+def member_states(group: int) -> "list[str]":
+    return states_in_process_table(group) if PROCESS_TABLE.is_dir() else states_in_process_listing(group)
+
+
 def group_has_members(process: subprocess.Popen) -> bool:
     try:
         os.killpg(process.pid, PRESENCE_PROBE_SIGNAL)
     except (ProcessLookupError, PermissionError):
         return False
-    return True
+    return any(not state.startswith(ZOMBIE_STATE) for state in member_states(process.pid))
 
 
 def group_ended(process: subprocess.Popen) -> bool:

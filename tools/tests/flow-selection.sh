@@ -83,7 +83,7 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
-limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800
+limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=10
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
 sleep $child_seconds &
@@ -92,9 +92,10 @@ echo \$! > "$work/child"
 sleep $child_seconds
 STUB
 printf 'sleep %s\necho "  ok   Stub_WithinTheLimit"\n' "$lane_hold_seconds" > "$suite/sessions.sh"
+process_running() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) return 1 ;; esac; }
 process_state() {
-  ticks=0; while kill -0 "$1" 2>/dev/null && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
-  if kill -0 "$1" 2>/dev/null; then kill -KILL "$1"; echo running; else echo ended; fi
+  ticks=0; while process_running "$1" && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
+  if process_running "$1"; then kill -KILL "$1"; echo running; else echo ended; fi
 }
 suite_seconds() { awk -v name="$1" '$1 == "flow:" && $2 == name && ($3 == "pass" || $3 == "FAIL") { gsub(/[()s]/, "", $4); print int($4) }' "$work/output"; }
 runner_lines_besides_start_and_end() { grep "^flow: $1 " "$work/output" | grep -vE "^flow: $1 (started\$|(pass|FAIL) \()"; }
@@ -129,10 +130,8 @@ echo \$! > "$work/child"
 : > "$work/deaf-suite-ready"
 sleep $child_seconds
 STUB
-mkdir "$work/stepping-logs"
-python3 -I -B - "$project/tools/lib" "$work/deaf-suite.sh" "$work/deaf-suite-ready" "$work/stepping-logs" > "$work/output" 2>&1 <<'PY' &
+cat > "$work/stepping-runner.py" <<'PY'
 import sys
-import time
 from pathlib import Path
 sys.path.append(sys.argv[1])
 import flow_suites
@@ -149,13 +148,14 @@ class ClockThatStepsOnceTheSuiteIsReady:
     def sleep(self, duration: flow_suites.Duration) -> None:
         if self.ready.exists():
             self.seconds += duration.seconds
-            return
-        time.sleep(duration.seconds)
 
 
-settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(sys.argv[3])))
-sys.exit(flow_suites.report_run(flow_suites.run_selected({"deaf": ("sh", sys.argv[2])}, Path(sys.argv[4]), settings)))
+name, script, ready, logs = sys.argv[2:]
+settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready)))
+sys.exit(flow_suites.report_run(flow_suites.run_selected({name: ("sh", script)}, Path(logs), settings)))
 PY
+run_on_stepping_clock() { mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$@" "$work/stepping-logs" > "$work/output" 2>&1; }
+run_on_stepping_clock deaf "$work/deaf-suite.sh" "$work/deaf-suite-ready" &
 stepping_runner=$!
 expect 'SuitePastTheDefaultLimitOnTheClockItIsGiven_IsStoppedWithoutTheLimitPassingForReal because the runner times a suite by its injected clock' "$(process_state "$stepping_runner")" ended
 wait "$stepping_runner" || true
@@ -163,6 +163,35 @@ expect 'SuiteDeafToTerm_HasItsChildKilled because a stopped suite leaves no chec
 expect 'SuiteDeafToTerm_IsKilledOnlyOnceTheGraceTimePasses because the group gets time to clean up before KILL' "$(if [ "$(suite_seconds deaf)" -gt "$default_limit_seconds" ]; then echo after-grace; else echo at-limit; fi)" after-grace
 expect 'SuiteDeafToTerm_IsReportedAsFailed because a stopped suite is never counted as a pass' "$(tail -1 "$work/output")" 'flow: failed in deaf'
 rm -r "$work/child" "$work/deaf-suite.sh" "$work/deaf-suite-ready" "$work/stepping-logs"
+cat > "$work/parent-of-an-exited-child.py" <<'PY'
+import os
+import sys
+import time
+from pathlib import Path
+
+exited_child_file, parent_file, ready_file, lifetime_seconds = sys.argv[1:]
+reader, writer = os.pipe()
+child = os.fork()
+if child == 0:
+    os._exit(0)
+os.close(writer)
+os.setpgid(0, 0)
+os.read(reader, 1)
+Path(exited_child_file).write_text(str(child))
+Path(parent_file).write_text(str(os.getpid()))
+Path(ready_file).touch()
+time.sleep(int(lifetime_seconds))
+PY
+cat > "$work/exited-child-suite.sh" <<STUB
+echo "  ok   Stub_LeavesAnExitedChild"
+python3 -I "$work/parent-of-an-exited-child.py" "$work/exited-child" "$work/parent" "$work/exited-child-suite-ready" $child_seconds &
+sleep $child_seconds
+STUB
+run_on_stepping_clock exited "$work/exited-child-suite.sh" "$work/exited-child-suite-ready" || true
+expect 'SuiteWhoseGroupHoldsOnlyAnExitedChild_EndsBeforeTheGraceTimePasses because a child that has exited runs no check' "$(if [ "$(suite_seconds exited)" -lt "$((default_limit_seconds + grace_seconds))" ]; then echo before-grace; else echo after-grace; fi)" before-grace
+expect 'SuiteWhoseGroupHoldsOnlyAnExitedChild_LeavesNoCheckRunning because a child that has exited but is not yet reaped runs nothing' "$(process_state "$(cat "$work/exited-child")")" ended
+kill "$(cat "$work/parent")"
+rm -r "$work/exited-child" "$work/parent" "$work/parent-of-an-exited-child.py" "$work/exited-child-suite.sh" "$work/exited-child-suite-ready" "$work/stepping-logs" "$work/stepping-runner.py"
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
 touch plugins/flow/README.md
