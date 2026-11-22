@@ -153,7 +153,7 @@ def render_all(root):
         out.update(render_plugin(plugin, roster, root))
     out.update(render_marketplaces(plugins))
     standards = [p for p in plugins if p["name"] == "standards"]
-    rendered_rules = rules.Rendered(files={}, problem="")
+    rendered_rules = rules.rendered(files={}, problem="")
     if standards:
         rendered_rules = rules.render(root, standards[0]["version"])
         out.update(rendered_rules.files)
@@ -167,7 +167,7 @@ def render_all(root):
         "model_map": roster["model_map"],
         "tiers": roster["tiers"],
     })
-    return rules.Rendered(files=out, problem=rendered_rules.problem)
+    return rules.rendered(files=out, problem=rendered_rules.problem)
 
 
 def generated_on_disk(root):

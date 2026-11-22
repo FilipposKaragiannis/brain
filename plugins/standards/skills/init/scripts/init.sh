@@ -223,7 +223,8 @@ remove_left_out_copy() {
   [ -f "$1" ] || return 0
   if [ "$check" -eq 1 ]; then drifted "stale: $1 (no configured language uses it)"
   elif [ "$(stamp_get "$stamp" "$1")" = "$(hash_file "$1")" ]; then rm -f "$1" && note "$1 removed (no configured language uses it)"
-  else echo "init: $1 is stale (no configured language uses it) but was edited by hand; delete it yourself"; fi
+  else echo "init: $1 is stale (no configured language uses it) but was edited by hand; delete it yourself"
+    [ -z "$(stamp_get "$stamp" "$1")" ] || kept="$kept$1$newline"; fi
 }
 while IFS="$tab" read -r appendix_file appendix_globs; do
   if [ -z "$appendix_file" ]; then continue

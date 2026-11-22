@@ -51,10 +51,10 @@ def extensions_problem(value: object, where: str) -> str:
     return "%s: extensions must be a list like [\".sh\"], not %s" % (where, json.dumps(value))
 
 
-def appendices_problem(data: object, path: str) -> str:
-    if not isinstance(data, list):
+def appendices_problem(appendix_entries: object, path: str) -> str:
+    if not isinstance(appendix_entries, list):
         return "%s: not a list of appendices" % path
-    for position, entry in enumerate(data):
+    for position, entry in enumerate(appendix_entries):
         where = "%s[%d]" % (path, position)
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             return "%s: an appendix needs a file name" % where
@@ -64,8 +64,8 @@ def appendices_problem(data: object, path: str) -> str:
     return ""
 
 
-def configured_languages(data: object) -> list:
-    languages = data.get("languages") if isinstance(data, dict) else None
+def configured_languages(project_config: object) -> list:
+    languages = project_config.get("languages") if isinstance(project_config, dict) else None
     return languages if isinstance(languages, list) else []
 
 
@@ -75,10 +75,10 @@ def language_extensions(language: dict) -> list:
     return [] if extensions is None else extensions
 
 
-def languages_problem(data: object, path: str) -> str:
-    if isinstance(data, dict) and "languages" in data and not isinstance(data["languages"], list):
+def languages_problem(project_config: object, path: str) -> str:
+    if isinstance(project_config, dict) and "languages" in project_config and not isinstance(project_config["languages"], list):
         return "%s: languages is not a list" % path
-    for position, language in enumerate(configured_languages(data)):
+    for position, language in enumerate(configured_languages(project_config)):
         where = "%s: languages[%d]" % (path, position)
         if not isinstance(language, dict):
             return "%s: a language must be an object, not %s" % (where, json.dumps(language))
@@ -94,21 +94,21 @@ def failed(problem: str) -> Selection:
 
 def load(appendices_path: str, config_path: str) -> Selection:
     try:
-        appendix_data = read_json(appendices_path)
+        appendix_entries = read_json(appendices_path)
     except (OSError, ValueError) as error:
         return failed("%s: %s" % (appendices_path, error))
     try:
-        config_data = read_json(config_path)
+        project_config = read_json(config_path)
     except FileNotFoundError:
-        config_data = {}
+        project_config = {}
     except (OSError, ValueError) as error:
         return failed("%s: %s" % (config_path, error))
-    problem = appendices_problem(appendix_data, appendices_path) or languages_problem(config_data, config_path)
+    problem = appendices_problem(appendix_entries, appendices_path) or languages_problem(project_config, config_path)
     if problem:
         return failed(problem)
     return Selection(
-        appendices=tuple(Appendix(file=entry["file"], extensions=tuple(entry["extensions"])) for entry in appendix_data),
-        configured=tuple(tuple(language_extensions(language)) for language in configured_languages(config_data)),
+        appendices=tuple(Appendix(file=entry["file"], extensions=tuple(entry["extensions"])) for entry in appendix_entries),
+        configured=tuple(tuple(language_extensions(language)) for language in configured_languages(project_config)),
         problem="",
     )
 

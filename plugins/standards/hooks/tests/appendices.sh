@@ -17,6 +17,7 @@ done
 PATH="$work/offline:$PATH"; export PATH
 PYTHONDONTWRITEBYTECODE=1; export PYTHONDONTWRITEBYTECODE
 repository_root="$(cd "$hooks/../../.." && pwd)"
+block_byte_budget=6144
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -68,7 +69,7 @@ assert indexed == expected, (indexed, expected)
 for rule_id, file in expected.items():
     assert ("**" + rule_id + "**") in open(rules_out + "/" + file, encoding="utf-8").read(), rule_id' "$rules_out" "$standards_source"
 check "Block_FitsSixKilobytes: the compact block stays inside the Codex budget" \
-  sh -c '[ "$(wc -c < "$1" | tr -d " ")" -le 6144 ]' _ "$rules_out/block.md"
+  sh -c '[ "$(wc -c < "$1" | tr -d " ")" -le "$2" ]' _ "$rules_out/block.md" "$block_byte_budget"
 check "Block_NamesEveryAppendix: the block points at the C#, shell and Python appendix files" \
   sh -c 'tr "\n" " " < "$1" | grep -q "rules/csharp.md.*rules/shell.md.*rules/python.md"' _ "$rules_out/block.md"
 
@@ -153,6 +154,15 @@ python3 -I -c 'import json, sys; path = sys.argv[1]; config = json.load(open(pat
 "$init" > "$work/scripts.dropped.out" 2>&1
 check "LanguageDropped_RemovesItsAppendix: init removes the Python rules it wrote once Python leaves the config" \
   sh -c '[ ! -e .standards/rules/python.md ] && [ ! -e .claude/rules/standards-python.md ] && [ -f .claude/rules/standards-shell.md ]'
+configure_shell_and_python
+"$init" > "$work/scripts.readded.out" 2>&1
+printf '%s\n' '- An owner edit.' >> .claude/rules/standards-python.md
+python3 -I -c 'import json, sys; path = sys.argv[1]; config = json.load(open(path)); config["languages"] = config["languages"][:1]; json.dump(config, open(path, "w"))' .standards/config.json
+"$init" > "$work/scripts.edited.dropped.out" 2>&1
+configure_shell_and_python
+"$init" > "$work/scripts.edited.readded.out" 2>&1
+check "EditedAppendixLanguageDroppedAndReadded_KeepsTheEdit: an edited appendix left on disk keeps its stamp, so a later install refuses to overwrite it" \
+  grep -qxF -- '- An owner edit.' .claude/rules/standards-python.md
 
 echo "init: machine scope"
 new_project "$work/machine"
