@@ -683,6 +683,648 @@
    "suite": "jobs",
    "name": "LedgerTheTypeCheckReads_HoldsTheRunsOfSeveralJobs: one job's line alone cannot pass it",
    "reason": "the moved type check must not pass on a ledger of one job's line"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingGateComment_IsReported: the owner learns the comment is missing",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingGateComment_LeavesTheGateInTheState: the tracker keeps the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingGateComment_StillWaitsAtTheGate: the comment is no part of the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingNotifier_IsReported: the owner learns no notification went out",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingNotifier_LeavesTheGateInTheState: the tracker keeps the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingNotifier_LeavesTheGateRecordOnThisHost: the board still lists the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "FailingNotifier_StillWaitsAtTheGate: a notification is no part of the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GateRecordTheTrackerLacks_NamesTheGate: the owner learns which gate holds the item",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GateRecordTheTrackerLacks_NamesTheRecord: the owner learns where the gate is recorded",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GateRecordTheTrackerLacks_SaysHowToAnswer: the owner learns the command that clears it",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GateRecordTheTrackerLacks_StartsNoRun: no step runs behind the record",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GateRecordTheTrackerLacks_StopsNextWithTheGateWaitStatus: the owner was asked, so the step waits for the answer",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubFailingGateComment_IsReported: the owner learns the comment is missing",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubFailingGateComment_StillWaitsAtTheGate: the comment is no part of the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRefusedGateLabels_DoesNotExitWithTheGateWaitStatus: the caller must not report the item as waiting at a gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRefusedGateLabels_ExitsWithAFailure: the caller must not report success",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRefusedGateLabels_KeepsTheIssueAtThePlanStep: no reader sees implement without the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRefusedGateLabels_RecordsNoGateInTheState: the issue holds neither half of the transition",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRetryAfterARefusal_ExitsWithTheGateWaitStatus: the retry completes the transition",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRetryAfterARefusal_MovesTheIssueToImplement: the step lands with the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubRetryAfterARefusal_RecordsThePlanApprovalGate: the issue shows the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubStateCommentRefusedAfterTheLabels_IsReported: the owner learns the state write failed part way",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubStateCommentRefusedAfterTheLabels_ShowsTheGateOnTheIssue: the issue blocks implement",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubStateCommentRefusedAfterTheLabels_WaitsAtTheGate: the labels carry the gate, so it stands",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "GitHubStateCommentRefusedAfterTheLabels_WritesTheGateRecord: the board lists the gate the issue shows",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "JiraRefusedGateLabels_DoesNotExitWithTheGateWaitStatus: the caller must not report the item as waiting at a gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "JiraRefusedGateLabels_ExitsWithAFailure: the caller must not report success",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "JiraRefusedGateLabels_KeepsTheIssueAtThePlanStep: no reader sees implement without the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "JiraStatePropertyRefusedAfterTheLabels_ShowsTheGateOnTheIssue: the issue blocks implement",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "JiraStatePropertyRefusedAfterTheLabels_WaitsAtTheGate: the labels carry the gate, so it stands",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_DoesNotExitWithTheGateWaitStatus: the caller must not report the item as waiting at a gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_ExitsWithAFailure: a write that died recorded nothing",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_KeepsTheItemAtThePlanStep: the step and the gate land together or not at all",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_KeepsTheRun: advance.sh run again picks the gate transition up",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_NextDoesNotSucceed: the caller is not handed a step to run",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_NextStartsNoImplementStep: the plan is not approved",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "KilledGateWrite_RecordsNoGateInTheState: the tracker holds neither half of the transition",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PickWithAGateRecordTheTrackerLacks_HandsNoStep: the pick passes the item over",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PickWithAGateRecordTheTrackerLacks_NamesTheRecord: the owner learns why the item was passed over",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PickWithAGateRecordTheTrackerLacks_StartsNoRun: no step runs behind the record",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PlanDone_ExitsWithTheGateWaitStatus: the owner approves before implement",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PlanDone_MovesTheItemToImplement: the step after the gate is recorded with it",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PlanDone_RaisesOneGateComment: the owner is asked once",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "PlanDone_RecordsThePlanApprovalGate: the tracker shows the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedChangesWrite_KeepsTheRun: advance.sh run again records the changes",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedDoneWriteAfterAClosedEpic_KeepsTheRun: advance.sh run again records the epic done",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedDoneWriteWithNothingToMerge_KeepsTheRun: advance.sh run again records the item done",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedFailWrite_KeepsTheRun: advance.sh run again counts the attempt",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWriteWithItsRunGone_NextRunsThePlanAgain: the tracker state alone keeps the item before the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_DoesNotExitWithTheGateWaitStatus: the caller must not report the item as waiting at a gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_ExitsWithAFailure: the caller must not report success",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_KeepsTheItemAtThePlanStep: no reader sees the step past an unrecorded gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_KeepsTheRun: advance.sh run again picks the gate transition up",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_NamesTheGate: the owner reads which gate the retry raises",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_NamesTheItem: the owner reads where the retry raises the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_NamesTheTrackersReason: the owner reads why no gate was raised",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_NextDoesNotSucceed: the caller is not handed a step to run",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_NextStartsNoImplementStep: the plan is not approved",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_RecordsNoGateInTheState: the tracker holds neither half of the transition",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedGateWrite_RecordsNoGateOnThisHost: the owner is not asked a question the tracker does not hold",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedHoldLift_KeepsTheRun: advance.sh run again lifts the hold",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedHoldWrite_KeepsTheRun: an item whose hold was not recorded must not go on unheld",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedStepWriteAfterAResize_KeepsTheOldSize: no reader sees the new size with the old profile",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedStepWriteAfterAResize_KeepsTheRun: advance.sh run again applies the re-size",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedTouchesWrite_KeepsTheRun: advance.sh run again records the touches",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedWritePastAnAnsweredGate_KeepsTheRun: advance.sh run again moves the item on",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RefusedWritePastAnAutoApprovedGate_KeepsTheRun: advance.sh run again moves the item on",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAKilledGateWrite_ExitsWithTheGateWaitStatus: the retry completes the transition",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAKilledGateWrite_LogsOneGateRaise: the board shows one raise of the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAKilledGateWrite_RaisesOneGateComment: the owner is asked once",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAKilledGateWrite_RecordsThePlanApprovalGate: the item waits at the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedChangesWrite_RecordsTheChanges: the holds read what the plan changes",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedDoneWriteAfterAClosedEpic_RecordsTheEpicDone: the state agrees with the closed epic",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedDoneWriteWithNothingToMerge_RecordsTheItemDone: the state agrees with the closed item",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedDoneWriteWithNothingToMerge_ReleasesTheWorktree: a closed item must not hold a pool worktree",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedFailWrite_CountsOneAttempt: the failure counts toward the escalation",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedFailWrite_MovesToTheFixStep: the review's gap goes back to implement",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_ExitsWithTheGateWaitStatus: the transition the refusal stopped completes",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_LogsOneGateRaise: the board shows one raise of the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_MovesTheItemToTheStepAfterTheGate: the step lands with the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_NextExitsWithTheGateWaitStatus: implement waits for the approval",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_NextStartsNoImplementStep: the plan is still not approved",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_RaisesOneGateComment: the owner is asked once",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_RecordsTheGateInTheState: the item waits at the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedGateWrite_RecordsThePlanApprovalGate: the record names the gate the owner answers",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedHoldLift_LiftsTheHold: a plan with no hold leaves the item free",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedHoldWrite_HoldsTheItemBehindItsHolder: the plan's hold lands",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedStepWriteOnAResize_MovesToTheFirstStepOfTheSmallerProfile: the retry runs the profile the re-size chose",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedStepWriteOnAResize_RecordsTheNewSize: the size lands with the step",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedStepWriteOnAResize_RecordsTheSmallerProfile: the item goes on as a task-S",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedTouchesWrite_RecordsTheTouches: the holds read what the step touched",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedWritePastAnAnsweredGate_DoesNotAskTheGateAgain: the owner answered it at the step",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedWritePastAnAnsweredGate_MovesToImplement: the answer stands",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterARefusedWritePastAnAutoApprovedGate_MovesToImplement: the auto-approval stands",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAStopAfterTheGateWrite_ExitsWithTheGateWaitStatus: the retry finishes the raise",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAStopAfterTheGateWrite_LogsOneGateRaise: the board shows one raise of the gate",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "RetryAfterAStopAfterTheGateWrite_RaisesOneGateComment: the owner is asked once",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "StopAfterAnAskedGateIsRaised_DoesNotAskTheGateAgainOnceAnswered: the ask was recorded before the raise",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "StopAfterTheGateWrite_DoesNotExitWithTheGateWaitStatus: the caller must not report the raise as done",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "StopAfterTheGateWrite_ExitsWithAFailure: the raise did not finish",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "StopAfterTheGateWrite_LeavesTheGateInTheState: the item past the plan stays blocked",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "addition",
+   "suite": "gate-transition",
+   "name": "StopAfterTheGateWrite_NextStartsNoImplementStep: the plan is not approved",
+   "reason": "added after the baseline by fix(flow): an item never passes a human gate that was not recorded"
+  },
+  {
+   "kind": "loss",
+   "suite": "base-claim",
+   "name": "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_ClaimsNoWorktree [en_US.UTF-8]: the branch is on the remote, but its name is refused whatever the locale",
+   "reason": "the baseline child logs were taken on a Mac whose UTF-8 locale lets a letter outside ASCII through the ranges; CI's Linux has no such locale, so these rows skip there, and the move does not touch base-claim.sh"
+  },
+  {
+   "kind": "loss",
+   "suite": "base-claim",
+   "name": "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_LastEventSaysTheNameIsNotValid [en_US.UTF-8]: the refusal is the name check, not a missing branch",
+   "reason": "the baseline child logs were taken on a Mac whose UTF-8 locale lets a letter outside ASCII through the ranges; CI's Linux has no such locale, so these rows skip there, and the move does not touch base-claim.sh"
+  },
+  {
+   "kind": "loss",
+   "suite": "base-claim",
+   "name": "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_NamedRunExitsWithThePassOverCode [en_US.UTF-8]: a refused base passes the item over like a missing one",
+   "reason": "the baseline child logs were taken on a Mac whose UTF-8 locale lets a letter outside ASCII through the ranges; CI's Linux has no such locale, so these rows skip there, and the move does not touch base-claim.sh"
+  },
+  {
+   "kind": "loss",
+   "suite": "base-claim",
+   "name": "StewardClaimWithALetterOutsideAsciiInAUnicodeLocale_ExitsWithTheUsageCode [en_US.UTF-8]: steward's own claim refuses the name whatever the locale",
+   "reason": "the baseline child logs were taken on a Mac whose UTF-8 locale lets a letter outside ASCII through the ranges; CI's Linux has no such locale, so these rows skip there, and the move does not touch base-claim.sh"
+  },
+  {
+   "kind": "skip",
+   "suite": "base-claim",
+   "name": "no installed UTF-8 locale lets a letter outside ASCII through the ranges, so the rows that refuse it in one cannot run here",
+   "reason": "the baseline child logs were taken on a Mac whose UTF-8 locale lets a letter outside ASCII through the ranges; CI's Linux has no such locale, so these rows skip there, and the move does not touch base-claim.sh"
   }
  ]
 }

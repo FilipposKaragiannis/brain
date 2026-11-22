@@ -115,8 +115,10 @@ git mv plugins/flow/tests/sessions.sh plugins/flow/tests/renamed.sh
 expect 'RemovedSuite_RunsFullCoverage because its old path has no runnable suite' "$(result)" fail
 expect 'FullCoverage_IncludesJiraContract because each backend has its own contract run' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
 base=unavailable
+printf 'exit 1\n' > "$suite/verify-scope.sh"
 expect 'MissingBase_RunsFullCoverage because the changed inputs cannot be determined' "$(result)" fail
-expect 'FailedRun_NamesItsFailedSuitesLast because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in contract-jira'
+expect 'FailedRun_NamesItsFailedSuitesLast because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in contract-jira, verify-scope'
+printf 'exit 0\n' > "$suite/verify-scope.sh"
 git mv plugins/flow/tests/renamed.sh plugins/flow/tests/sessions.sh
 git tag unavailable HEAD
 expect 'MissingBaseWithARefOfThatName_RunsFullCoverage because a ref can take any name' "$(result)" fail

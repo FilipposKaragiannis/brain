@@ -257,20 +257,17 @@ PY2
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "AppTestScriptOutsideSandbox_FailsLint: lint exits 1 and names an app whose test script skips tools/lib/sandboxed.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
 fresh
-mkdir -p "$demo/tests"
-printf '%s\n' '#!/bin/sh' 'here="$(cd "$(dirname "$0")" && pwd)"' 'case "$#" in' \
-  '  0) exec python3 -I "$here/../../../tools/lib/flow_suites.py" all ;;' '  *) echo "usage: run.sh" >&2; exit 2 ;;' 'esac' \
-  > "$demo/tests/run.sh"
+flow_dispatcher="$repo/plugins/flow/tests/run.sh"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"
-check "DispatcherWithoutSandbox_IsNotNamedByLint: a run.sh that only hands the run to flow_suites.py holds no check to keep in the sandbox" sh -c "! printf '%s' \"\$0\" | grep -q 'plugins/demo/tests/run.sh'" "$out"
-cp "$demo/tests/run.sh" "$demo/tests/sessions.sh"
-printf 'expect "x" 1 1\n' >> "$demo/tests/sessions.sh"
+check "FlowDispatcherHoldingOnlyTheDispatch_IsNotNamedByLint: the flow run.sh that only hands the run to flow_suites.py needs no sandbox lines" sh -c "! printf '%s' \"\$0\" | grep -q 'plugins/flow/tests/run.sh'" "$out"
+mkdir -p "$demo/tests"
+cp "$flow_dispatcher" "$demo/tests/run.sh"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
-check "SuiteCopyingTheDispatcherLine_FailsLint: lint exits 1 and names a suite that holds checks outside the sandbox behind the dispatcher line" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'dispatcher that holds checks: plugins/demo/tests/sessions.sh'" "$out"
-rm "$demo/tests/sessions.sh"
-printf 'check "x" true\n' >> "$demo/tests/run.sh"
+check "SuiteCopyingTheFlowDispatcher_FailsLint: lint exits 1 and names any other file that holds the dispatch outside the sandbox" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+rm "$demo/tests/run.sh"
+printf 'touch "$HOME/setup-outside-the-sandbox"\n' >> "$flow_dispatcher"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
-check "DispatcherHoldingACheck_FailsLint: lint exits 1 and names a dispatcher that holds a check outside the sandbox" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'dispatcher that holds checks: plugins/demo/tests/run.sh'" "$out"
+check "FlowDispatcherWithALineBesideTheDispatch_FailsLint: lint exits 1 and names the flow run.sh once it runs anything but the dispatch" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'flow dispatcher holds more than the dispatch.*plugins/flow/tests/run.sh'" "$out"
 
 echo "test.sh fails a part named on the command line that cannot run"
 # The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.

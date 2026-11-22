@@ -12,6 +12,7 @@ trap 'sandbox_close $?' EXIT
 . "$here/_jobs_fixture.sh"
 . "$here/_claimed_worktree_fixture.sh"
 . "$here/_fake_curl_fixture.sh"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":"OPEN","isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":"","headRefOid":"","baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json"
 echo "decomposition: a split parent and its children"
 mkdir -p "$work/split" && cd "$work/split" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init

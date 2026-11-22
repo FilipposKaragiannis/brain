@@ -175,6 +175,7 @@ check_all "comments job: a newer answer that came while the pass ran is not take
 cp "$work/confirm-host" "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check_all "comments job: the next pass carries the newer answer and takes it" 'grep -q "comments gh#21.* The owner answered the ambiguity gate: Merge it by hand after all\. .*write the line 2026-11-09T09:00:00Z to" "$HOST_LOG" && [ -z "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" ]'
+bump 2026-10-25T00:00:00Z
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a taken answer is not briefed again" sh -c "! grep -q 'The owner answered' '$HOST_LOG'"
 cp "$work/claude.before" "$work/bin/claude"
@@ -548,6 +549,7 @@ check "PassLimitOfZero_RefusesTheRun: a limit that would stop every pass at once
 check_all "PassLimitOfZero_StartsNoPass: no pass is addressed on a zero limit" '! comments_logged_since_mark "addressing "'
 cp "$work/config.workers" .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
+bump 2026-10-25T05:00:00Z; : > .flow/log/comments.log
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: merged PR skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'quiet: no open PR' .flow/log/comments.log"

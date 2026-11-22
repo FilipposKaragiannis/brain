@@ -137,10 +137,17 @@ PY
 
 # Every test suite runs in the sandbox, so no test reaches the checkout it runs from or the
 # owner's config, and a run that does fails.
+flow_dispatcher="plugins/flow/tests/run.sh"
+flow_dispatch='set -u
+here="$(cd "$(dirname "$0")" && pwd)"
+case "$#" in
+  0) exec python3 -I "$here/../../../tools/lib/flow_suites.py" all ;;
+  *) echo "usage: run.sh" >&2; exit 2 ;;
+esac'
 for f in plugins/*/tests/*.sh plugins/*/*/tests/*.sh tools/tests/*.sh; do
   case "$(basename "$f")" in _*|fake-*) continue ;; esac
-  if grep -q '^ *0) exec python3 -I "[^"]*/tools/lib/flow_suites\.py" all ;;$' "$f"; then
-    ! grep -qE '^[[:space:]]*(check|check_all|pass|fail|expect)[[:space:](]' "$f" || fail "a dispatcher that holds checks: $f"
+  if [ "$f" = "$flow_dispatcher" ]; then
+    [ "$(grep -v '^#' "$f")" = "$flow_dispatch" ] || fail "the flow dispatcher holds more than the dispatch to tools/lib/flow_suites.py: $f"
     continue
   fi
   grep -q '^\. "[^"]*/tools/lib/sandbox\.sh"; sandbox_enter "\$work" ' "$f" && grep -q "^trap 'sandbox_close \$?' EXIT$" "$f" \

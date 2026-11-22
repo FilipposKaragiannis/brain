@@ -10,6 +10,7 @@ work="$(mktemp -d)"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
 . "$here/_github_fixture.sh"
+"$P/adapters/github/write-state.sh" 'gh#10' step=design attempts=1 >/dev/null
 echo "github blips (fake gh)"
 # $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.
 export FLOW_GH_RETRY_WAIT="0 0"
