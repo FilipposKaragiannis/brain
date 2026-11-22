@@ -184,8 +184,10 @@ def generated_on_disk(root):
         "plugins/standards/rules/common/*.md",
         "plugins/*/hooks/json.sh",
         "plugins/*/hooks/stamp.sh",
+        "plugins/*/hooks/files_placeholder.sh",
         "plugins/*/lib/json.sh",
         "plugins/*/lib/stamp.sh",
+        "plugins/*/lib/files_placeholder.sh",
         "plugins/standards/templates/agents/*",
     ]
     found = set()
