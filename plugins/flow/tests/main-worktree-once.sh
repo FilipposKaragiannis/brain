@@ -2,22 +2,26 @@
 # main-worktree-once.sh: lib/flow.sh finds the main worktree once per working folder and probes
 # git once per invocation tree, and hands both to child scripts through the environment. An
 # explicit FLOW_HOME, a linked worktree, a cd to another repository, a nested repository and a
-# folder outside any repository still resolve as before, and a counting git first on PATH shows
-# how often one flow command lists the worktrees.
+# folder outside any repository still resolve as before, and a git first on PATH that lists the
+# worktrees only so often shows one flow command still reads its config on that many listings.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-COUNTED_GIT_REAL="$(command -v git)"; COUNTED_GIT_LOG="$work/git-calls.log"
-export COUNTED_GIT_REAL COUNTED_GIT_LOG
-mkdir -p "$work/counted" "$work/scripts"
-cat > "$work/counted/git" <<'SCRIPT'
+RATIONED_GIT_REAL="$(command -v git)"; RATIONED_GIT_LISTINGS="$work/listings-left"
+export RATIONED_GIT_REAL RATIONED_GIT_LISTINGS
+mkdir -p "$work/rationed" "$work/scripts"
+cat > "$work/rationed/git" <<'SCRIPT'
 #!/bin/sh
-printf '%s\n' "$*" >> "$COUNTED_GIT_LOG"
-exec "$COUNTED_GIT_REAL" "$@"
+case "$*" in "worktree list --porcelain")
+  left="$(cat "$RATIONED_GIT_LISTINGS")"
+  [ "$left" -gt 0 ] || { echo "fatal: no worktree listing left" >&2; exit 128; }
+  echo $((left - 1)) > "$RATIONED_GIT_LISTINGS" ;;
+esac
+exec "$RATIONED_GIT_REAL" "$@"
 SCRIPT
-chmod +x "$work/counted/git"
+chmod +x "$work/rationed/git"
 cat > "$work/scripts/flow-home.sh" <<'SCRIPT'
 # flow-home.sh [folder]: the flow home, read after a cd to the folder when one is given.
 . "$FLOW_PLUGIN/lib/flow.sh"
@@ -51,7 +55,7 @@ mkdir -p "$work/broken-git" "$work/stub-git"
 printf '#!/bin/sh\necho "xcrun: error: Failed to locate '\''git'\''" >&2\nexit 1\n' > "$work/broken-git/git"
 cat > "$work/stub-git/git" <<SCRIPT
 #!/bin/sh
-case "\$*" in "worktree list --porcelain") printf 'worktree %s\n' "$work/stub-main" ;; *) exec "$COUNTED_GIT_REAL" "\$@" ;; esac
+case "\$*" in "worktree list --porcelain") printf 'worktree %s\n' "$work/stub-main" ;; *) exec "$RATIONED_GIT_REAL" "\$@" ;; esac
 SCRIPT
 chmod +x "$work/broken-git/git" "$work/stub-git/git"
 xcode_git=/Applications/Xcode.app/Contents/Developer/usr/bin/git
@@ -63,19 +67,18 @@ printf '%s' "$FLOW_GIT_PROGRAM"
 SCRIPT
 scripts="$work/scripts"
 
-# counted <pattern> <command...>: how many git calls matching the pattern the command makes with
-# the counting git first on PATH.
-counted() {
-  counted_pattern="$1"; shift
-  : > "$COUNTED_GIT_LOG"
-  (PATH="$work/counted:$PATH"; export PATH; "$@") >/dev/null 2>&1
-  grep -c -- "$counted_pattern" "$COUNTED_GIT_LOG"
+# rationed <listings> <command...>: what the command prints with a git first on PATH that lists
+# the worktrees that many times and fails every listing after.
+rationed() {
+  printf '%s\n' "$1" > "$RATIONED_GIT_LISTINGS"; shift
+  (PATH="$work/rationed:$PATH"; export PATH; "$@") 2>/dev/null
 }
-worktree_listings() { counted '^worktree list' "$@"; }
 
 new_repo resolving
 app="$(pwd -P)"; other="$(cd "$root/other" && pwd -P)"; nested="$app/nested"
 mkdir -p "$nested" "$work/no-repository" && git -C "$nested" init -q
+three_keys_in_app="$(sh "$scripts/three-keys.sh")"
+[ -n "$three_keys_in_app" ] || { echo "fixture: the main worktree's config reads nothing"; exit 1; }
 
 echo "main worktree once: where the flow home is"
 check "ExplicitFlowHome_WinsOverTheMainWorktree: a caller that names the home gets that home" \
@@ -96,30 +99,28 @@ check "GitDirNamingAnotherRepository_IgnoresTheHandedDownAnswer: a repository th
   '[ "$(env GIT_DIR="$root/other/.git" FLOW_MAIN_WORKTREE="$work/no-repository" FLOW_MAIN_WORKTREE_FOLDER="$PWD" FLOW_MAIN_WORKTREE_SEARCH_PATH="$PATH" sh "$scripts/flow-home.sh")" != "$work/no-repository/.flow" ]'
 check "StubGitPutOnPathForAChild_AnswersForTheChild: a stub the caller puts first on PATH is asked though the parent handed down an answer for the same folder" \
   '[ "$(sh "$scripts/child-with-own-git.sh" "$work/stub-git")" = "$work/stub-main/.flow" ]'
+check "StubGitPutOnPathForAChildOfAParentOnXcodesGit_AnswersForTheChild: a git probe found for another PATH is not taken" \
+  '[ "$(env FLOW_GIT_PROGRAM="$xcode_git" FLOW_GIT_SEARCH_PATH="$PATH" sh "$scripts/child-with-own-git.sh" "$work/stub-git")" = "$work/stub-main/.flow" ]'
 
 echo "main worktree once: how often git is asked"
-check "AnswerHandedDownForThisFolder_ListsNoWorktree: a child script in its parent's folder takes the parent's answer" \
-  '[ "$(worktree_listings env FLOW_MAIN_WORKTREE="$app" FLOW_MAIN_WORKTREE_FOLDER="$PWD" FLOW_MAIN_WORKTREE_SEARCH_PATH="$work/counted:$PATH" sh "$scripts/three-keys.sh")" = 0 ]'
-check "ScriptReadingThreeKeys_ListsTheWorktreesOnce: config reads take the answer found when lib/flow.sh was sourced" \
-  '[ "$(worktree_listings sh "$scripts/three-keys.sh")" = 1 ]'
-check "CdAndResolveInsideOneScript_ListsTheWorktreesOncePerFolder: a script that moves to another clone and resolves again reads three keys on two listings" \
-  '[ "$(worktree_listings sh "$scripts/resolve-after-cd.sh" "$root/other")" = 2 ]'
-check "NewTaskWithItsAdapterChildScripts_ListsTheWorktreesAtMostTwice: a flow command and the scripts it starts in its folder share one answer, where each config read once listed them" \
-  '[ "$(worktree_listings "$plugin/scripts/new.sh" task "Counted task" --size S --body "$body")" -le 2 ]'
-check "NewTaskWithItsAdapterChildScripts_ProbesGitOnce: the git probe is handed down with the main worktree" \
-  '[ "$(counted "^--version" "$plugin/scripts/new.sh" task "Probed task" --size S --body "$body")" = 1 ]'
-check "GitProgramHandedDown_ProbesNoGit: a child script takes its parent's probe" \
-  '[ "$(counted "^--version" env FLOW_GIT_PROGRAM=git sh "$scripts/git-program.sh")" = 0 ]'
+check "AnswerHandedDownForThisFolder_ReadsTheConfigOnNoListing: a child script in its parent's folder takes the parent's answer" \
+  '[ "$(cd "$root/wt-1" && rationed 0 env FLOW_MAIN_WORKTREE="$app" FLOW_MAIN_WORKTREE_FOLDER="$PWD" FLOW_MAIN_WORKTREE_SEARCH_PATH="$work/rationed:$PATH" sh "$scripts/three-keys.sh")" = "$three_keys_in_app" ]'
+check "ScriptReadingThreeKeys_ReadsThemOnOneListing: config reads take the answer found when lib/flow.sh was sourced" \
+  '[ "$(cd "$root/wt-1" && rationed 1 sh "$scripts/three-keys.sh")" = "$three_keys_in_app" ]'
+check "CdAndResolveInsideOneScript_ReadsThreeKeysOnTwoListings: a script that moves to another clone and resolves again lists once per folder" \
+  '[ "$(cd "$other" && rationed 2 sh "$scripts/resolve-after-cd.sh" "$root/wt-1")" = "$three_keys_in_app" ]'
+check "NewTaskWithItsAdapterChildScripts_FilesTheTaskOnTwoListings: a flow command and the scripts it starts in its folder share one answer, where each config read once listed them" \
+  'id="$(cd "$root/wt-1" && rationed 2 "$plugin/scripts/new.sh" task "Rationed task" --size S --body "$body")" && "$local_adapter/read.sh" "$id" >/dev/null'
+check "GitProgramHandedDownForThisPath_IsTakenWithoutAProbe: a child script takes its parent's git where a probe would settle on another" \
+  '[ "$(env FLOW_GIT_PROGRAM="$xcode_git" FLOW_GIT_SEARCH_PATH="$PATH" sh "$scripts/git-program.sh")" = "$xcode_git" ]'
 check "GitProgramHandedDownThatIsNoKnownGit_IsProbedAgain: only git on PATH or Xcode's git is taken from the environment" \
-  '[ "$(env FLOW_GIT_PROGRAM="$work/counted/git" sh "$scripts/git-program.sh")" != "$work/counted/git" ]'
-check "GitProgramHandedDownAsXcodesGit_SendsNoCallToTheGitOnPath: a child of a parent that found the shim broken never runs the shim" \
-  '[ "$(counted . env FLOW_GIT_PROGRAM="$xcode_git" sh "$scripts/three-keys.sh")" = 0 ]'
+  '[ "$(env FLOW_GIT_PROGRAM="$work/rationed/git" FLOW_GIT_SEARCH_PATH="$PATH" sh "$scripts/git-program.sh")" != "$work/rationed/git" ]'
 check "BrokenGitShimFirstOnPath_SettlesOnXcodesGit: when the git on PATH cannot run, flow takes Xcode's git where it is installed" \
   '[ "$(PATH="$work/broken-git:$PATH" sh "$scripts/git-program.sh")" = "$git_behind_a_broken_shim" ]'
 
 echo "main worktree once: the sandbox"
 check "SuiteStartedWithTheHandedDownValues_DoesNotSeeThem: no test inherits a main worktree or a git probe from its caller" \
-  '[ -z "$(env FLOW_MAIN_WORKTREE=x FLOW_MAIN_WORKTREE_FOLDER=y FLOW_MAIN_WORKTREE_SEARCH_PATH=z FLOW_GIT_PROGRAM=git sh -c ". \"\$1\"; sandbox_enter \"\$2\" \"\$3\"; printf %s \"\${FLOW_MAIN_WORKTREE-}\${FLOW_MAIN_WORKTREE_FOLDER-}\${FLOW_MAIN_WORKTREE_SEARCH_PATH-}\${FLOW_GIT_PROGRAM-}\"" sandboxed "$plugin/../../tools/lib/sandbox.sh" "$work/inner" "$plugin")" ]'
+  '[ -z "$(env FLOW_MAIN_WORKTREE=x FLOW_MAIN_WORKTREE_FOLDER=y FLOW_MAIN_WORKTREE_SEARCH_PATH=z FLOW_GIT_PROGRAM=git FLOW_GIT_SEARCH_PATH=w sh -c ". \"\$1\"; sandbox_enter \"\$2\" \"\$3\"; printf %s \"\${FLOW_MAIN_WORKTREE-}\${FLOW_MAIN_WORKTREE_FOLDER-}\${FLOW_MAIN_WORKTREE_SEARCH_PATH-}\${FLOW_GIT_PROGRAM-}\${FLOW_GIT_SEARCH_PATH-}\"" sandboxed "$plugin/../../tools/lib/sandbox.sh" "$work/inner" "$plugin")" ]'
 
 echo "$fails failed"
 [ "$fails" -eq 0 ]

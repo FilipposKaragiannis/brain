@@ -13,14 +13,17 @@ export FLOW_PLUGIN
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
 # ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one.
-# FLOW_GIT_PROGRAM hands the answer to child scripts, which take only git or Xcode's git from it.
 _flow_xcode_git=/Applications/Xcode.app/Contents/Developer/usr/bin/git
 case "${FLOW_GIT_PROGRAM:-}" in
-  git|"$_flow_xcode_git") ;;
-  *) FLOW_GIT_PROGRAM=git
-     if ! command git --version >/dev/null 2>&1 && [ -x "$_flow_xcode_git" ]; then FLOW_GIT_PROGRAM="$_flow_xcode_git"; fi ;;
+  git|"$_flow_xcode_git") [ "${FLOW_GIT_SEARCH_PATH:-}" = "$PATH" ] || FLOW_GIT_PROGRAM="" ;;
+  *) FLOW_GIT_PROGRAM="" ;;
 esac
-export FLOW_GIT_PROGRAM
+if [ -z "$FLOW_GIT_PROGRAM" ]; then
+  FLOW_GIT_PROGRAM=git
+  if ! command git --version >/dev/null 2>&1 && [ -x "$_flow_xcode_git" ]; then FLOW_GIT_PROGRAM="$_flow_xcode_git"; fi
+fi
+FLOW_GIT_SEARCH_PATH="$PATH"
+export FLOW_GIT_PROGRAM FLOW_GIT_SEARCH_PATH
 [ "$FLOW_GIT_PROGRAM" = git ] || git() { "$_flow_xcode_git" "$@"; }
 
 die() { echo "flow: $1" >&2; exit "${2:-1}"; }
@@ -80,8 +83,7 @@ main_worktree() {
   if main_worktree_handed_down; then printf '%s\n' "$FLOW_MAIN_WORKTREE"; return; fi
   git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'
 }
-# main_worktree_handed_down: FLOW_MAIN_WORKTREE was found for this folder and this PATH, with no
-# git override.
+# main_worktree_handed_down: FLOW_MAIN_WORKTREE was found here on this PATH, with no git override.
 main_worktree_handed_down() {
   [ "${FLOW_MAIN_WORKTREE_FOLDER:-}" = "$PWD" ] && [ "${FLOW_MAIN_WORKTREE_SEARCH_PATH:-}" = "$PATH" ] &&
     [ -n "${FLOW_MAIN_WORKTREE+set}" ] && ! git_repository_overridden
