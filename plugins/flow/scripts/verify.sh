@@ -61,6 +61,7 @@ case "$wait_for" in ''|*[!0-9]*) die "--wait takes a number of seconds, not $wai
 given_base="$base"
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
+main_worktree_resolve
 [ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
 [ -n "$base" ] || base="$(recorded_base "$root")"
 reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
