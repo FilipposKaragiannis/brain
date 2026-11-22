@@ -60,6 +60,21 @@ check "ItemTitle_ReachesTheNotifierSubtitleLiterally: the quote swap is gone" \
 check "EventName_ReachesTheNotifierTitleLiterally: the title is no more code than the body" \
   '[ "$(notifier_argument 2)" = "flow: $HOSTILE_TEXT" ]'
 
+echo "gate input: a step result that names a gate profiles.json does not have"
+new_repo advancing
+advancing_item="$(new_task "Advancing")"
+start_step "$advancing_item"
+step_result "$advancing_item" "$(json_value step < "$(run_file "$advancing_item")")" '{"status": "gate", "gate": "merge $(touch pwned)", "message": "Which one?"}'
+"$plugin/scripts/advance.sh" "$advancing_item" > "$work/advance.out" 2> "$work/advance.err"; advance_code=$?
+check "ResultNamingAnUnknownGate_StopsAdvanceWithAUsageExit: the step does not report a gate that was never raised" \
+  '[ "$advance_code" -eq 2 ] && grep -q "profiles.json does not have" "$work/advance.err"'
+check "ResultNamingAnUnknownGate_RaisesNothing: no gate record, no gate event, no gate on the item" \
+  '[ ! -e .flow/gates ] && ! grep -q "merge" .flow/events.log && [ "$(state "$advancing_item" gate)" = none ]'
+check "ResultNamingAnUnknownGate_WritesNoAskedFile: the step is not marked as having asked" \
+  '[ ! -e .flow/asked ] || [ -z "$(ls .flow/asked)" ]'
+check "ResultNamingAnUnknownGate_RunsNoShellText: the name's command substitution did not run" \
+  '[ ! -e pwned ]'
+
 echo "gate input: a label with a space"
 new_repo labels
 printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
