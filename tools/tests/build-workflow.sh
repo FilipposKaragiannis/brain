@@ -28,7 +28,9 @@ _TEST_SCRIPT = "tools/test.sh"
 _LINT_SCRIPT = "tools/lint.sh"
 _LINT_PART = "lint"
 _LINTER_REQUIREMENTS = "tools/requirements-lint.txt"
-_LINTER_INSTALL = ["install", "-r", _LINTER_REQUIREMENTS]
+_INSTALL_COMMAND = "install"
+_REQUIREMENTS_OPTIONS = ("-r", "--requirement")
+_REQUIREMENTS_IN_ONE_WORD = ("-r" + _LINTER_REQUIREMENTS, "--requirement=" + _LINTER_REQUIREMENTS)
 _PART_NAME = re.compile(r"[a-z][a-z-]*")
 _NEW_JOB = {"runs-on": "ubuntu-latest", "timeout-minutes": 5, "steps": [{"run": "true"}]}
 
@@ -82,20 +84,23 @@ def _starts_lint(words: "list[str]", at: int) -> bool:
     return words[at] == _LINT_SCRIPT or (words[at] == _TEST_SCRIPT and _LINT_PART in _parts_after(words[at + 1:]))
 
 
+def _names_linter_requirements(words: "list[str]", at: int) -> bool:
+    return words[at] in _REQUIREMENTS_IN_ONE_WORD or (words[at] in _REQUIREMENTS_OPTIONS and words[at + 1:at + 2] == [_LINTER_REQUIREMENTS])
+
+
+def _installs_linters(words: "list[str]") -> bool:
+    named = [at for at in range(len(words)) if _names_linter_requirements(words, at)]
+    return any(_INSTALL_COMMAND in words[:at] for at in named)
+
+
 def _lints_before_installing(job: dict) -> bool:
     words = _words_in_order(job)
     lint_starts = [at for at in range(len(words)) if _starts_lint(words, at)]
-    installs = [at for at in range(len(words)) if words[at:at + len(_LINTER_INSTALL)] == _LINTER_INSTALL]
-    return bool(lint_starts) and not any(at < lint_starts[0] for at in installs)
+    return bool(lint_starts) and not _installs_linters(words[:lint_starts[0]])
 
 
 def lint_without_linters(workflow: dict) -> "list[str]":
     return sorted(name for name, job in workflow["jobs"].items() if _lints_before_installing(job))
-
-
-def without_linter_install(workflow: dict, job: str) -> dict:
-    steps = [step for step in workflow["jobs"][job]["steps"] if _LINTER_REQUIREMENTS not in step.get("run", "")]
-    return dict(workflow, jobs=dict(workflow["jobs"], **{job: dict(workflow["jobs"][job], steps=steps)}))
 
 
 def without_need(workflow: dict, job: str) -> dict:
@@ -116,7 +121,7 @@ _QUESTIONS = {
     "skip-guard": skip_guard,
     "lint-without-linters": lint_without_linters,
 }
-_EDITS = {"without-need": without_need, "with-job": with_job, "without-linter-install": without_linter_install}
+_EDITS = {"without-need": without_need, "with-job": with_job}
 
 
 def main(arguments: "list[str]") -> int:
@@ -149,7 +154,6 @@ edit without-need "$workflow" flow "$work/without-flow.json"
 edit with-job "$workflow" new-job "$work/with-new-job.json"
 release_workflow="$work/release.json"
 yaml_to_json "$root/.github/workflows/release.yml" "$release_workflow"
-edit without-linter-install "$release_workflow" release "$work/release-without-linters.json"
 job_running() { printf '{"jobs": {"release": {"steps": [%s]}}}' "$1" > "$work/job.json"; ask "$work/job.json" lint-without-linters; }
 
 ask "$workflow" result-script > "$work/result.sh"
@@ -179,8 +183,15 @@ expect 'ConsoleLogWithASkippedCheck_FailsTheJob because a check that did not run
 expect 'ConsoleLogWithEveryCheckRun_PassesTheJob because nothing was left out' "$(skip_guard_for '  ok every check')" pass
 expect 'ContinuousIntegrationJobThatRunsLint_InstallsTheLintersFirst because lint fails there when a linter is missing' "$(ask "$workflow" lint-without-linters)" ''
 expect 'ReleaseJobThatRunsLint_InstallsTheLintersFirst because a release that cannot lint opens no release pull request' "$(ask "$release_workflow" lint-without-linters)" ''
-expect 'ReleaseJobWithoutTheLinterInstall_FailsTheLinterCheck because the check must see a job that lints with no linters' "$(ask "$work/release-without-linters.json" lint-without-linters)" release
+expect 'JobThatLintsWithNoInstall_FailsTheLinterCheck because the check must see a job that lints with no linters' "$(job_running '{"run": "tools/lint.sh"}')" release
 expect 'JobThatOnlyNamesTheRequirementsFile_FailsTheLinterCheck because naming the file installs nothing' "$(job_running '{"run": "echo tools/requirements-lint.txt"}, {"run": "tools/lint.sh"}')" release
 expect 'JobThatInstallsAndLintsInOneStep_PassesTheLinterCheck because the order of the commands is what counts' "$(job_running '{"run": "python -m pip install -r tools/requirements-lint.txt\ntools/lint.sh"}')" ''
 expect 'JobThatLintsThenInstallsInOneStep_FailsTheLinterCheck because lint ran before its linters were there' "$(job_running '{"run": "tools/lint.sh\npython -m pip install -r tools/requirements-lint.txt"}')" release
 expect 'JobThatRunsTheLintPartWithoutTheLinters_FailsTheLinterCheck because the lint part runs the same lint' "$(job_running '{"run": "tools/test.sh tools lint"}')" release
+installing_with() {
+  expect "JobThatInstallsWith${1}_PassesTheLinterCheck because pip takes a requirements file in this form" "$(job_running "{\"run\": \"python -m pip install $2\"}, {\"run\": \"tools/lint.sh\"}")" ''
+}
+installing_with TheShortOption '-r tools/requirements-lint.txt'
+installing_with TheShortOptionJoinedToTheFile '-rtools/requirements-lint.txt'
+installing_with TheLongOption '--requirement tools/requirements-lint.txt'
+installing_with TheLongOptionAndAnEqualsSign '--requirement=tools/requirements-lint.txt'
