@@ -1,4 +1,7 @@
-"""Select Brain's Flow tests and run independent suites in their own sandboxes."""
+"""Select Brain's Flow tests and run independent suites in their own sandboxes.
+
+FLOW_SUITE_LANES sets how many suites run at once, 3 when unset.
+"""
 import json
 import os
 import subprocess
@@ -8,13 +11,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fnmatch import fnmatchcase
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Sequence
+from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
 FLOW = Path("plugins/flow")
 TESTS = FLOW / "tests"
-WORKERS = 3
+DEFAULT_LANES = 3
+LANES_VARIABLE = "FLOW_SUITE_LANES"
 ADAPTERS = ("github", "local", "jira")
 VERIFY_INPUTS = {
     FLOW / "scripts" / name for name in ("verify.sh", "_verify_report.py", "_checks.py")
@@ -109,9 +113,9 @@ def print_output(name: str, log: Path) -> None:
     sys.stdout.buffer.flush()
 
 
-def run_selected(suites, directory):
+def run_selected(suites, directory, lanes: int):
     status = 0
-    with ThreadPoolExecutor(max_workers=WORKERS) as workers:
+    with ThreadPoolExecutor(max_workers=lanes) as workers:
         running = {workers.submit(run_suite, command, directory / name): name for name, command in suites.items()}
         for finished in as_completed(running):
             name = running[finished]
@@ -123,7 +127,14 @@ def run_selected(suites, directory):
     return status
 
 
-def run(root, base):
+def lane_count(environment: Mapping[str, str]) -> int:
+    value = environment.get(LANES_VARIABLE, str(DEFAULT_LANES))
+    if not (value.isascii() and value.isdigit() and int(value) >= 1):
+        sys.exit(f"flow: {LANES_VARIABLE} takes a whole number from 1, not '{value}'")
+    return int(value)
+
+
+def run(root, base, lanes: int):
     suites = commands(root)
     selected = selection(root, base, suites)
     suites["verify"] = ("sh", root / TESTS / "run.sh", "verify")
@@ -136,14 +147,14 @@ def run(root, base):
     planned = {name: command for name, command in suites.items() if name in selected}
     print("flow: selected " + ", ".join(planned), flush=True)
     with TemporaryDirectory(prefix="flow-suites-") as logs:
-        status = run_selected(planned, Path(logs))
+        status = run_selected(planned, Path(logs), lanes)
     print("flow: failed" if status else "flow: ok")
     return status
 
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["all"]:
-        sys.exit(run(ROOT, None))
+        sys.exit(run(ROOT, None, lane_count(os.environ)))
     if len(sys.argv) == 3 and sys.argv[1] == "since":
-        sys.exit(run(ROOT, sys.argv[2]))
+        sys.exit(run(ROOT, sys.argv[2], lane_count(os.environ)))
     sys.exit("usage: flow_suites.py all | since <base commit>")

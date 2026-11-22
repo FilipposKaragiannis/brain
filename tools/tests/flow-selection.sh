@@ -54,3 +54,17 @@ expect 'RemovedSuite_RunsFullCoverage because its old path has no runnable suite
 expect 'FullCoverage_IncludesJiraContract because each backend has its own contract run' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
 base=unavailable
 expect 'MissingBase_RunsFullCoverage because the changed inputs cannot be determined' "$(result)" fail
+for stub in "$suite"/*.sh; do
+  printf 'if mkdir "%s/lane" 2>/dev/null; then sleep 1; rmdir "%s/lane"; else echo overlap >> "%s/overlaps"; fi\n' "$work" "$work" "$work" > "$stub"
+done
+overlapped() { if [ -f "$work/overlaps" ]; then echo overlapped; else echo alone; fi; }
+export FLOW_SUITE_LANES=1
+expect 'OneLane_Passes because one lane is a valid count' "$(result)" pass
+expect 'OneLane_RunsOneSuiteAtATime because a single lane never starts a second suite' "$(overlapped)" alone
+FLOW_SUITE_LANES=3
+expect 'ThreeLanes_Pass because the default count must work when named' "$(result)" pass
+expect 'ThreeLanes_RunSuitesSideBySide because the lanes exist to overlap suites' "$(overlapped)" overlapped
+FLOW_SUITE_LANES=0
+expect 'ZeroLanes_Fails because no suite could ever run' "$(result)" fail
+expect 'ZeroLanes_SaysWhy because the owner must see the bad value' "$(tail -1 "$work/output")" "flow: FLOW_SUITE_LANES takes a whole number from 1, not '0'"
+unset FLOW_SUITE_LANES
