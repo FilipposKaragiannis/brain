@@ -978,7 +978,7 @@
 {"kind": "child", "unit": "verify-ends", "name": "StubbornRun_IsLiveBeforeTheStop: the run must be live, or the stop's exit below proves nothing", "outcome": "ok", "count": 1},
 {"kind": "child", "unit": "verify-ends", "name": "StubbornRun_OutlivesTheFirstStop: the run must still go, or the next stop's exit proves nothing", "outcome": "ok", "count": 1},
 {"kind": "child", "unit": "verify-ends", "name": "UnrecordedRun_EndsWithAReport: the started run must end before the next section", "outcome": "ok", "count": 1},
-{"kind": "child", "unit": "verify-ends", "name": "VerifyWithABaseThatStartsWithADash_ExitsTwo [--output=/var/folders/ky/pr3l5dr94p591nwmdbt0sq5m0000gn/T/tmp.KZqgZZkRve/written-by-git]: 2 is a bad argument, never a fail of the checks", "outcome": "ok", "count": 1},
+{"kind": "child", "unit": "verify-ends", "name": "VerifyWithABaseThatStartsWithADash_ExitsTwo [--output=<temporary folder>/written-by-git]: 2 is a bad argument, never a fail of the checks", "outcome": "ok", "count": 1},
 {"kind": "child", "unit": "verify-ends", "name": "VerifyWithABaseThatStartsWithADash_ExitsTwo [-x]: 2 is a bad argument, never a fail of the checks", "outcome": "ok", "count": 1},
 {"kind": "child", "unit": "verify-ends", "name": "VerifyWithAnOutputOptionAsTheBase_WritesNoFile: git never takes the name, so it writes nowhere", "outcome": "ok", "count": 1},
 {"kind": "child", "unit": "verify-ends", "name": "WorksInWithAProcessElsewhere_ExitsOne: a run in another folder is not the item's", "outcome": "ok", "count": 1},

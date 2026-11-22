@@ -38,12 +38,14 @@ failed check the baseline lacks), moved (a loss in one suite and an addition of 
 in another), unmapped (a baseline unit the mapping does not route), wrapper (a wrapper entry
 that does not hold), stale (an allowance that matches nothing).
 
-Normalisation. Only line framing is normalised, because each rule below is shown to vary and
-no check name has been shown to vary:
+Normalisation. Only text shown to vary between runs is normalised; a name is otherwise
+compared as printed:
   1. A byte order mark at the start of a line is removed (the GitHub log starts with one).
   2. The GitHub log prefix "<job>\\t<step>\\t<timestamp> " is removed from a line.
   3. A trailing carriage return and trailing blanks are removed.
-A name is otherwise compared as printed.
+  4. A temporary folder made by mktemp, "<any parent folders>/tmp.<random letters and digits>",
+     is replaced by "<temporary folder>" in a name, because a check that puts its sandbox folder
+     in its name prints a new folder on every run.
 """
 from __future__ import annotations
 
@@ -71,7 +73,9 @@ EXIT_CLEAN = 0
 EXIT_DIFFERENT = 1
 EXIT_BAD_INPUT = 2
 BYTE_ORDER_MARK = chr(0xFEFF)
-CI_PREFIX = re.compile(r"^[^\t]*\t[^\t]*\t\d{4}-\d{2}-\d{2}T[\d:.]+Z ?(.*)$")
+GITHUB_LOG_PREFIX = re.compile(r"^[^\t]*\t[^\t]*\t\d{4}-\d{2}-\d{2}T[\d:.]+Z ?(.*)$")
+TEMPORARY_FOLDER = re.compile(r"(?:/[^/\s\[\]]+)*/tmp\.[A-Za-z0-9]+")
+TEMPORARY_FOLDER_TOKEN = "<temporary folder>"
 RESULT_LINE = re.compile(r"^  (ok   |FAIL |skip )(.*)$")
 SUITE_PREFIX = re.compile(r"^\[([^\]]+)\] (.*)$")
 CHILD_ARGUMENT = re.compile(r"^([^=]+)=(.+)$")
@@ -83,7 +87,7 @@ class Outcome:
     name: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Result:
     kind: str
     unit: str
@@ -133,6 +137,12 @@ class Route:
 
 
 @dataclass(frozen=True)
+class RouteLoad:
+    routes: Tuple[Route, ...]
+    problems: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Wrapper:
     section: str
     name_prefix: str
@@ -173,9 +183,16 @@ class AllowanceLoad:
 
 
 @dataclass(frozen=True)
-class UnitRef:
+class UnitReference:
     kind: str
     unit: str
+
+
+@dataclass(frozen=True, order=True)
+class CheckKey:
+    suite: str
+    name: str
+    outcome: str
 
 
 @dataclass(frozen=True)
@@ -196,10 +213,10 @@ class WrapperHits:
 class MappedInventory:
     counts: Tuple[Count, ...]
     wrappers: Tuple[WrapperHits, ...]
-    unmapped: Tuple[UnitRef, ...]
+    unmapped: Tuple[UnitReference, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Difference:
     kind: str
     suite: str
@@ -222,6 +239,13 @@ class Allowed:
 
 
 @dataclass(frozen=True)
+class CommandResult:
+    exit_code: int
+    output_lines: Tuple[str, ...]
+    error_lines: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Report:
     unexplained: Tuple[Difference, ...]
     explained: Tuple[Explained, ...]
@@ -235,7 +259,7 @@ def unframe(raw: str) -> str:
     line = raw.rstrip("\r\n")
     if line.startswith(BYTE_ORDER_MARK):
         line = line[len(BYTE_ORDER_MARK):]
-    prefixed = CI_PREFIX.match(line)
+    prefixed = GITHUB_LOG_PREFIX.match(line)
     if prefixed:
         line = prefixed.group(1)
     return line.rstrip()
@@ -256,7 +280,7 @@ def result_of(line: str) -> Optional[Outcome]:
     matched = RESULT_LINE.match(line)
     if not matched:
         return None
-    return Outcome(matched.group(1).strip(), matched.group(2))
+    return Outcome(matched.group(1).strip(), TEMPORARY_FOLDER.sub(TEMPORARY_FOLDER_TOKEN, matched.group(2)))
 
 
 def cut_window(lines: Sequence[str], start_after: str, stop_at: str) -> Window:
@@ -293,8 +317,9 @@ def parse_old_log(lines: Sequence[str], headers: Sequence[str]) -> ParsedLog:
 
 def parse_child_log(lines: Sequence[str], child: str) -> ParsedLog:
     """Each result line of one child run's own output."""
-    found = [(result_of(line)) for line in lines]
-    return ParsedLog(tuple(Result(KIND_CHILD, child, f.name, f.outcome) for f in found if f is not None), ())
+    found = [result_of(line) for line in lines]
+    return ParsedLog(tuple(Result(KIND_CHILD, child, result.name, result.outcome)
+                           for result in found if result is not None), ())
 
 
 def parse_new_log(lines: Sequence[str]) -> ParsedLog:
@@ -309,17 +334,18 @@ def parse_new_log(lines: Sequence[str]) -> ParsedLog:
 
 
 def build_inventory(label: str, shape: str, results: Sequence[Result]) -> Inventory:
-    counted = Counter((r.kind, r.unit, r.name, r.outcome) for r in results)
-    entries = [Entry(kind, unit, name, outcome, count)
-               for (kind, unit, name, outcome), count in sorted(counted.items())]
+    counted = Counter(results)
+    entries = [Entry(result.kind, result.unit, result.name, result.outcome, counted[result])
+               for result in sorted(counted)]
     return Inventory(label, shape, tuple(entries))
 
 
 def render_inventory(inventory: Inventory) -> str:
     """The inventory as JSON text, one entry to a line so a change reads in a diff."""
     head = json.dumps({"format": INVENTORY_FORMAT, "label": inventory.label, "shape": inventory.shape})
-    rows = [json.dumps({"kind": e.kind, "unit": e.unit, "name": e.name, "outcome": e.outcome, "count": e.count},
-                       ensure_ascii=False) for e in inventory.entries]
+    rows = [json.dumps({"kind": entry.kind, "unit": entry.unit, "name": entry.name,
+                        "outcome": entry.outcome, "count": entry.count}, ensure_ascii=False)
+            for entry in inventory.entries]
     return '{"head": %s,\n"entries": [\n%s\n]}\n' % (head, ",\n".join(rows))
 
 
@@ -357,17 +383,18 @@ def parse_entry(row: object) -> Optional[Entry]:
     return Entry(kind, unit, name, outcome, count)
 
 
-def parse_routes(document: Dict[str, object]) -> Tuple[List[Route], List[str]]:
+def parse_routes(document: Dict[str, object]) -> RouteLoad:
     routes: List[Route] = []
     problems: List[str] = []
     for field, kind in (("sections", KIND_SECTION), ("children", KIND_CHILD)):
         pairs = document.get(field) or {}
-        valid = isinstance(pairs, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in pairs.items())
+        valid = isinstance(pairs, dict) and all(isinstance(unit, str) and isinstance(suite, str)
+                                                for unit, suite in pairs.items())
         if not valid:
             problems.append("mapping %s is not an object of text to text" % field)
             continue
         routes.extend(Route(kind, unit, suite) for unit, suite in sorted(pairs.items()))
-    return routes, problems
+    return RouteLoad(tuple(routes), tuple(problems))
 
 
 def parse_wrappers(rows: object) -> WrapperLoad:
@@ -376,7 +403,7 @@ def parse_wrappers(rows: object) -> WrapperLoad:
                 for row, wrapper in zip(rows if isinstance(rows, list) else [], parsed) if wrapper is None]
     if rows is not None and not isinstance(rows, list):
         problems.append("mapping wrappers is not a list")
-    return WrapperLoad(tuple(w for w in parsed if w is not None), tuple(problems))
+    return WrapperLoad(tuple(wrapper for wrapper in parsed if wrapper is not None), tuple(problems))
 
 
 def parse_allowances(rows: object) -> AllowanceLoad:
@@ -385,18 +412,18 @@ def parse_allowances(rows: object) -> AllowanceLoad:
                 for row, allowance in zip(rows if isinstance(rows, list) else [], parsed) if allowance is None]
     if rows is not None and not isinstance(rows, list):
         problems.append("mapping allowances is not a list")
-    return AllowanceLoad(tuple(a for a in parsed if a is not None), tuple(problems))
+    return AllowanceLoad(tuple(allowance for allowance in parsed if allowance is not None), tuple(problems))
 
 
 def parse_mapping(document: object) -> MappingLoad:
     """A mapping read from decoded JSON, with a problem for each part that is not valid."""
     if not isinstance(document, dict):
         return MappingLoad(Mapping((), (), ()), ("mapping is not an object",))
-    routes, route_problems = parse_routes(document)
+    routes = parse_routes(document)
     wrappers = parse_wrappers(document.get("wrappers"))
     allowances = parse_allowances(document.get("allowances"))
-    problems = tuple(route_problems) + wrappers.problems + allowances.problems
-    return MappingLoad(Mapping(tuple(routes), wrappers.wrappers, allowances.allowances), problems)
+    problems = routes.problems + wrappers.problems + allowances.problems
+    return MappingLoad(Mapping(routes.routes, wrappers.wrappers, allowances.allowances), problems)
 
 
 def parse_wrapper(row: object) -> Optional[Wrapper]:
@@ -434,33 +461,33 @@ def matching_wrapper(entry: Entry, wrappers: Sequence[Wrapper]) -> Optional[Wrap
 
 def map_inventory(inventory: Inventory, mapping: Mapping) -> MappedInventory:
     """The inventory's checks counted by new suite, with its wrapper lines set apart."""
-    suites = {(route.kind, route.unit): route.suite for route in mapping.routes}
+    suites = {UnitReference(route.kind, route.unit): route.suite for route in mapping.routes}
     counts: Counter = Counter()
     wrapper_hits: Counter = Counter()
-    unmapped: Set[UnitRef] = set()
+    unmapped: Set[UnitReference] = set()
     for entry in inventory.entries:
         wrapper = matching_wrapper(entry, mapping.wrappers)
-        suite = entry.unit if entry.kind == KIND_SUITE else suites.get((entry.kind, entry.unit), "")
+        suite = entry.unit if entry.kind == KIND_SUITE else suites.get(UnitReference(entry.kind, entry.unit), "")
         if wrapper is not None:
             wrapper_hits[wrapper] += entry.count
         elif suite:
-            counts[(suite, entry.name, entry.outcome)] += entry.count
+            counts[CheckKey(suite, entry.name, entry.outcome)] += entry.count
         else:
-            unmapped.add(UnitRef(entry.kind, entry.unit))
+            unmapped.add(UnitReference(entry.kind, entry.unit))
     return MappedInventory(
-        tuple(Count(suite, name, outcome, count) for (suite, name, outcome), count in sorted(counts.items())),
+        tuple(Count(key.suite, key.name, key.outcome, counts[key]) for key in sorted(counts)),
         tuple(WrapperHits(wrapper, wrapper_hits[wrapper]) for wrapper in mapping.wrappers),
-        tuple(sorted(unmapped, key=lambda ref: (ref.kind, ref.unit))),
+        tuple(sorted(unmapped, key=lambda reference: (reference.kind, reference.unit))),
     )
 
 
 def wrapper_differences(wrappers: Sequence[WrapperHits], inventory: Inventory) -> List[Difference]:
     children = {entry.unit for entry in inventory.entries if entry.kind == KIND_CHILD}
-    found = [Difference("wrapper", w.wrapper.section, w.wrapper.name_prefix, OUTCOME_OK, w.hits,
-                        "matches %d baseline results, not one" % w.hits) for w in wrappers if w.hits != 1]
-    found += [Difference("wrapper", w.wrapper.section, w.wrapper.name_prefix, OUTCOME_OK, 0,
-                         "child %s has no results in the baseline" % w.wrapper.child)
-              for w in wrappers if w.wrapper.child not in children]
+    found = [Difference("wrapper", hit.wrapper.section, hit.wrapper.name_prefix, OUTCOME_OK, hit.hits,
+                        "matches %d baseline results, not one" % hit.hits) for hit in wrappers if hit.hits != 1]
+    found += [Difference("wrapper", hit.wrapper.section, hit.wrapper.name_prefix, OUTCOME_OK, 0,
+                         "child %s has no results in the baseline" % hit.wrapper.child)
+              for hit in wrappers if hit.wrapper.child not in children]
     return found
 
 
@@ -474,34 +501,36 @@ def excess_kind(before: int, outcome: str) -> str:
 
 def count_differences(baseline: Counter, candidate: Counter) -> List[Difference]:
     found: List[Difference] = []
-    for suite, name, outcome in sorted(set(baseline) | set(candidate)):
-        before, after = baseline[(suite, name, outcome)], candidate[(suite, name, outcome)]
+    for key in sorted(set(baseline) | set(candidate)):
+        before, after = baseline[key], candidate[key]
         detail = "baseline %d, candidate %d" % (before, after)
         if after < before:
-            found.append(Difference("loss", suite, name, outcome, before - after, detail))
+            found.append(Difference("loss", key.suite, key.name, key.outcome, before - after, detail))
         elif after > before:
-            found.append(Difference(excess_kind(before, outcome), suite, name, outcome, after - before, detail))
+            found.append(Difference(excess_kind(before, key.outcome), key.suite, key.name, key.outcome,
+                                    after - before, detail))
     return found
 
 
 def pair_moves(found: Sequence[Difference]) -> List[Difference]:
     """The differences, with each loss that matches an addition in another suite merged into a move."""
-    losses = [d for d in found if d.kind == "loss"]
-    additions = [d for d in found if d.kind == "addition"]
-    lost = {d: d.count for d in losses}
-    added = {d: d.count for d in additions}
+    losses = [difference for difference in found if difference.kind == "loss"]
+    additions = [difference for difference in found if difference.kind == "addition"]
+    lost = {difference: difference.count for difference in losses}
+    added = {difference: difference.count for difference in additions}
     moved: List[Difference] = []
-    for loss, addition in [(l, a) for l in losses for a in additions
-                           if l.name == a.name and l.outcome == a.outcome and l.suite != a.suite]:
+    for loss, addition in [(loss, addition) for loss in losses for addition in additions
+                           if loss.name == addition.name and loss.outcome == addition.outcome
+                           and loss.suite != addition.suite]:
         taken = min(lost[loss], added[addition])
         lost[loss] -= taken
         added[addition] -= taken
         if taken:
             moved.append(Difference("moved", addition.suite, addition.name, addition.outcome, taken,
                                     "from suite %s" % loss.suite))
-    rest = [Difference(d.kind, d.suite, d.name, d.outcome, left, d.detail)
-            for table in (lost, added) for d, left in table.items() if left]
-    return rest + moved + [d for d in found if d.kind not in ("loss", "addition")]
+    rest = [Difference(difference.kind, difference.suite, difference.name, difference.outcome, left, difference.detail)
+            for table in (lost, added) for difference, left in table.items() if left]
+    return rest + moved + [difference for difference in found if difference.kind not in ("loss", "addition")]
 
 
 def find_allowance(difference: Difference, allowances: Sequence[Allowance]) -> Optional[Allowance]:
@@ -523,34 +552,32 @@ def apply_allowances(found: Sequence[Difference], allowances: Sequence[Allowance
         else:
             used.add(allowance)
             explained.append(Explained(difference, allowance.reason))
-    unexplained += [Difference("stale", a.suite, a.name, OUTCOME_OK, 0, "allowance for %s matches no difference" % a.kind)
-                    for a in allowances if a not in used]
+    unexplained += [Difference("stale", allowance.suite, allowance.name, OUTCOME_OK, 0,
+                               "allowance for %s matches no difference" % allowance.kind)
+                    for allowance in allowances if allowance not in used]
     return Allowed(tuple(unexplained), tuple(explained))
-
-
-def sort_key(difference: Difference) -> Tuple[str, str, str, str]:
-    return difference.kind, difference.suite, difference.name, difference.outcome
 
 
 def compare_inventories(baseline: Inventory, candidate: Inventory, mapping: Mapping) -> Report:
     before = map_inventory(baseline, mapping)
     after = map_inventory(candidate, mapping)
-    found = [Difference("unmapped", ref.unit, "", OUTCOME_OK, 0, "%s %s has no route in the mapping" % (ref.kind, ref.unit))
-             for ref in before.unmapped + after.unmapped]
+    found = [Difference("unmapped", reference.unit, "", OUTCOME_OK, 0,
+                        "%s %s has no route in the mapping" % (reference.kind, reference.unit))
+             for reference in before.unmapped + after.unmapped]
     found += wrapper_differences(before.wrappers, baseline)
     found += pair_moves(count_differences(counter_of(before), counter_of(after)))
     allowed = apply_allowances(found, mapping.allowances)
     return Report(
-        tuple(sorted(allowed.unexplained, key=sort_key)),
-        tuple(sorted(allowed.explained, key=lambda item: sort_key(item.difference))),
-        sum(c.count for c in after.counts),
-        len({c.suite for c in after.counts}),
-        sum(w.hits for w in before.wrappers),
+        tuple(sorted(allowed.unexplained)),
+        tuple(sorted(allowed.explained, key=lambda item: item.difference)),
+        sum(count.count for count in after.counts),
+        len({count.suite for count in after.counts}),
+        sum(hit.hits for hit in before.wrappers),
     )
 
 
 def counter_of(mapped: MappedInventory) -> Counter:
-    return Counter({(c.suite, c.name, c.outcome): c.count for c in mapped.counts})
+    return Counter({CheckKey(count.suite, count.name, count.outcome): count.count for count in mapped.counts})
 
 
 def describe(difference: Difference) -> str:
@@ -558,8 +585,8 @@ def describe(difference: Difference) -> str:
 
 
 def render_report(report: Report) -> List[str]:
-    lines = [describe(d) for d in report.unexplained]
-    lines += ["explained %s (%s)" % (describe(e.difference), e.reason) for e in report.explained]
+    lines = [describe(difference) for difference in report.unexplained]
+    lines += ["explained %s (%s)" % (describe(item.difference), item.reason) for item in report.explained]
     if report.unexplained:
         lines.append("parity: %d unexplained differences, %d explained" % (len(report.unexplained), len(report.explained)))
     else:
@@ -605,33 +632,28 @@ def collect_new_results(arguments: argparse.Namespace) -> ParsedLog:
     return ParsedLog(parsed.results, window.problems + parsed.problems)
 
 
-def run_inventory(arguments: argparse.Namespace) -> int:
+def problem_lines(problems: Sequence[str]) -> Tuple[str, ...]:
+    return tuple("suite_parity: %s" % problem for problem in problems)
+
+
+def run_inventory(arguments: argparse.Namespace) -> CommandResult:
     parsed = collect_old_results(arguments) if arguments.shape == SHAPE_OLD else collect_new_results(arguments)
     if parsed.problems:
-        report_problems(parsed.problems)
-        return EXIT_BAD_INPUT
+        return CommandResult(EXIT_BAD_INPUT, (), problem_lines(parsed.problems))
     inventory = build_inventory(arguments.label, arguments.shape, parsed.results)
     write_text(arguments.output, render_inventory(inventory))
-    return EXIT_CLEAN
+    return CommandResult(EXIT_CLEAN, (), ())
 
 
-def run_compare(arguments: argparse.Namespace) -> int:
+def run_compare(arguments: argparse.Namespace) -> CommandResult:
     baseline = parse_inventory(read_json(arguments.baseline))
     candidate = parse_inventory(read_json(arguments.candidate))
     mapping = parse_mapping(read_json(arguments.mapping))
     problems = baseline.problems + candidate.problems + mapping.problems
     if problems:
-        report_problems(problems)
-        return EXIT_BAD_INPUT
+        return CommandResult(EXIT_BAD_INPUT, (), problem_lines(problems))
     report = compare_inventories(baseline.inventory, candidate.inventory, mapping.mapping)
-    for line in render_report(report):
-        print(line)
-    return EXIT_DIFFERENT if report.unexplained else EXIT_CLEAN
-
-
-def report_problems(problems: Sequence[str]) -> None:
-    for problem in problems:
-        print("suite_parity: %s" % problem, file=sys.stderr)
+    return CommandResult(EXIT_DIFFERENT if report.unexplained else EXIT_CLEAN, tuple(render_report(report)), ())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -656,15 +678,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str]) -> int:
-    arguments = build_parser().parse_args(argv)
+def main(command_line: Sequence[str]) -> int:
+    arguments = build_parser().parse_args(command_line)
     try:
-        if arguments.command == "inventory":
-            return run_inventory(arguments)
-        return run_compare(arguments)
+        result = run_inventory(arguments) if arguments.command == "inventory" else run_compare(arguments)
     except (OSError, json.JSONDecodeError) as failure:
-        print("suite_parity: %s" % failure, file=sys.stderr)
-        return EXIT_BAD_INPUT
+        result = CommandResult(EXIT_BAD_INPUT, (), problem_lines([str(failure)]))
+    for line in result.output_lines:
+        print(line)
+    for line in result.error_lines:
+        print(line, file=sys.stderr)
+    return result.exit_code
 
 
 if __name__ == "__main__":
