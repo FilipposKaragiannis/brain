@@ -52,8 +52,6 @@ check "UnresolvedBase_IsNamedInTheReport because a reader must see the compariso
 feel_test() { json_value feel_test < "$reports/verify.json"; }
 verify_exit_code=0
 verify_exited_failing() { [ "$verify_exit_code" -eq 1 ]; }
-# changed_source_item <dir> <standards json>: an item whose worktree commits the standards and a
-# change under source/, with feel_test_paths that name only ui/**.
 changed_source_item() {
   new_item "$1" ""
   printf 'feel_test_paths:\n  - ui/**\n' >> .flow/config.yaml
@@ -71,8 +69,6 @@ esac
 exec "$real_git" "\$@"
 STUB
 chmod +x "$stand_in_git/git"
-# verify_with_failing_git <argument pattern>: verify with a git that fails the one call whose
-# arguments match the pattern and runs the real git for every other.
 verify_with_failing_git() {
   printf '%s\n' "$1" > "$work/failing-git-arguments"
   (PATH="$stand_in_git:$PATH"; export PATH; verify >/dev/null 2>&1); verify_exit_code=$?
@@ -97,6 +93,18 @@ check "BaseDiffFails_RaisesFeelTest because a change under the feel-test paths c
 check "BaseDiffFails_KeepsGitsErrorInTheLog because the cause must be readable" \
   'grep -q "stand-in failure of git diff" "$reports/verify.log"'
 
+changed_source_item healthy-feel '{"test":[]}'
+mkdir -p "$worktree/ui" && echo change > "$worktree/ui/screen" && git -C "$worktree" add ui/screen && git -C "$worktree" commit -qm "ui change"
+verify >/dev/null 2>&1
+check "HealthyListWithChangeUnderFeelTestPaths_RaisesFeelTest because feel_test follows feel_test_paths" \
+  '[ "$(feel_test)" = true ] && [ -z "$(failed_checks)" ]'
+
+changed_source_item git-failure-reuse '{"test":[{"name":"scoped","command":"true","paths":["source/**"]}]}'
+verify >/dev/null 2>&1
+verify_with_failing_git 'diff --no-renames --name-only -z * HEAD'
+check "BaseDiffFailsAfterAPass_ReusesNoPass because a kept pass proved a change list that is now unknown" \
+  '[ "$(check_field "tests scoped" status)" = pass ] && [ -z "$(check_field "tests scoped" reused_from)" ]'
+
 verify_with_failing_git 'diff --no-renames --name-only -z HEAD'
 check "UncommittedDiffFails_FailsVerifyNamingIt because a short change list cannot prove the change" \
   '[ "$(report_status)" = fail ] && check_field "changed files" summary | grep -q "the diff of uncommitted changes failed"'
@@ -109,6 +117,8 @@ changed_source_item unresolved-format '{"test":[],"languages":[{"name":"shell","
 verify --base no-such-base >/dev/null 2>&1; verify_exit_code=$?
 check "UnresolvedBaseWithFailingFormat_FailsVerify because a skipped formatter must not let the run pass" \
   'verify_exited_failing && [ "$(report_status)" = fail ] && [ "$(check_field format status)" != pass ]'
+check "UnresolvedBaseWithFailingFormat_ShowsNoPassInTheReport because a reader of the report must not read the run as green" \
+  'grep -q "^## Verify: fail" "$reports/verify.md" && ! grep -q "^## Verify: pass" "$reports/verify.md"'
 check "UnresolvedBaseWithFailingFormat_NamesTheBase because the reader must know what to fix" \
   'check_field "changed files" summary | grep -q "comparison base no-such-base cannot be resolved"'
 
