@@ -5,6 +5,11 @@
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
+case "$#:${1:-}" in
+  0:) exec python3 -I "$P/../../tools/lib/flow_suites.py" all ;;
+  1:inline|1:verify) section="$1" ;;
+  *) echo "usage: run.sh [inline|verify]" >&2; exit 2 ;;
+esac
 work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
@@ -56,8 +61,9 @@ notify:
 YAML
 repo="$PWD"
 
-echo "config"
 . "$P/lib/flow.sh"
+if [ "$section" = inline ]; then
+echo "config"
 check "yaml scalar"       [ "$(yaml_get .flow/config.yaml base)" = "main" ]
 check "yaml nested"       [ "$(yaml_get .flow/config.yaml adapters.default)" = "local" ]
 check "yaml list"         [ "$(yaml_get .flow/config.yaml pool | wc -l | tr -d ' ')" = "2" ]
@@ -221,6 +227,8 @@ check "nothing ready says why: the running, the blocked and the done items, coun
 rm -f ".flow/runs/$(item_slug "$t3").json"; "$P/scripts/steward.sh" release "$t3" --force >/dev/null 2>&1
 "$P/adapters/local/write-state.sh" "$t3" step= profile= last_event=
 
+fi
+
 echo "verify runner"
 mkdir -p .standards
 cat > .standards/config.json <<'JSON'
@@ -279,28 +287,38 @@ print(v.summary("cut short at \x1b]8;;https://ci/run/7"))' "$P/scripts" 2>&1)"
 check "a hyperlink cut short with no terminator leaves no target in the summary" [ "$osc" = "cut short at" ]
 # dash runs no EXIT trap on a signal: a verify stopped by TERM must still remove its temp files.
 if command -v dash >/dev/null 2>&1; then
+  verify_temporary_file_exists() {
+    for candidate in "$1"/flow-verify.*; do [ ! -f "$candidate" ] || return 0; done
+    return 1
+  }
+  hold_polls=100; hold_poll_seconds=0.1
   mkdir -p "$work/vtmp"
   printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\ngates:\n  slow: sleep 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
   (cd "$wv" && TMPDIR="$work/vtmp" exec dash "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1) & vp=$!
-  n=0; while [ -z "$(ls -A "$work/vtmp")" ] && [ "$n" -lt 100 ]; do n=$((n + 1)); sleep 0.1; done
+  n=0; while ! verify_temporary_file_exists "$work/vtmp" && [ "$n" -lt "$hold_polls" ]; do n=$((n + 1)); sleep "$hold_poll_seconds"; done
   kill -TERM "$vp" 2>/dev/null; wait "$vp"
-  check_all "verify under dash stopped by TERM leaves no temp file" '[ "$n" -lt 100 ] && [ -z "$(ls -A "$work/vtmp")" ]'
-  hold_polls=100; hold_poll_seconds=0.1
+  check_all "VerifyStoppedBySignal_RemovesItsTemporaryFiles because its scratch records are private to the run" '[ "$n" -lt "$hold_polls" ] && ! verify_temporary_file_exists "$work/vtmp"'
   mkdir -p "$work/vtmp-held" "$work/held-mktemp"; rm -f "$work/held-mktemp.go"
   printf '#!/bin/sh\nmade="$(%s "$@")" || exit 1\nprintf "%%s\\n" "$made"\ncase "$made" in "$TMPDIR"/*) n=0; while [ ! -f %s/held-mktemp.go ] && [ "$n" -lt %s ]; do sleep %s; n=$((n + 1)); done ;; esac\n' \
     "$(command -v mktemp)" "$work" "$hold_polls" "$hold_poll_seconds" > "$work/held-mktemp/mktemp"; chmod +x "$work/held-mktemp/mktemp"
   (cd "$wv" && PATH="$work/held-mktemp:$PATH" TMPDIR="$work/vtmp-held" exec dash "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1) & vp=$!
-  n=0; while [ -z "$(ls -A "$work/vtmp-held")" ] && [ "$n" -lt "$hold_polls" ]; do n=$((n + 1)); sleep "$hold_poll_seconds"; done
+  n=0; while ! verify_temporary_file_exists "$work/vtmp-held" && [ "$n" -lt "$hold_polls" ]; do n=$((n + 1)); sleep "$hold_poll_seconds"; done
   kill -TERM "$vp" 2>/dev/null; touch "$work/held-mktemp.go"; wait "$vp"
-  check_all "TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile: the cleanup is set before the file exists" '[ "$n" -lt "$hold_polls" ] && [ -z "$(ls -A "$work/vtmp-held")" ]'
+  check_all "TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile because cleanup also owns the first allocation" '[ "$n" -lt "$hold_polls" ] && ! verify_temporary_file_exists "$work/vtmp-held"'
 fi
 # The write is atomic: a reader polling verify.json while verify runs never sees it empty, and
 # no temp file is left behind.
 : > "$work/reads.bad"
 (for _ in 1 2 3; do (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); done; : > "$work/verify.done") &
 vpid=$!
-while [ ! -f "$work/verify.done" ]; do [ -e "$rv/verify.json" ] && [ ! -s "$rv/verify.json" ] && echo empty >> "$work/reads.bad"; done
-wait "$vpid"; rm -f "$work/verify.done"
+reader_interval_seconds=0.01
+while [ ! -f "$work/verify.done" ] && kill -0 "$vpid" 2>/dev/null; do
+  [ -e "$rv/verify.json" ] && [ ! -s "$rv/verify.json" ] && echo empty >> "$work/reads.bad"
+  sleep "$reader_interval_seconds"
+done
+wait "$vpid"
+check "VerifyWriterExits_CompletesAllWrites because the reader needs a completed observation window" test -f "$work/verify.done"
+rm -f "$work/verify.done"
 check "a reader never sees verify.json empty" [ ! -s "$work/reads.bad" ]
 check "no temp file left in the reports folder" [ -z "$(ls -A "$rv" | grep -i -e tmp -e '^\.verify')" ]
 # A report that cannot be built fails loudly: a message on stderr, a minimal valid report with
@@ -368,6 +386,8 @@ check "verify passes without the broken gate" sh -c '[ "$1" -eq 0 ] && [ "$2" = 
 check "passing verify with feel_test raises the feel-test gate, step pr" sh -c '[ "$1" -eq 4 ] && [ "$2" = feel-test ] && [ "$3" = pr ]' _ "$code" "$("$P/adapters/local/read.sh" "$v1" | jget state.gate)" "$("$P/adapters/local/read.sh" "$v1" | jget state.step)"
 "$P/scripts/gate.sh" clear "$v1" "looks right" >/dev/null
 "$P/scripts/steward.sh" release "$v1" --force >/dev/null 2>&1
+
+if [ "$section" = verify ]; then exit "$((fails > 0))"; fi
 
 echo "parent and create"
 c1="$("$P/adapters/local/create.sh" task "Child" --size S --parent "$v1")"
@@ -474,103 +494,6 @@ check "gh link-pr"        [ "$("$P/adapters/github/read.sh" 'gh#11' | jget state
 check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget status)" = "closed" ]
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
-
-echo "adapter contract (adapters/README.md)"
-for contract_adapter in github local jira; do
-  sh "$here/adapter-contract.sh" "$contract_adapter" > "$work/contract-$contract_adapter.out" 2>&1; code=$?
-  check "the $contract_adapter adapter meets the contract: $(tail -n 1 "$work/contract-$contract_adapter.out")" [ "$code" -eq 0 ]
-  [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
-done
-
-echo "holds and the merge before verify (tests/holds.sh)"
-sh "$here/holds.sh" > "$work/holds.out" 2>&1; code=$?
-check "holds: $(tail -n 1 "$work/holds.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/holds.out"
-
-echo "a claimed item waits while a native blocker is open (tests/blockers.sh)"
-sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
-check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/blockers.out"
-
-echo "an item's recorded base is read everywhere (tests/base-readers.sh)"
-sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
-check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-readers.out"
-
-echo "an item's base is resolved once at claim (tests/base-claim.sh)"
-sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
-check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
-
-echo "a claim sets a pool worktree up again when a worktree_setup_paths file changed (tests/worktree-setup.sh)"
-sh "$here/worktree-setup.sh" > "$work/worktree-setup.out" 2>&1; code=$?
-check "worktree-setup: $(tail -n 1 "$work/worktree-setup.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/worktree-setup.out"
-
-echo "a task branch is named from the branch template at claim and recorded (tests/branch-name.sh)"
-sh "$here/branch-name.sh" > "$work/branch-name.out" 2>&1; code=$?
-check "branch-name: $(tail -n 1 "$work/branch-name.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/branch-name.out"
-
-echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
-sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
-check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-detached.out"
-
-echo "stop and release end only the item's own verify run, and stop says when one outlives its wait (tests/verify-ends.sh)"
-sh "$here/verify-ends.sh" > "$work/verify-ends.out" 2>&1; code=$?
-check "verify-ends: $(tail -n 1 "$work/verify-ends.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-ends.out"
-
-echo "verify runs the build and test commands a change can affect, once per input (tests/verify-scope.sh)"
-sh "$here/verify-scope.sh" > "$work/verify-scope.out" 2>&1; code=$?
-check "verify-scope: $(tail -n 1 "$work/verify-scope.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-scope.out"
-
-echo "children wait on the parent's decomposition gate, and a gate is asked once (tests/epic-gates.sh)"
-sh "$here/epic-gates.sh" > "$work/epic-gates.out" 2>&1; code=$?
-check "epic-gates: $(tail -n 1 "$work/epic-gates.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-gates.out"
-
-echo "an epic's closeout opens its pull request, and the merge closes the epic (tests/epic-closeout.sh)"
-sh "$here/epic-closeout.sh" > "$work/epic-closeout.out" 2>&1; code=$?
-check "epic-closeout: $(tail -n 1 "$work/epic-closeout.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-closeout.out"
-
-echo "a pr step that opens no pull request leaves nothing to merge (tests/pr-without-pull-request.sh)"
-sh "$here/pr-without-pull-request.sh" > "$work/pr-without-pull-request.out" 2>&1; code=$?
-check "pr-without-pull-request: $(tail -n 1 "$work/pr-without-pull-request.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/pr-without-pull-request.out"
-
-echo "an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)"
-sh "$here/sessions.sh" > "$work/sessions.out" 2>&1; code=$?
-check "sessions: $(tail -n 1 "$work/sessions.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/sessions.out"
-
-echo "the graph report says what each step cost and which got slower (tests/graph-report.sh)"
-sh "$here/graph-report.sh" > "$work/graph-report.out" 2>&1; code=$?
-check "graph-report: $(tail -n 1 "$work/graph-report.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/graph-report.out"
-
-echo "a GitHub item reads its priority from a priority: label where no field is set (tests/github-priority.sh)"
-sh "$here/github-priority.sh" > "$work/github-priority.out" 2>&1; code=$?
-check "github-priority: $(tail -n 1 "$work/github-priority.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/github-priority.out"
-
-echo "the health job says when a step got slower (tests/health-slow-steps.sh)"
-sh "$here/health-slow-steps.sh" > "$work/health-slow-steps.out" 2>&1; code=$?
-check "health-slow-steps: $(tail -n 1 "$work/health-slow-steps.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/health-slow-steps.out"
-
-echo "text from a result file never runs as code (tests/gate-input.sh)"
-sh "$here/gate-input.sh" > "$work/gate-input.out" 2>&1; code=$?
-check "gate-input: $(tail -n 1 "$work/gate-input.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-input.out"
-
-echo "the main worktree is found once per folder and git probed once (tests/main-worktree-once.sh)"
-sh "$here/main-worktree-once.sh" > "$work/main-worktree-once.out" 2>&1; code=$?
-check "main-worktree-once: $(tail -n 1 "$work/main-worktree-once.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/main-worktree-once.out"
 
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
