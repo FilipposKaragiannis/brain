@@ -83,7 +83,7 @@ gates_json() {
     item="$(json_get "$record" item)"; worktree=""
     [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")"
     if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else printf '%s\n' "$record"; fi
-  done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
+  done | cached_python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
 refused_gate_name_limit=60
@@ -151,7 +151,7 @@ case "${1:-}" in
     parse_raise_flags "$@"
     while [ $# -gt 0 ] && [ "$1" != -- ]; do shift 2; done
     [ $# -eq 0 ] || shift
-    gate_known "$gate" || die "unknown gate '$(printf '%s' "$gate" | tr -cd '[:print:]' | head -c "$refused_gate_name_limit")': nothing raised; the gates are $(python3 -I -c 'import json, sys; print(", ".join(json.load(open(sys.argv[1]))["gates"]))' "$FLOW_PLUGIN/profiles.json")" 2
+    gate_known "$gate" || die "unknown gate '$(printf '%s' "$gate" | tr -cd '[:print:]' | head -c "$refused_gate_name_limit")': nothing raised; the gates are $(cached_python3 -I -c 'import json, sys; print(", ".join(json.load(open(sys.argv[1]))["gates"]))' "$FLOW_PLUGIN/profiles.json")" 2
     data="$(adapter read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
     [ -n "$from" ] || from="$step"
     for state_pair in "$@"; do case "$state_pair" in step=*) step="${state_pair#step=}" ;; esac; done

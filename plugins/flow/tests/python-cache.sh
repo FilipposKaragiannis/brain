@@ -5,7 +5,7 @@
 # cache folder is made owner-only under XDG_CACHE_HOME when that is an absolute path, else under
 # ~/.cache, and only when python starts; flow's own helper modules are compiled there, never beside
 # flow's sources; a sandboxed suite caches under its own work folder, whatever XDG_CACHE_HOME its
-# runner had.
+# runner had; loading flow's helpers leaves python3 the program on the PATH.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -53,6 +53,8 @@ check "RelativeCacheHomeVariable_UsesTheHomeCache: a relative cache home would l
 cache_home_of_a_sourcing_shell="$work/cache-home-of-a-sourcing-shell"; mkdir -p "$cache_home_of_a_sourcing_shell"
 check "SourcingFlowWithoutStartingPython_WritesNoCacheFolder: a shell that only loads flow's helpers leaves the cache home as it was" \
   'XDG_CACHE_HOME="$cache_home_of_a_sourcing_shell" sh -c ". \"\$FLOW_PLUGIN/lib/flow.sh\"" && [ -z "$(ls -A "$cache_home_of_a_sourcing_shell")" ]'
+check "SourcingFlow_LeavesPython3TheProgramOnThePath: a stub or launcher that resolves python3 after loading flow's helpers finds the program, so it cannot start itself" \
+  'sh -c ". \"\$FLOW_PLUGIN/lib/flow.sh\"; [ -x \"\$(command -v python3)\" ]"'
 
 cp -R "$plugin" "$work/flow-copy"
 find "$work/flow-copy" \( -name __pycache__ -o -name '*.pyc' \) -prune -exec rm -rf {} +

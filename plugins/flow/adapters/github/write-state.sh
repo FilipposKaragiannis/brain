@@ -18,7 +18,7 @@ done
 # in issue_to_item). The callers in advance.sh and next.sh go on either way, with that state.
 current="$(state_comment "$repo" "$n")" || die "cannot read the comments of gh#$n"
 labels="$(gh issue view "$n" -R "$repo" --json labels -q '.labels[].name')" || die "cannot read the labels of gh#$n"
-merged="$(printf '%s' "$current" | python3 -I -c '
+merged="$(printf '%s' "$current" | cached_python3 -I -c '
 import json, sys
 data = json.load(sys.stdin)["data"]
 for kv in sys.argv[1:]:
@@ -64,8 +64,8 @@ REMOVE
   [ $# -eq 0 ] || gh issue edit "$n" -R "$repo" "$@" >/dev/null
 }
 edit_labels || die "cannot write the labels of gh#$n"
-body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
-comment_id() { python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
+body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | cached_python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
+comment_id() { cached_python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
 patch_state() { printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$1" -F body=@- >/dev/null; }
 post_state() { printf '%s' "$body" | gh_once api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null; }
 cid="$(printf '%s' "$current" | comment_id)"
@@ -82,7 +82,7 @@ done
 if [ -n "$cid" ]; then patch_state "$cid" || die "cannot write the state of gh#$n"; fi
 if [ -n "$GH_SIZE_FIELD" ]; then
   for kv in "$@"; do
-    case "$kv" in size=?*) python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \
+    case "$kv" in size=?*) cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \
       || echo "flow: could not set the size of gh#$n" >&2 ;; esac
   done
 fi

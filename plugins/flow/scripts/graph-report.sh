@@ -28,4 +28,4 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$days" in ''|*[!0-9]*|0) die "--days takes a whole number from 1, not $days" 2 ;; esac
-python3 -I "$FLOW_PLUGIN/scripts/_graph_report.py" "$(flow_home)/log" "$days" "${FLOW_NOW:-$(now_iso)}" "$output"
+cached_python3 -I "$FLOW_PLUGIN/scripts/_graph_report.py" "$(flow_home)/log" "$days" "${FLOW_NOW:-$(now_iso)}" "$output"
