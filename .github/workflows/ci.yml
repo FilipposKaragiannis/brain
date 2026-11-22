@@ -3,23 +3,66 @@ on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python -m pip install -r tools/requirements-lint.txt
-      - run: tools/test.sh
-  console:
+      - run: tools/test.sh lint
+  standards:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: plugins/console/app
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: tools/test.sh standards
+  tools:
+    name: tools and meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tools/requirements-lint.txt
+      - run: tools/test.sh tools meta
+  flow:
+    name: flow ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      FLOW_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+      FLOW_SUITE_LANES: "2"
+      FLOW_SUITE_TIME_LIMIT_SECONDS: "480"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -I tools/lib/flow_suites.py all --shard "$FLOW_SHARD"
+  console:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -27,16 +70,46 @@ jobs:
           cache-dependency-path: |
             plugins/console/app/package-lock.json
             plugins/console/app/ui/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y zsh
       - run: npm ci
+        working-directory: plugins/console/app
       - run: npm ci
         working-directory: plugins/console/app/ui
-      - run: npm run check
-  # The standards plugin's composite action must load and run. This repo has a
-  # .standards/config.json, so the step checks every commit of the branch against it.
+      - run: tools/test.sh console 2>&1 | tee "$RUNNER_TEMP/console.log"
+        shell: bash
+      - run: |
+          if grep -i skip "$RUNNER_TEMP/console.log"; then echo "console: the checks above were skipped" >&2; exit 1; fi
+      - run: tools/test.sh console-app
+  plugins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DISABLE_AUTOUPDATER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install -g @anthropic-ai/claude-code@2.1.330
+      - run: tools/test.sh plugins
+  # The standards plugin ships this action to other repos, so it must keep loading here.
   gates-action:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: ./plugins/standards/action
+  # Branch protection on main requires this job alone.
+  result:
+    if: always()
+    needs: [lint, standards, tools, flow, console, plugins, gates-action]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          printf '%s' "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null

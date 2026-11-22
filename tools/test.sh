@@ -37,6 +37,15 @@ console_app() {
   (cd $console && npm run --silent check)
 }
 
+least_console_node=24
+console_needs() {
+  console_node="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [ "$console_node" -ge "$least_console_node" ] 2>/dev/null || { cannot_run console "node $least_console_node or newer" "install Node $least_console_node"; return; }
+  [ -d plugins/console/app/node_modules ] || { cannot_run console plugins/console/app/node_modules "run: cd plugins/console/app && npm ci"; return; }
+  command -v curl >/dev/null 2>&1 || { cannot_run console curl "install curl"; return; }
+  command -v zsh >/dev/null 2>&1 || cannot_run console zsh "install zsh"
+}
+
 plugins_valid() {
   command -v claude >/dev/null 2>&1 || { cannot_run plugins "the claude CLI" "install Claude Code: npm install -g @anthropic-ai/claude-code"; return; }
   validated=0
@@ -61,12 +70,14 @@ for part in $parts; do
       ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
-    console) clean plugins/console/tests/run.sh || status=1 ;;
+    console) { [ "$when_missing" = skip ] || console_needs; } && clean plugins/console/tests/run.sh || status=1 ;;
     tools)
       clean tools/tests/run.sh || status=1
       clean tools/tests/lint-baseline.sh || status=1
       clean sh tools/tests/flow-selection.sh || status=1
       clean sh tools/tests/flow-runner.sh || status=1
+      clean sh tools/tests/named-parts.sh || status=1
+      clean sh tools/tests/build-workflow.sh || status=1
       clean tools/tests/suite-parity.sh || status=1
       ;;
     console-app) console_app || status=1 ;;
