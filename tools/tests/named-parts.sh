@@ -40,3 +40,9 @@ expect 'NamedConsoleWithoutAppDependencies_GivesTheInstallCommand because the ow
 mkdir "$copy/plugins/console/app/node_modules"
 expect 'NamedConsoleWithEveryTool_Passes because nothing it needs is missing' "$(console_part)" pass
 expect 'NamedConsoleWithEveryTool_RunsTheSuite because the part is the suite' "$(grep -c 'console suite ran' "$work/output")" 1
+plugins_part() { PATH="$tools_folder" "$copy/tools/test.sh" plugins > "$work/output" 2>&1 && echo pass || echo fail; }
+expect 'NamedPluginsWithoutTheClaudeCommand_Fails because no plugin would be validated' "$(plugins_part)" fail
+expect 'NamedPluginsWithoutTheClaudeCommand_GivesTheInstallCommand because the owner must see what to run' "$(grep -c 'npm install -g @anthropic-ai/claude-code' "$work/output")" 1
+console_app_part() { PATH="$tools_folder" "$copy/tools/test.sh" console-app > "$work/output" 2>&1 && echo pass || echo fail; }
+expect 'NamedConsoleAppWithoutTheUiDependencies_Fails because the UI checks would not run' "$(console_app_part)" fail
+expect 'NamedConsoleAppWithoutTheUiDependencies_NamesWhatIsMissing because the owner must see what to install' "$(grep -c 'console-app cannot run, plugins/console/app/node_modules or plugins/console/app/ui/node_modules missing' "$work/output")" 1
