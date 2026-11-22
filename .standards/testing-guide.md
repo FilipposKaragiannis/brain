@@ -8,7 +8,7 @@ this file holds only what is specific to this repository.
 
 | level | when | command |
 |---|---|---|
-| unit | in verify, the parts a change can affect | `test` in `.standards/config.json`: one `tools/test.sh <part>` per suite (standards, flow, meta, console, console-app, tools, plugins), each with the paths it reads; `tools/test.sh` alone runs every part, as CI and a person do |
+| unit | in verify, the parts a change can affect | `test` in `.standards/config.json`: one `tools/test.sh <part>` per suite (standards, flow, meta, console, console-app, tools, plugins), each with the paths it reads, and for flow `tools/test.sh flow-since {verify_base}`, which picks the Flow suites; `tools/test.sh` alone runs every part, as CI and a person do |
 | integration | a boundary is crossed (I/O, network, process, engine) | no separate run: the shell suites above cross those boundaries through stub tools; the console app: `cd plugins/console/app && npm run check` |
 | regression | every bug fix, named after the bug | part of the unit run |
 | mutation | on PRs for changed files, full on a schedule; a signal, never a gate | none: `mutation` is empty in `.standards/config.json` |
@@ -18,13 +18,15 @@ this file holds only what is specific to this repository.
 The implement, test and comments steps run only the tests they touched. The whole of a suite
 runs once, in verify, and a suite that passed on the same files is not run again.
 
-- A flow test in a suite file of its own, alone: `sh plugins/flow/tests/<file>.sh` (`holds.sh`, `blockers.sh`, `base-claim.sh`, `base-readers.sh`, `verify-detached.sh`, `verify-ends.sh`, `verify-scope.sh`; `adapter-contract.sh <adapter>`). Each takes one to four minutes. The 16 files cut from the old `run.sh`, one per area such as `pick.sh` or `init.sh`, take under four minutes each, except `jobs.sh` and `health.sh`, which take about ten and eight minutes.
+- One Flow suite alone: `sh plugins/flow/tests/<file>.sh`, such as `holds.sh`, `pick.sh` or `jobs.sh`; one adapter's contract: `sh plugins/flow/tests/adapter-contract.sh <github|local|jira>`. Every Flow check lives in a suite file, one per area.
 - A new Flow test goes in a sandboxed suite file of its own on `_base_fixture.sh`. The suite files cut from the old `run.sh` source `_flow_setup.sh` and the `_` fixtures that hold the helpers they share. The runner discovers `tests/*.sh` automatically. Prefix a fixture with `_` or `fake-`.
-- Brain's verify compares the item with the verifier's merge base. An edit to one standalone suite selects that suite. Changes to the verifier command or its report and cache helpers select `verify-report.sh` and the other suites that exercise verify. Shared runtime changes and unavailable comparison bases run the complete Flow suite. A full run includes every suite file and all three adapter contracts, with at most three suites running at once.
+- Verify selects the Flow suites from the paths changed since the verifier's merge base: an edit to one suite file selects that suite, `adapter-contract.sh` the three contracts, `_verify_fixture.sh` the `verify-*` suites, and the verifier command and its report and check helpers the `verify-*` suites with `verify-report.sh`, `base-claim.sh` and `base-readers.sh`. A changelog or README edit selects none. Any other path under the flow entry's `paths`, `_base_fixture.sh` included, and a base that cannot be resolved run every suite. A full run is every suite file and all three adapter contracts.
+- The runner, `tools/lib/flow_suites.py`, runs the chosen suites in lanes, three at once unless `FLOW_SUITE_LANES` says otherwise, each in a sandbox of its own. A suite still running after 30 minutes (`FLOW_SUITE_TIME_LIMIT_SECONDS`) is stopped, its output so far printed, and the run fails naming it.
 - CI and `tools/test.sh flow` use the full run. `plugins/flow/tests/run.sh` holds no checks: with no argument it hands the full run to the runner, and any argument is a usage error. The existing `whole-suite` gate covers `plugins/flow/tests/run.sh` and `tools/test.sh` during implement, test and comments. Run individual suite files there. A local full run needs the owner's `[whole-suite]` approval.
 - One console daemon test file: `cd plugins/console/app && sh ../../../tools/lib/sandboxed.sh . node --test daemon/test/<file>.test.ts`.
 - One console UI test file: `cd plugins/console/app/ui && npx vitest run test/<file>`.
-- The standards, meta, console and tools shell suites have no filter and take minutes, not an hour: `plugins/standards/hooks/tests/run.sh`, `plugins/meta/tests/run.sh`, `plugins/console/tests/run.sh`, `tools/tests/run.sh`.
+- The other shell suites take minutes, and each file runs alone; a `run.sh` among them has no filter. Standards: `plugins/standards/hooks/tests/run.sh`, `file-names.sh`, `files-placeholder.sh`, `testing-guide.sh`, `appendices.sh`. Tools: `tools/tests/run.sh`, `lint-baseline.sh`, `flow-selection.sh`, `flow-runner.sh`, `suite-parity.sh`. Meta and console: `plugins/meta/tests/run.sh`, `plugins/console/tests/run.sh`.
+- Lint, `tools/lint.sh` (the `build` command), runs ShellCheck and Ruff on the shell and Python files and fails on a finding the baseline in `tools/lint-baseline/` does not hold. After a change that fixes recorded findings, or one the owner accepts, `python3 -I tools/lib/lint_baseline.py update` rewrites the baseline.
 
 ## Fixtures and helpers
 

@@ -28,19 +28,19 @@ mkdir "$work_folder/content"
 set -f
 hits=""
 count="$(json_length "$config" "languages")"
-i=0
-while [ "$i" -lt "$count" ]; do
-  line_tok="$(json_get "$config" "languages.$i.comments.line")"
-  doc_tok="$(json_get "$config" "languages.$i.comments.doc")"
-  public_kw="$(json_get "$config" "languages.$i.comments.public")"
-  markers="$(json_list "$config" "languages.$i.comments.allow_markers")"
-  if [ -n "$(json_get "$config" "languages.$i.comments.doc_inside")" ]; then
-    kinds="$(json_list "$config" "languages.$i.comments.doc_inside" | tr '\n' ' ')"
+language_index=0
+while [ "$language_index" -lt "$count" ]; do
+  line_token="$(json_get "$config" "languages.$language_index.comments.line")"
+  doc_token="$(json_get "$config" "languages.$language_index.comments.doc")"
+  public_keyword="$(json_get "$config" "languages.$language_index.comments.public")"
+  markers="$(json_list "$config" "languages.$language_index.comments.allow_markers")"
+  if [ -n "$(json_get "$config" "languages.$language_index.comments.doc_inside")" ]; then
+    kinds="$(json_list "$config" "languages.$language_index.comments.doc_inside" | tr '\n' ' ')"
   else kinds="interface enum"; fi
   globs=""
-  for ext in $(json_list "$config" "languages.$i.extensions"); do globs="$globs *$ext"; done
-  i=$((i + 1))
-  [ -n "$line_tok" ] && [ -n "$globs" ] || continue
+  for extension in $(json_list "$config" "languages.$language_index.extensions"); do globs="$globs *$extension"; done
+  language_index=$((language_index + 1))
+  [ -n "$line_token" ] && [ -n "$globs" ] || continue
   # shellcheck disable=SC2086
   diff="$(git diff $diff_args --diff-filter=ACMRT -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
@@ -53,9 +53,9 @@ while [ "$i" -lt "$count" ]; do
       || block "the staged content could not be read" "  git checkout-index failed on the staged files."
     committed_content_root="$work_folder/content/"
   fi
-  found="$(printf '%s\n' "$diff" | LC_ALL=C awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
+  found="$(printf '%s\n' "$diff" | LC_ALL=C awk -v line_token="$line_token" -v doc_token="$doc_token" -v public_keyword="$public_keyword" \
       -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_folder/names-with-lengths" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
-    BEGIN { kind_count = split(kinds, kind_list, " "); for (k = 1; k <= kind_count; k++) if (kind_list[k] != "") allowed_kind[kind_list[k]] = 1 }
+    BEGIN { kind_count = split(kinds, kind_list, " "); for (kind_index = 1; kind_index <= kind_count; kind_index++) if (kind_list[kind_index] != "") allowed_kind[kind_list[kind_index]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
     function kind_of(l,   m) {
       if (match(l, /(^|[^A-Za-z0-9_])(interface|enum|class|struct|record)[ \t]+[A-Za-z_]/)) {
@@ -69,57 +69,57 @@ while [ "$i" -lt "$count" ]; do
       while (length(name) < byte_count) { getline continuation < names_path; name = name "\n" continuation }
       return name
     }
-    function read_committed_lines(file,   path, text, count) {
-      split("", committed_lines)
+    function lines_read_into(lines, file,   path, text, count) {
+      split("", lines)
       path = committed_content_root file
-      count = 0; while ((getline text < path) > 0) committed_lines[++count] = text
+      count = 0; while ((getline text < path) > 0) lines[++count] = text
       close(path)
       return count
     }
     function indentation_of(text) { match(text, /^[ \t]*/); return RLENGTH }
-    function outer_kind(above, indentation,   kind) {
+    function outer_kind(lines, above, indentation,   kind) {
       for (; above >= 1; above--) {
-        if (committed_lines[above] ~ /^[ \t]*$/ || indentation_of(committed_lines[above]) >= indentation) continue
-        kind = kind_of(committed_lines[above]); if (kind != "") return kind
+        if (lines[above] ~ /^[ \t]*$/ || indentation_of(lines[above]) >= indentation) continue
+        kind = kind_of(lines[above]); if (kind != "") return kind
       }
       return ""
     }
-    function declaration_or_enclosing_kind(line,   kind) {
-      kind = kind_of(committed_lines[line]); if (kind != "") return kind
-      return outer_kind(line - 1, indentation_of(committed_lines[line]))
+    function declaration_or_enclosing_kind(lines, line,   kind) {
+      kind = kind_of(lines[line]); if (kind != "") return kind
+      return outer_kind(lines, line - 1, indentation_of(lines[line]))
     }
-    function doc_allowed(file, line,   kind) {
-      if (kind_count == 0 || line > read_committed_lines(file)) return 0
-      kind = declaration_or_enclosing_kind(line)
+    function doc_allowed(file, line,   kind, committed_lines) {
+      if (kind_count == 0 || line > lines_read_into(committed_lines, file)) return 0
+      kind = declaration_or_enclosing_kind(committed_lines, line)
       return kind != "" && (kind in allowed_kind)
     }
     function settle(body) {
       # The line after a doc block decides it: an attribute keeps it pending, a public or
       # container-covered declaration clears it, anything else reports it.
       if (body ~ /^[ \t]*\[/) return
-      if (is_public(body) || doc_allowed(f, n)) pending = ""; else flush()
+      if (is_public(body) || doc_allowed(file_name, line_number)) pending = ""; else flush()
     }
     function allowed(b,   k, arr, m) {
       m = split(markers, arr, "\n")
       for (k = 1; k <= m; k++) if (arr[k] != "" && index(b, arr[k])) return 1
       return 0
     }
-    function is_public(b) { return pub != "" && b ~ ("(^|[^A-Za-z0-9_])" pub "([^A-Za-z0-9_]|$)") }
-    /^diff --git / { in_hunk = 0; if ($0 != previous_header) f = next_name(); previous_header = $0; next }
+    function is_public(text) { return public_keyword != "" && text ~ ("(^|[^A-Za-z0-9_])" public_keyword "([^A-Za-z0-9_]|$)") }
+    /^diff --git / { in_hunk = 0; if ($0 != previous_header) file_name = next_name(); previous_header = $0; next }
     !in_hunk && /^(---|\+\+\+) / { next }
-    /^@@ /     { in_hunk = 1; flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+    /^@@ /     { in_hunk = 1; flush(); if (match($0, /\+[0-9]+/)) line_number = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
     /^\+/ {
       body = substr($0, 2)
-      if (doc_tok != "" && index(body, doc_tok) && body !~ /:\/\/\//) {
-        if (!allow_doc) pending = pending sprintf("  %s:%d  %s\n", f, n, body)
-        n++; next
+      if (doc_token != "" && index(body, doc_token) && body !~ /:\/\/\//) {
+        if (!allow_doc) pending = pending sprintf("  %s:%d  %s\n", file_name, line_number, body)
+        line_number++; next
       }
       if (pending != "") settle(body)
-      if (!allow_line && index(body, line_tok) && body !~ /:\/\// && !allowed(body))
-        hits = hits sprintf("  %s:%d  %s\n", f, n, body)
-      n++; next
+      if (!allow_line && index(body, line_token) && body !~ /:\/\// && !allowed(body))
+        hits = hits sprintf("  %s:%d  %s\n", file_name, line_number, body)
+      line_number++; next
     }
-    /^ / { body = substr($0, 2); if (pending != "") settle(body); n++; next }
+    /^ / { body = substr($0, 2); if (pending != "") settle(body); line_number++; next }
     /^-/ { flush(); next }
     END { flush(); printf "%s", hits }')" \
     || block "the comment check could not read the diff" "  awk failed on the diff of the staged files."

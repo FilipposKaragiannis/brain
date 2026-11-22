@@ -150,7 +150,7 @@ Files: `.sh`.
 - **SH-08** Write state files through a temp file and `mv`.
 - **SH-09** Temp files come from `mktemp`, and a `trap` removes them.
 - **SH-10** A script over 300 lines, or one that needs data structures, moves its logic to Python.
-- **SH-11** A header says what the script does and takes. A function has one contract line. No other comments.
+- **SH-11** A script's header says what the script is for and what it takes. No comment above or inside a function says what the code does: names carry the meaning. A comment stays only for a why the code cannot show.
 - **SH-12** One sandboxed test file per area that runs alone. One behaviour per check, named `Scenario_Outcome`. Waits poll with a bound.
 - **SH-13** ShellCheck is clean on new and touched lines. A `disable` note gives its reason.
 

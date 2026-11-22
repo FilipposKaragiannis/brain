@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.sh"
+  - "**/*.py"
 ---
 # 8. Commits, PRs and behaviour
 
