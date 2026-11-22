@@ -28,7 +28,19 @@ for kv in sys.argv[1:]:
     else: data[k] = v
 data.setdefault("gate", "none")
 print(json.dumps(data))' "$@")"
-add=""; remove=""
+add_labels=""; remove_labels=""; line_break='
+'
+stale_labels() {
+  label_prefix="$1"; kept_value="$2"
+  while IFS= read -r old; do
+    case "$old" in "$label_prefix"*) ;; *) continue ;; esac
+    [ "$old" != "$label_prefix$kept_value" ] || continue
+    case "$old" in *,*) echo "flow: left the label '$old' on gh#$n: a comma in it would make gh remove two" >&2; continue ;; esac
+    printf '%s\n' "$old"
+  done <<LABELS
+$labels
+LABELS
+}
 label_keys="step gate worktree profile size"
 [ -n "$GH_SIZE_FIELD" ] && label_keys="step gate worktree profile"
 for key in $label_keys; do
@@ -36,14 +48,22 @@ for key in $label_keys; do
   for kv in "$@"; do
     [ "${kv%%=*}" = "$key" ] || continue
     value="${kv#*=}"
-    for old in $(printf '%s\n' "$labels" | grep "^$prefix" || true); do
-      [ "$old" = "$prefix$value" ] || remove="$remove --remove-label $old"
-    done
-    if [ -n "$value" ] && [ "$value" != "none" ]; then ensure_label "$prefix$value"; add="$add --add-label $prefix$value"; fi
+    case "$value" in *"$line_break"*|*,*) die "the $key of gh#$n has a line break or a comma, so it cannot be a label" 2 ;; esac
+    remove_labels="$remove_labels$line_break$(stale_labels "$prefix" "$value")"
+    if [ -n "$value" ] && [ "$value" != "none" ]; then ensure_label "$prefix$value"; add_labels="$add_labels$line_break$prefix$value"; fi
   done
 done
-# shellcheck disable=SC2086
-if [ -n "$add$remove" ]; then gh issue edit "$n" -R "$repo" $add $remove >/dev/null || die "cannot write the labels of gh#$n"; fi
+edit_labels() {
+  set --
+  while IFS= read -r label; do [ -z "$label" ] || set -- "$@" --add-label "$label"; done <<ADD
+$add_labels
+ADD
+  while IFS= read -r label; do [ -z "$label" ] || set -- "$@" --remove-label "$label"; done <<REMOVE
+$remove_labels
+REMOVE
+  [ $# -eq 0 ] || gh issue edit "$n" -R "$repo" "$@" >/dev/null
+}
+edit_labels || die "cannot write the labels of gh#$n"
 body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
 comment_id() { python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
 patch_state() { printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$1" -F body=@- >/dev/null; }
