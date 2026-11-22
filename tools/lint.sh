@@ -1,11 +1,15 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
-# JSON valid, shell scripts parse, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
+# JSON valid, shell scripts parse, ShellCheck and Ruff find nothing new, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
 # match the plugin's. Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
 status=0
 fail() { echo "lint: $1"; status=1; }
+baseline_report="$(mktemp)" || exit 1
+trap 'rm -f "$baseline_report"' EXIT
+python3 -I tools/lib/lint_baseline.py check > "$baseline_report" 2>&1 &
+baseline_check=$!
 
 python3 tools/lib/generate.py --check || status=1
 
@@ -161,6 +165,9 @@ done
 # The installed block must stay under 6 KB (Codex budget).
 size="$(wc -c < plugins/standards/rules/block.md | tr -d ' ')"
 [ "$size" -le 6144 ] || fail "standards block is $size bytes, limit 6144"
+
+wait "$baseline_check" || status=1
+cat "$baseline_report"
 
 [ "$status" -eq 0 ] && echo "lint: ok"
 exit $status
