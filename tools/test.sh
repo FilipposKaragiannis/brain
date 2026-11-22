@@ -50,6 +50,7 @@ for part in $parts; do
     standards)
       clean plugins/standards/hooks/tests/run.sh || status=1
       clean plugins/standards/hooks/tests/testing-guide.sh || status=1
+      clean plugins/standards/hooks/tests/appendices.sh || status=1
       ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
