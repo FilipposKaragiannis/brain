@@ -70,6 +70,25 @@ check "FourthAppendix_RendersWithNoCodeChange: a new appendix heading in the sou
 listed = {entry["file"]: entry["extensions"] for entry in json.load(open(sys.argv[1] + "/appendices.json"))}
 assert listed.get("typescript.md") == [".ts", ".tsx"], listed
 assert json.load(open(sys.argv[1] + "/index.json"))["TS-01"]["file"] == "typescript.md"' "$work/fourth/out/plugins/standards/rules"
+mkdir -p "$work/nofiles/docs" "$work/oversize/docs"
+cp "$repo/docs/coding-standards.md" "$work/nofiles/docs/coding-standards.md"
+printf '\n## Appendix D. TypeScript\n\n- **TS-01** No `any`.\n' >> "$work/nofiles/docs/coding-standards.md"
+if render "$work/nofiles" "$work/nofiles/out" 2>/dev/null; then
+  fail "AppendixWithoutFilesLine_StopsTheGenerator: an appendix that names no file types has no scope, so the render must fail"
+else
+  pass "AppendixWithoutFilesLine_StopsTheGenerator: an appendix that names no file types has no scope, so the render must fail"
+fi
+python3 -I -c 'import sys
+source = open(sys.argv[1]).read()
+heading = "\n## Appendix A. C#"
+rules = "".join("- **X-%02d A rule whose title is long enough to fill the budget of the compact block.** [hard] Text.\n" % n for n in range(60))
+open(sys.argv[2], "w").write(source.replace(heading, "\n" + rules + heading, 1))' \
+  "$repo/docs/coding-standards.md" "$work/oversize/docs/coding-standards.md"
+if render "$work/oversize" "$work/oversize/out" 2>/dev/null; then
+  fail "BlockOverSixKilobytes_StopsTheGenerator: a block over its limit must not be written"
+else
+  pass "BlockOverSixKilobytes_StopsTheGenerator: a block over its limit must not be written"
+fi
 
 plugin_copy="$work/plugin"; cp -R "$hooks/.." "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"
@@ -126,6 +145,15 @@ echo "init: the drift hash"
 hash_before="$("$init" --source-hash)"
 printf -- '- **SH-99** A rule added after the install.\n' >> "$plugin_copy/rules/shell.md"
 check "AppendixEdited_ChangesTheSourceHash: the session-start nudge sees a changed appendix" \
+  [ "$("$init" --source-hash)" != "$hash_before" ]
+
+hash_before="$("$init" --source-hash)"
+printf -- '- **CS-99** A rule added after the install.\n' >> "$plugin_copy/rules/csharp.md"
+check "CsharpAppendixEdited_ChangesTheSourceHash: the C# appendix is inside the drift hash too" \
+  [ "$("$init" --source-hash)" != "$hash_before" ]
+hash_before="$("$init" --source-hash)"
+printf '\n' >> "$plugin_copy/rules/appendices.json"
+check "AppendixListEdited_ChangesTheSourceHash: the list that scopes each appendix is inside the drift hash" \
   [ "$("$init" --source-hash)" != "$hash_before" ]
 
 [ "$fails" -eq 0 ] && echo "appendices: ok" || { echo "appendices: $fails failed"; exit 1; }
