@@ -1,4 +1,5 @@
 bump: patch
 
-- The shell helper that expands `{files}` in a configured command is shared with flow, so verify and
-  the commit hooks read the placeholder the same way.
+- The formatter hook reads `{files}` through the same shared helper as flow's verify, so the two
+  cannot drift. A `{files}` inside a quote inside another quote, which two shells would read,
+  now fails the format check with its reason, since its names could not stay data.
