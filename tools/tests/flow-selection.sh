@@ -27,7 +27,7 @@ base="$(git rev-parse HEAD)"
 result() { if "$project/tools/test.sh" flow-since "$base" > "$work/output" 2>&1; then echo pass; else echo fail; fi; }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
 suites_reported() { grep -cE '^flow: [^ ]+ (pass|FAIL) \(' "$work/output"; }
-lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300
+lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300; child_seconds=120
 
 echo 'exit 0' >> "$suite/sessions.sh"
 mkdir -p plugins/flow/changelog.d
@@ -41,6 +41,8 @@ expect 'SelectedSuiteFails_FailsVerification because a partial run must propagat
 expect 'FailingSuite_PrintsItsLinesWithItsName because the failure must name its suite' "$(grep -c '^\[sessions\]   FAIL StubCheck_Holds$' "$work/output")" 1
 cat > "$suite/sessions.sh" <<STUB
 echo "  ok   Stub_FirstCheckHolds"
+sleep $child_seconds &
+echo \$! > "$work/child"
 ticks=0
 while [ "\$ticks" -lt $hang_ticks ]; do echo tick >> "$work/ticks"; sleep $poll_seconds; ticks=\$((ticks + 1)); done
 STUB
@@ -52,10 +54,13 @@ ticks=0; while kill -0 "$runner" 2>/dev/null && [ "$ticks" -lt "$wait_ticks" ]; 
 if kill -0 "$runner" 2>/dev/null; then runner_state=running; else runner_state=ended; fi
 ticks_at_stop="$(wc -l < "$work/ticks")"; sleep "$lane_hold_seconds"
 wait "$runner" || true
+suite_child="$(cat "$work/child")"
+if kill -0 "$suite_child" 2>/dev/null; then child_state=running; kill "$suite_child"; else child_state=ended; fi
 expect 'RunnerGivenTerm_EndsWhileItsSuiteHangs because a hung suite must not block cancellation' "$runner_state" ended
 expect 'RunnerGivenTerm_StopsItsRunningSuite because a stopped run leaves no suite behind' "$(wc -l < "$work/ticks")" "$ticks_at_stop"
+expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run leaves no check behind' "$child_state" ended
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
-rm "$work/ticks"
+rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
@@ -117,18 +122,18 @@ mkdir "$work/holders"
 for stub in "$suite"/*.sh; do
   cat > "$stub" <<STUB
 : > "$work/holders/\$\$"
-[ "\$(ls "$work/holders" | wc -l | tr -d ' ')" -eq 1 ] || echo overlap >> "$work/overlaps"
+ls "$work/holders" | wc -l | tr -d ' ' >> "$work/holder-counts"
 sleep $lane_hold_seconds
 rm "$work/holders/\$\$"
 STUB
 done
-overlapped() { if [ -f "$work/overlaps" ]; then echo overlapped; else echo alone; fi; }
+most_suites_at_once() { sort -n "$work/holder-counts" | tail -1; rm "$work/holder-counts"; }
 export FLOW_SUITE_LANES=1
 expect 'OneLane_Passes because one lane is a valid count' "$(result)" pass
-expect 'OneLane_RunsOneSuiteAtATime because a single lane never starts a second suite' "$(overlapped)" alone
+expect 'OneLane_RunsOneSuiteAtATime because a single lane never starts a second suite' "$(most_suites_at_once)" 1
 FLOW_SUITE_LANES=3
 expect 'ThreeLanes_Pass because the default count must work when named' "$(result)" pass
-expect 'ThreeLanes_RunSuitesSideBySide because the lanes exist to overlap suites' "$(overlapped)" overlapped
+expect 'ThreeLanes_RunThreeSuitesAtOnce because each lane holds one suite' "$(most_suites_at_once)" 3
 FLOW_SUITE_LANES=0
 expect 'ZeroLanes_Fails because no suite could ever run' "$(result)" fail
 expect 'ZeroLanes_NamesTheVariableAndTheValue because the owner must see what to fix' "$(tail -1 "$work/output" | grep -c "FLOW_SUITE_LANES.*'0'")" 1
@@ -138,10 +143,9 @@ for bad in abc -1 ''; do
   expect "LaneCount${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_LANES.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES
-rm -f "$work/overlaps"
+rm -f "$work/holder-counts"
 expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
-expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(overlapped)" overlapped
-rm -f "$work/overlaps"
+expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(most_suites_at_once)" 3
 cp -p "$root/plugins/flow/tests/run.sh" "$suite/run.sh"
 printf 'sandbox_enter() { exit 0; }\n' > "$project/tools/lib/sandbox.sh"
 if "$project/tools/test.sh" flow > "$work/output" 2>&1; then whole_part=pass; else whole_part=fail; fi

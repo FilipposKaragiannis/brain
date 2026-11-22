@@ -1,7 +1,8 @@
 """Select Brain's Flow tests and run independent suites in their own sandboxes.
 
-FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. A TERM prints the output so far
-of each suite still running, then ends the run.
+FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. Each suite runs in a process
+group of its own. A TERM, INT or HUP prints the output so far of each suite still running, ends
+the process group of each, then ends the run.
 """
 import json
 import os
@@ -35,7 +36,8 @@ UNRELATED_TO_TESTS = (
 )
 COMMIT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 BASE_UNAVAILABLE = "flow: no comparison base available, running every suite"
-STOPPED_BY_TERM = 128 + signal.SIGTERM
+SIGNAL_EXIT_BASE = 128
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
 
 @dataclass(frozen=True)
@@ -132,7 +134,7 @@ def run_suite(command, log, clock: Callable[[], float], running: set):
     started = clock()
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     with log.open("wb") as output:
-        with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT) as process:
+        with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process:
             running.add(process)
             code = process.wait()
     running.discard(process)
@@ -154,21 +156,29 @@ def report_suite(name: str, outcome, log: Path) -> int:
     return code
 
 
-def report_stopped(workers: ThreadPoolExecutor, unfinished, directory: Path, running: set) -> None:
+def end_process_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
+def report_stopped(number: int, workers: ThreadPoolExecutor, unfinished, directory: Path, running: set) -> None:
     workers.shutdown(wait=False, cancel_futures=True)
     for process in tuple(running):
-        process.terminate()
+        end_process_group(process)
     for name in sorted(name for name in unfinished if (directory / name).exists()):
         print_output(name, directory / name)
         print(f"flow: {name} stopped", flush=True)
-    sys.exit(STOPPED_BY_TERM)
+    sys.exit(SIGNAL_EXIT_BASE + number)
 
 
 def run_selected(suites, directory, lanes: int, clock: Callable[[], float]) -> "list[str]":
     codes = {}
     processes = set()
     with ThreadPoolExecutor(max_workers=lanes) as workers:
-        signal.signal(signal.SIGTERM, lambda number, frame: report_stopped(workers, suites.keys() - codes.keys(), directory, processes))
+        for stop_signal in STOP_SIGNALS:
+            signal.signal(stop_signal, lambda number, frame: report_stopped(number, workers, suites.keys() - codes.keys(), directory, processes))
         running = {workers.submit(run_suite, command, directory / name, clock, processes): name for name, command in suites.items()}
         for finished in as_completed(running):
             name = running[finished]
