@@ -30,7 +30,7 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
-limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=10; stop_bound_seconds=1
+limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=5; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
 sleep $child_seconds &
@@ -62,6 +62,12 @@ for bad in 0 abc -1 1.5 ''; do
   expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
+for bad in 0 abc -1 1.5 ''; do
+  export FLOW_SUITE_STOP_GRACE_SECONDS="$bad"
+  expect "StopGrace${bad:-Empty}_Fails because only a whole number of seconds from 1 is a grace time" "$(result)" fail
+  expect "StopGrace${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_STOP_GRACE_SECONDS.*'$bad'")" 1
+done
+unset FLOW_SUITE_STOP_GRACE_SECONDS
 rm "$work/child" "$work/cleanup"
 git restore plugins/flow/tests/base-claim.sh plugins/flow/tests/sessions.sh
 cat > "$work/deaf-suite.sh" <<STUB
@@ -79,6 +85,7 @@ import sys
 import time
 from pathlib import Path
 sys.path.append(sys.argv[1])
+import flow_clock
 import flow_process_groups
 import flow_selection
 import flow_suites
@@ -105,10 +112,10 @@ class ClockThatStepsOnceTheSuiteIsReady:
         self.awaited = awaited
         self.probe = probe
 
-    def now(self) -> flow_suites.Instant:
-        return flow_suites.Instant(self.seconds)
+    def now(self) -> flow_clock.Instant:
+        return flow_clock.Instant(self.seconds)
 
-    def sleep(self, duration: flow_suites.Duration) -> None:
+    def sleep(self, duration: flow_clock.Duration) -> None:
         if self.seconds >= self.awaits_from:
             self.awaits_from = math.inf
             wait_until_ended(self.awaited, self.probe)
@@ -166,10 +173,12 @@ cat > "$work/membership.py" <<'PY'
 import sys
 from pathlib import Path
 sys.path.append(sys.argv[1])
+import flow_clock
 import flow_process_groups
 
+LISTING_LIMIT_SECONDS = 10
 reader, group = sys.argv[2], flow_process_groups.ProcessGroupId(int(sys.argv[3]))
-membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group)
+membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group, flow_clock.Duration(LISTING_LIMIT_SECONDS))
 print(membership.value)
 PY
 member_group=77; other_group=88; fake_table="$work/fake-proc"; name_not_utf8="$(printf 'cut\303')"
@@ -240,9 +249,12 @@ expect 'SuiteWithAChildDeafToTermWhileTheListingFails_HasTheChildKilled because 
 expect 'SuiteWithAChildDeafToTermWhileTheListingFails_EndsAtTheGraceTime because a failed listing is no proof the group is gone' "$(if [ "$(suite_seconds termdeaf)" -ge "$((default_limit_seconds + grace_seconds))" ] && [ "$(suite_seconds termdeaf)" -lt "$((default_limit_seconds + grace_seconds + stop_bound_seconds))" ]; then echo at-grace; else echo "at $(suite_seconds termdeaf)s"; fi)" at-grace
 rm -r "$fake_table" "$work/stub-ps" "$work/ps-output" "$work/ps-code" "$work/membership.py" "$work/child" "$work/term-deaf-child-suite.sh" "$work/term-deaf-child-ready" "$work/stepping-logs" "$work/stepping-runner.py"
 mkdir "$work/holders"
+barrier_ticks=30; first_tick=0; one_tick=1
 for stub in "$suite"/*.sh; do
   cat > "$stub" <<STUB
 : > "$work/holders/\$\$"
+waited=$first_tick
+until [ "\$(ls "$work/holders" | wc -l | tr -d ' ')" -ge "\$(cat "$work/lanes-expected")" ] || [ "\$waited" -ge $barrier_ticks ]; do sleep $poll_seconds; waited=\$((waited + $one_tick)); done
 ls "$work/holders" | wc -l | tr -d ' ' >> "$work/holder-counts"
 sleep $lane_hold_seconds
 rm "$work/holders/\$\$"
@@ -250,9 +262,11 @@ STUB
 done
 most_suites_at_once() { sort -n "$work/holder-counts" | tail -1; rm "$work/holder-counts"; }
 export FLOW_SUITE_LANES=1
+echo "$FLOW_SUITE_LANES" > "$work/lanes-expected"
 expect 'OneLane_Passes because one lane is a valid count' "$(result)" pass
 expect 'OneLane_RunsOneSuiteAtATime because a single lane never starts a second suite' "$(most_suites_at_once)" 1
 FLOW_SUITE_LANES=3
+echo "$FLOW_SUITE_LANES" > "$work/lanes-expected"
 expect 'ThreeLanes_Pass because the default count must work when named' "$(result)" pass
 expect 'ThreeLanes_RunThreeSuitesAtOnce because each lane holds one suite' "$(most_suites_at_once)" 3
 FLOW_SUITE_LANES=0
@@ -264,6 +278,7 @@ for bad in abc -1 ''; do
   expect "LaneCount${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_LANES.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES
+default_lanes=3; echo "$default_lanes" > "$work/lanes-expected"
 rm -f "$work/holder-counts"
 expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
 expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(most_suites_at_once)" 3
