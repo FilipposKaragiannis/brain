@@ -34,8 +34,10 @@ case "${XDG_CACHE_HOME:-}" in
   *) case "${HOME:-}" in /*) _flow_python_cache="$HOME/.cache/flow/python" ;; esac ;;
 esac
 if [ -n "$_flow_python_cache" ]; then
-  [ -d "$_flow_python_cache" ] || (umask 077 && mkdir -p "$_flow_python_cache") 2>/dev/null || true
-  python3() { command python3 -X "pycache_prefix=$_flow_python_cache" "$@"; }
+  python3() {
+    [ -d "$_flow_python_cache" ] || (umask 077 && mkdir -p "$_flow_python_cache") 2>/dev/null || true
+    command python3 -X "pycache_prefix=$_flow_python_cache" "$@"
+  }
 fi
 
 die() { echo "flow: $1" >&2; exit "${2:-1}"; }
