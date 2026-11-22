@@ -208,4 +208,12 @@ check "CompareOfARunWhoseSandboxFolderDiffers_ExitsZero: the same check in a new
 check "Help_ListsEachNormalisation: a reader sees which variable text the tool removes before comparing" \
   sh -c 'for text in "byte order mark" "GitHub log prefix" "carriage return" "<temporary folder>"; do python3 -I "$1" --help | grep -qF -- "$text" || exit 1; done' sh "$parity"
 
+echo "the runner's own lines"
+{ echo "flow: core started"; echo "flow: beta started"; cat "$hand/new-same.log"
+  echo "flow: core stopped at the time limit of 1800s"; echo "flow: core FAIL (1800.0s)"; echo "flow: beta pass (0.1s)"; } > "$work/runner-lines.log"
+parity_tool inventory --shape new --log "$hand/new-same.log" --output "$work/without-runner-lines.json"
+parity_tool inventory --shape new --log "$work/runner-lines.log" --output "$work/with-runner-lines.json"
+check "InventoryOfALogWithTheRunnersStartAndStopLines_EqualsTheInventoryWithout: a line the runner prints is no check result" \
+  cmp "$work/without-runner-lines.json" "$work/with-runner-lines.json"
+
 if [ "$fails" -eq 0 ]; then echo "suite-parity: ok"; else echo "suite-parity: $fails failed"; exit 1; fi
