@@ -11,7 +11,7 @@ parts="$every_part"; [ $# -eq 0 ] || parts="$*"
 status=0
 # The suites run in an empty environment, so nothing the owner exports (a Slack webhook, a token)
 # reaches them. Each suite also stubs the network, desktop and agent tools itself.
-clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" ${FLOW_SUITE_LANES+"FLOW_SUITE_LANES=$FLOW_SUITE_LANES"} "$@"; }
+clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" ${FLOW_SUITE_LANES+"FLOW_SUITE_LANES=$FLOW_SUITE_LANES"} ${FLOW_SUITE_TIME_LIMIT_SECONDS+"FLOW_SUITE_TIME_LIMIT_SECONDS=$FLOW_SUITE_TIME_LIMIT_SECONDS"} "$@"; }
 if [ "${1:-}" = flow-since ]; then
   [ "$#" -eq 2 ] || { echo "usage: tools/test.sh flow-since <base commit>" >&2; exit 2; }
   clean python3 -I tools/lib/flow_suites.py since "$2"

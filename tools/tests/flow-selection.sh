@@ -63,6 +63,34 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
+limit_seconds=3
+cat > "$suite/base-claim.sh" <<STUB
+echo "  ok   Stub_CheckBeforeTheHang"
+sleep $child_seconds &
+echo \$! > "$work/child"
+sleep $child_seconds
+STUB
+printf 'sleep %s\necho "  ok   Stub_WithinTheLimit"\n' "$lane_hold_seconds" > "$suite/sessions.sh"
+starts_before_ends() { awk '/^flow: [^ ]+ started$/ { started[$2] = 1 } /^flow: [^ ]+ (pass|FAIL) \(/ { ended++; if (!started[$2]) unstarted++ } END { print (ended && !unstarted) ? "yes" : "no" }' "$work/output"; }
+export FLOW_SUITE_LANES=1 FLOW_SUITE_TIME_LIMIT_SECONDS="$limit_seconds"
+expect 'SuitePastItsTimeLimit_FailsTheRun because a hung suite proves nothing' "$(result)" fail
+suite_child="$(cat "$work/child")"
+if kill -0 "$suite_child" 2>/dev/null; then child_state=running; kill "$suite_child"; else child_state=ended; fi
+expect 'SuitePastItsTimeLimit_EndsItsChildCommands because a stopped suite leaves no check behind' "$child_state" ended
+expect 'SuitePastItsTimeLimit_PrintsItsOutputSoFarWithItsName because the owner must see how far it got' "$(grep -cFx '[base-claim]   ok   Stub_CheckBeforeTheHang' "$work/output")" 1
+expect 'SuitePastItsTimeLimit_IsNamedWithTheLimit because the owner must see which suite hung and for how long' "$(grep -cFx "flow: base-claim stopped at the time limit of ${limit_seconds}s" "$work/output")" 1
+expect 'SuiteAfterAHungSuite_StillRunsAndReports because one hung suite must not hold up the rest' "$(grep -cFx '[sessions]   ok   Stub_WithinTheLimit' "$work/output")" 1
+expect 'SuiteWithinTheTimeLimit_Passes because only a suite past the limit is stopped' "$(grep -c '^flow: sessions pass (' "$work/output")" 1
+expect 'SuitePastItsTimeLimit_IsNamedInTheSummary because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in base-claim'
+expect 'EverySelectedSuite_PrintsAStartLineBeforeItsEndLine because the reader must see which suites are running' "$(starts_before_ends)" yes
+for bad in 0 abc -1 1.5 ''; do
+  FLOW_SUITE_TIME_LIMIT_SECONDS="$bad"
+  expect "TimeLimit${bad:-Empty}_Fails because only a whole number of seconds from 1 is a limit" "$(result)" fail
+  expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
+done
+unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
+rm "$work/child"
+git restore plugins/flow/tests/base-claim.sh plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
 touch plugins/flow/README.md
