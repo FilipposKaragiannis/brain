@@ -22,8 +22,10 @@ commit_has_marker "$seg" "[why-comment]" && allow_line=1
 commit_has_marker "$seg" "[allow-docs]" && allow_doc=1
 [ "$allow_line" -eq 1 ] && [ "$allow_doc" -eq 1 ] && exit 0
 diff_args="$(commit_diff_args "$seg")"
-content_dir="$(mktemp -d)" || exit 0
-trap 'rm -rf "$content_dir"' EXIT
+work_dir="$(mktemp -d)" || exit 0
+trap 'rm -rf "$work_dir"' EXIT
+mkdir "$work_dir/content"
+set -f   # the globs stay literal
 hits=""
 count="$(json_length "$config" "languages")"
 i=0
@@ -40,18 +42,19 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
   [ -n "$line_tok" ] && [ -n "$globs" ] || continue
   # shellcheck disable=SC2086
-  diff="$(git -c core.quotePath=false diff $diff_args -U1 --no-color -- $globs 2>/dev/null || true)"
+  diff="$(git -c core.quotePath=false diff $diff_args --diff-filter=ACMR -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
-  # The committed content of a file, for the enclosing-type lookup: the index, written under
-  # content_dir, or the working tree when the commit reads it.
+  # shellcheck disable=SC2086
+  git -c core.quotePath=false diff $diff_args --name-only --diff-filter=ACMR -- $globs > "$work_dir/names" 2>/dev/null || true
   if [ "$diff_args" = "--cached" ]; then
     # shellcheck disable=SC2086
-    git diff $diff_args -z --name-only --diff-filter=ACMR -- $globs 2>/dev/null \
-      | git checkout-index -z --stdin --prefix="$content_dir/"
-    root="$content_dir/"
-  else root="./"; fi
+    git diff $diff_args -z --name-only --diff-filter=ACMR -- $globs > "$work_dir/names-nul" 2>/dev/null || true
+    git -c core.symlinks=false checkout-index -f -z --stdin --prefix="$work_dir/content/" < "$work_dir/names-nul" \
+      || block "the staged content could not be read" "  git checkout-index failed on the staged files."
+    committed_content_root="$work_dir/content/"
+  else committed_content_root="./"; fi
   found="$(printf '%s\n' "$diff" | awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
-      -v markers="$markers" -v kinds="$kinds" -v root="$root" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
+      -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_dir/names" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
     BEGIN { nk = split(kinds, karr, " "); for (k = 1; k <= nk; k++) if (karr[k] != "") okkind[karr[k]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
     function kind_of(l,   m) {
@@ -60,33 +63,33 @@ while [ "$i" -lt "$count" ]; do
       }
       return ""
     }
-    function unquote(name,   out, i, c, d, octal) {
+    function unquote(name,   unquoted, position, character, escaped, octal) {
       if (substr(name, 1, 1) != "\"") return name
-      name = substr(name, 2, length(name) - 2); out = ""
-      for (i = 1; i <= length(name); i++) {
-        c = substr(name, i, 1)
-        if (c != "\\") { out = out c; continue }
-        d = substr(name, ++i, 1)
-        if (d ~ /[0-7]/) { octal = substr(name, i, 3); i += 2; out = out sprintf("%c", oct(octal)) }
-        else out = out (d == "t" ? "\t" : d == "n" ? "\n" : d)
+      name = substr(name, 2, length(name) - 2); unquoted = ""
+      for (position = 1; position <= length(name); position++) {
+        character = substr(name, position, 1)
+        if (character != "\\") { unquoted = unquoted character; continue }
+        escaped = substr(name, ++position, 1)
+        if (escaped ~ /[0-7]/) { octal = substr(name, position, 3); position += 2; unquoted = unquoted sprintf("%c", octal_value(octal)) }
+        else unquoted = unquoted (escaped == "t" ? "\t" : escaped == "n" ? "\n" : escaped)
       }
-      return out
+      return unquoted
     }
-    function oct(digits,   v, k) { v = 0; for (k = 1; k <= length(digits); k++) v = v * 8 + substr(digits, k, 1); return v }
-    function doc_allowed(file, line,   path, l, i, k, ind, li, kind, buf) {
+    function octal_value(digits,   value, position) { value = 0; for (position = 1; position <= length(digits); position++) value = value * 8 + substr(digits, position, 1); return value }
+    function doc_allowed(file, line,   path, l, i, k, indentation, line_indent, kind, lines) {
       # True when the declaration at line, or the nearest enclosing type declaration (the first
       # type keyword above it at a smaller indentation), is one of the allowed kinds.
       if (nk == 0) return 0
-      path = root file
-      i = 0; while ((getline l < path) > 0) buf[++i] = l
+      path = committed_content_root file
+      i = 0; while ((getline l < path) > 0) lines[++i] = l
       close(path)
       if (line > i) return 0
-      kind = kind_of(buf[line]); if (kind != "") return (kind in okkind)
-      match(buf[line], /^[ \t]*/); ind = RLENGTH
+      kind = kind_of(lines[line]); if (kind != "") return (kind in okkind)
+      match(lines[line], /^[ \t]*/); indentation = RLENGTH
       for (k = line - 1; k >= 1; k--) {
-        l = buf[k]; if (l ~ /^[ \t]*$/) continue
-        match(l, /^[ \t]*/); li = RLENGTH
-        if (li >= ind) continue
+        l = lines[k]; if (l ~ /^[ \t]*$/) continue
+        match(l, /^[ \t]*/); line_indent = RLENGTH
+        if (line_indent >= indentation) continue
         kind = kind_of(l); if (kind != "") return (kind in okkind)
       }
       return 0
@@ -103,9 +106,9 @@ while [ "$i" -lt "$count" ]; do
       return 0
     }
     function is_public(b) { return pub != "" && b ~ ("(^|[^A-Za-z0-9_])" pub "([^A-Za-z0-9_]|$)") }
-    /^\+\+\+ / { f = substr($0, 5); sub(/\t$/, "", f); f = unquote(f); sub(/^b\//, "", f); next }
-    /^--- /    { next }
-    /^@@ /     { flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+    /^diff --git / { in_hunk = 0; f = ""; if ((getline raw_name < names_path) > 0) f = unquote(raw_name); next }
+    !in_hunk && /^(---|\+\+\+) / { next }
+    /^@@ /     { in_hunk = 1; flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
     /^\+/ {
       body = substr($0, 2)
       if (doc_tok != "" && index(body, doc_tok) && body !~ /:\/\/\//) {
@@ -119,7 +122,8 @@ while [ "$i" -lt "$count" ]; do
     }
     /^ / { body = substr($0, 2); if (pending != "") settle(body); n++; next }
     /^-/ { flush(); next }
-    END { flush(); printf "%s", hits }')"
+    END { flush(); printf "%s", hits }')" \
+    || block "the comment check could not read the diff" "  awk failed on the diff of the staged files."
   hits="$hits$found"
 done
 [ -n "$hits" ] || exit 0

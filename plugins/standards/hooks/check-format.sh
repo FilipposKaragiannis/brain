@@ -2,7 +2,7 @@
 # Block a commit whose files fail the formatter check. The commands come from
 # .standards/config.json: languages[].format is a list of {prefix, command}; {files} in the
 # command stands for the staged files under that prefix (relative to the repo root), each one a
-# separate argument: the command runs as `sh -c <command with {files} as "$@"> sh <names>`.
+# separate argument; format-files.sh describes how the command runs.
 . "$(dirname "$0")/lib.sh"
 payload="$(read_payload)"
 cmd="$(payload_command "$payload")"
@@ -30,9 +30,8 @@ while [ "$i" -lt "$count" ]; do
     command="$(json_get "$config" "languages.$i.format.$j.command")"
     j=$((j + 1))
     [ -n "$command" ] || continue
-    run="$(printf '%s' "$command" | sed 's|{files}|"$@"|g')"
-    if ! output="$(xargs -0 sh "$hooks_dir/format-files.sh" "$prefix" "$exts" "$run" < "$names" 2>&1)"; then
-      failed="$failed  $run
+    if ! output="$(xargs -0 sh "$hooks_dir/format-files.sh" "$prefix" "$exts" "$command" < "$names" 2>&1)"; then
+      failed="$failed  $command
 $(printf '%s\n' "$output" | tail -40 | sed 's/^/    /')
 "
     fi
