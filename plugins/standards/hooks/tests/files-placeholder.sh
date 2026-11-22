@@ -1,10 +1,10 @@
 #!/bin/sh
 # Tests the {files} placeholder helper against a real sh and bash. It generates configured commands
 # over the outer quoting (none, or the single- or double-quoted script of a sh -c or a bash -c), the
-# quoting {files} sits in inside it (none, single, double) and an escape or quote before {files} or
-# inside those quotes, expands each with hostile file names and runs the result as the hooks and
-# verify do. Every command must be refused, or deliver every name intact as one word and run
-# nothing. Run from anywhere. Exit 1 on any failure.
+# quoting {files} sits in inside it (none, single, double), an escape or quote before {files} or
+# inside those quotes and text joined after it, expands each with hostile file names and runs the
+# result as the hooks and verify do. Every command must be refused, or deliver every name intact as
+# one word and run nothing. Run from anywhere. Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 hooks="$here/.."
@@ -48,6 +48,7 @@ script_text() {
     inside) printf 'record %s %s%s {files}%s' "$3" "$script_quote" "$4" "$script_quote" ;;
     after) printf 'record %s %s%s%s {files}' "$3" "$script_quote" "$4" "$script_quote" ;;
     joined) printf 'record %s %s%s%s{files}' "$3" "$script_quote" "$4" "$script_quote" ;;
+    followed) printf 'record %s %s%s {files}x%s' "$3" "$script_quote" "$4" "$script_quote" ;;
   esac
 }
 
@@ -69,7 +70,7 @@ fi
 generated_commands() {
   for outer in $outer_quotings; do
     for inner in none single double; do
-      for placement in after inside joined; do
+      for placement in after inside joined followed; do
         [ "$inner:$placement" = none:inside ] && continue
         fragments | while IFS= read -r fragment; do
           configured_command "$outer" "$(script_text "$inner" "$placement" "$fragment" "")"; echo
@@ -115,20 +116,42 @@ check "FilesInASingleQuotedScript_DeliversEveryName: the nested shell reads esca
 check "FilesInADoubleQuotedScript_DeliversEveryName: the nested shell reads escaped names" delivers 'sh -c "record {files}"'
 check "EscapedDoubleQuoteInsideTheScriptsSingleQuotes_KeepsFilesInTheScript: the outer shell's escape is not a closing quote" \
   delivers "sh -c \"record 'a\\\"b' {files}\""
+check "EscapedQuoteBeforeFiles_DeliversEveryName: an escaped quote opens no quote" delivers "record \\' {files}"
+check "EscapedQuoteBeforeFilesInAScript_DeliversEveryName: the nested shell's escaped quote opens no quote" \
+  delivers "sh -c 'record \\\" {files}'"
 check "FilesJoinedToTheScriptAfterItsQuote_IsRefused: the first name would be script text" refuses "sh -c 'record '{files}"
 check "FilesInNestedQuotes_IsRefused: two shells would read the names" refuses "sh -c 'sh -c \"record {files}\"'"
 check "FilesAfterADotnetSolution_DeliversEveryName: the names follow the solution's arguments" \
   delivers 'dotnet format style X.sln --include {files}'
 check "FilesAfterAnNpxCommand_DeliversEveryName: the names follow the tool's arguments" delivers 'npx prettier --check {files}'
 check "FilesInAForLoop_DeliversEveryName: the loop reads each name as one word" \
-  delivers 'for f in {files}; do record "$f" || exit 1; done'
-check "FilesInAForLoopOfSyntaxChecks_IsAccepted: the loop list becomes the arguments" \
-  [ "$(files_placeholder_expanded 'for f in {files}; do sh -n "$f" || exit 1; done')" = 'for f in "$@"; do sh -n "$f" || exit 1; done' ]
+  delivers 'for name in {files}; do record "$name" || exit 1; done'
+
+syntax_folder="$work/syntax"; unparsable_script='unclosed.name'
+syntax_check_loop='for name in {files}; do sh -n "$name" || exit 1; done'
+write_parsable_scripts() {
+  rm -rf "$syntax_folder" && mkdir "$syntax_folder" || return 1
+  for script_name in "$@"; do printf 'true\n' > "$syntax_folder/$script_name" || return 1; done
+}
+syntax_checks_pass() {
+  syntax_expanded="$(files_placeholder_expanded "$syntax_check_loop" 2>/dev/null)" || return 1
+  with_hostile_names write_parsable_scripts && with_hostile_names run_expanded "$syntax_folder" "$syntax_expanded"
+}
+syntax_checks_fail_on_the_unparsable_script() {
+  syntax_expanded="$(files_placeholder_expanded "$syntax_check_loop" 2>/dev/null)" || return 1
+  with_hostile_names write_parsable_scripts && printf 'if true; then\n' > "$syntax_folder/$unparsable_script" || return 1
+  ! with_hostile_names run_expanded "$syntax_folder" "$syntax_expanded" "$unparsable_script"
+}
+check "FilesInAForLoopOfSyntaxChecks_PassesWhenEveryNamedScriptParses: each name reaches sh -n as the path of its file" \
+  syntax_checks_pass
+check "FilesInAForLoopOfSyntaxChecks_FailsWhenANamedScriptDoesNotParse: the check reads the scripts it is given" \
+  syntax_checks_fail_on_the_unparsable_script
 check "FilesInAZshScript_IsRefused: only sh and bash read the script by the scanned rules" refuses "zsh -c 'record {files}'"
 
-project="$work/project"; mkdir -p "$project/scripts"; echo 'activated=yes' > "$project/scripts/activate"
+project="$work/project"
 delivers_in_project() {
   project_expanded="$(files_placeholder_expanded "$1" 2>/dev/null)" || return 1
+  rm -rf "$project" && mkdir -p "$project/scripts" && echo 'activated=yes' > "$project/scripts/activate" || return 1
   : > "$received"
   with_hostile_names run_expanded "$project" "$project_expanded"
   tail -n "$names_total" "$received" | cmp -s - "$expected" && [ "$(ls -A "$project")" = scripts ]
@@ -140,7 +163,9 @@ else
   echo "  skip FilesAfterAndInABashScript_DeliversEveryName: bash is not installed"
 fi
 check "FilesAsACommand_IsRefused: the first name would run" refuses 'true; {files}'
-check "FilesAfterACommandSubstitution_IsRefused: the scanner does not follow its quoting" refuses 'record $(echo "x") {files}'
-check "FilesAfterAComment_IsRefused: quotes in a comment are not quotes" refuses "record # it's {files}"
+check "FilesAfterACommandSubstitution_IsRefused: the scanner does not follow its quoting" refuses 'record $(echo "x") y {files}'
+check "FilesInACommandSubstitutionInDoubleQuotes_IsRefused: a quote inside it does not close the outer one" \
+  refuses 'record "$(echo " x {files} ")"'
+check "FilesAfterAComment_IsRefused: a commented-out {files} would hand the command no name" refuses 'record # x {files}'
 check "QuoteLeftOpen_IsRefused: the command cannot be read" refuses "record {files} 'x"
 exit "$((fails > 0))"

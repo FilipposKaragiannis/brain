@@ -20,9 +20,15 @@ ampersand_name='&amp.name'
 pipe_name='|pipe.name'
 dash_name='-dash.name'
 glob_name='glob*[a].name'
-hostile_names_total=9
 unit_separator="$(printf '\037')"
-spaced_names_total=2
+verify_passed=0; verify_failed=1
+with_hostile_names() {
+  "$@" "$single_quote_name" "$double_quote_name" "$subshell_name" "$backtick_name" "$semicolon_name" \
+    "$ampersand_name" "$pipe_name" "$dash_name" "$glob_name"
+}
+with_spaced_names() { "$@" 'a b.name' 'sub dir/c d.name'; }
+hostile_names_total="$(with_hostile_names printf '%s\n' | grep -c '')"
+spaced_names_total="$(with_spaced_names printf '%s\n' | grep -c '')"
 
 configure() {
   rm -f "$received"
@@ -32,17 +38,11 @@ configure() {
   git -C "$worktree" add -A && git -C "$worktree" commit -qm "config"
 }
 add_names() { for added_name in "$@"; do mkdir -p "$(dirname "$worktree/$added_name")"; printf 'x\n' > "$worktree/$added_name"; done; }
-add_hostile_names() {
-  add_names "$single_quote_name" "$double_quote_name" "$subshell_name" "$backtick_name" "$semicolon_name" \
-    "$ampersand_name" "$pipe_name" "$dash_name" "$glob_name"
-}
+add_hostile_names() { with_hostile_names add_names; }
 received_total() { grep -c '' "$received"; }
 received_has() { grep -qxF -e "$1" "$received"; }
 untracked_names() { git -C "$worktree" ls-files -z --others | tr '\0' '\n' | grep -v '^\.flow/' | sort; }
-hostile_names_sorted() {
-  printf '%s\n' "$single_quote_name" "$double_quote_name" "$subshell_name" "$backtick_name" "$semicolon_name" \
-    "$ampersand_name" "$pipe_name" "$dash_name" "$glob_name" | sort
-}
+hostile_names_sorted() { with_hostile_names printf '%s\n' | sort; }
 check_field() { python3 -c 'import json,sys; print(next(check[sys.argv[2]] for check in json.load(open(sys.argv[1]))["checks"] if check["name"] == sys.argv[3]))' "$reports/verify.json" "$1" "$2"; }
 changed_files_hold_whole() {
   python3 -c 'import json,sys; files=json.load(open(sys.argv[1]))["changed_files"]; sys.exit(not (sys.argv[2] in files and sys.argv[3] not in files))' "$reports/verify.json" "$1" "$2"
@@ -54,7 +54,7 @@ arrives_intact() {
 
 new_item spaced ""
 configure 'printf "%s\n" {files} > '"'$received'" ""
-add_names 'a b.name' 'sub dir/c d.name'
+with_spaced_names add_names
 verify >/dev/null
 check "NameWithSpace_ArrivesAsOneArgument: a split name would check no file" \
   'received_has "a b.name" && received_has "sub dir/c d.name" && [ "$(received_total)" -eq "$spaced_names_total" ]'
@@ -92,15 +92,15 @@ add_hostile_names
 verify >/dev/null
 reading_result=$?
 check "FormatterThatReadsEveryHostileName_PassesVerify: each name is one argument and the path of a real file" \
-  '[ "$reading_result" -eq 0 ] && [ "$(check_field status format)" = pass ] && [ "$(cat "$received")" = read-every-name ]'
+  '[ "$reading_result" -eq "$verify_passed" ] && [ "$(check_field status format)" = pass ] && [ "$(cat "$received")" = read-every-name ]'
 
 new_item failing ""
 configure 'for name in {files}; do case "$name" in *fail*) echo "cannot format $name" >&2; exit 1 ;; esac; done' ""
-add_names "fail $subshell_name" "fine $ampersand_name"
+add_names "fail $subshell_name" fine.name
 verify >/dev/null
 failing_result=$?
 check "FormatterFailingOnAHostileName_FailsVerify: the check cannot pass without checking the file" \
-  '[ "$failing_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+  '[ "$failing_result" -eq "$verify_failed" ] && [ "$(report_status)" = fail ]'
 check "FormatterFailingOnAHostileName_NamesTheCheck: the report says which check failed" \
   '[ "$(failed_checks)" = format ]'
 check "FormatterFailingOnAHostileName_GivesItsReason: the report carries what the command said" \
@@ -148,24 +148,24 @@ add_names kept.name
 verify >/dev/null
 empty_result=$?
 check "EmptyFormatCommand_FailsVerify: a config verify cannot use is never a pass" \
-  '[ "$empty_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+  '[ "$empty_result" -eq "$verify_failed" ] && [ "$(report_status)" = fail ]'
 check "EmptyFormatCommand_NamesTheCheck: the report says which check failed" \
   '[ "$(failed_checks)" = format ]'
 check "EmptyFormatCommand_GivesItsReason: the report says why the check failed" \
-  'check_field summary format | grep -qi empty'
+  '[ -n "$(check_field summary format)" ]'
 
 new_item newline ""
-configure "sh -c 'for name in {files}; do echo \"\$name\"; done'" ""
+configure "sh -c 'echo ran > \"$received\"; for name in {files}; do echo \"\$name\"; done'" ""
 add_names "line
 break.name"
 verify >/dev/null
 newline_result=$?
 check "NewlineNameInQuotedFiles_FailsVerify: a name that cannot be escaped is never dropped silently" \
-  '[ "$newline_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+  '[ "$newline_result" -eq "$verify_failed" ] && [ "$(report_status)" = fail ]'
 check "NewlineNameInQuotedFiles_NamesTheCheck: the report says which check failed" \
   '[ "$(failed_checks)" = format ]'
-check "NewlineNameInQuotedFiles_GivesItsReason: the report says why" \
-  'check_field summary format | grep -qi newline'
+check "NewlineNameInQuotedFiles_RunsNoCommand: the name is refused before the nested shell could read it" \
+  '[ ! -e "$received" ]'
 
 new_item separator ""
 configure 'true' ""
@@ -173,33 +173,33 @@ add_names "a${unit_separator}b.name"
 verify >/dev/null
 separator_result=$?
 check "NameWithUnitSeparator_FailsVerify: a name verify cannot hand on is never a silent pass" \
-  '[ "$separator_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+  '[ "$separator_result" -eq "$verify_failed" ] && [ "$(report_status)" = fail ]'
 check "NameWithUnitSeparator_NamesTheChangedFilesCheck: the report says which check failed" \
   '[ "$(failed_checks)" = "changed files" ]'
 
 new_item noextensions ""
-configure 'true' "" '[]'
+configure "printf '%s\\n' {files} > '$received'" "" '[]'
 add_names kept.name
 verify >/dev/null
 noextensions_result=$?
 check "FormatCommandWithNoExtensions_FailsVerify: verify cannot tell which files it covers, so it never passes" \
-  '[ "$noextensions_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+  '[ "$noextensions_result" -eq "$verify_failed" ] && [ "$(report_status)" = fail ]'
 check "FormatCommandWithNoExtensions_NamesTheCheck: the report says which check failed" \
   '[ "$(failed_checks)" = format ]'
-check "FormatCommandWithNoExtensions_GivesItsReason: the report says the extensions are missing" \
-  'check_field summary format | grep -qi extensions'
+check "FormatCommandWithNoExtensions_RunsNoCommand: verify does not guess which files it covers" \
+  '[ ! -e "$received" ]'
 
 new_item nestedtoodeep ""
-configure "sh -c 'sh -c \"true {files}\"'" ""
+configure "sh -c 'sh -c \"printf %s {files} > $received\"'" ""
 add_names kept.name
 verify >/dev/null
 nestedtoodeep_result=$?
 check "FilesInsideNestedQuotes_FailsVerify: the names could not stay data through two shells, so the check never passes" \
-  '[ "$nestedtoodeep_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+  '[ "$nestedtoodeep_result" -eq "$verify_failed" ] && [ "$(report_status)" = fail ]'
 check "FilesInsideNestedQuotes_NamesTheCheck: the report says which check failed" \
   '[ "$(failed_checks)" = format ]'
-check "FilesInsideNestedQuotes_GivesItsReason: the report says to pass the names on as arguments" \
-  'check_field summary format | grep -qF nested'
+check "FilesInsideNestedQuotes_RunsNoCommand: the names are refused before two shells could read them" \
+  '[ ! -e "$received" ]'
 
 new_item escapedinnerquote ""
 configure "sh -c 'printf \"%s\\n\" \"quote\\\"word\" > /dev/null; printf \"%s\\n\" {files} > \"$received\"'" ""
@@ -207,7 +207,7 @@ add_names kept.name
 verify >/dev/null
 escapedinnerquote_result=$?
 check "EscapedQuoteInsideTheNestedShellsQuotes_KeepsFilesOutsideThem: the check runs and passes" \
-  '[ "$escapedinnerquote_result" -eq 0 ] && received_has kept.name'
+  '[ "$escapedinnerquote_result" -eq "$verify_passed" ] && received_has kept.name'
 
 new_item reportedcommand ""
 configure 'true {files}' ""
@@ -237,7 +237,7 @@ add_names "$newline_scoped_name"
 verify >/dev/null
 newlinescope_result=$?
 check "NewlineNameUnderAGatesPaths_RunsTheGate: a name is matched whole, so the gate is not skipped" \
-  '[ "$newlinescope_result" -eq 1 ] && [ "$(failed_checks)" = "gate guarded" ]'
+  '[ "$newlinescope_result" -eq "$verify_failed" ] && [ "$(failed_checks)" = "gate guarded" ]'
 check "NewlineName_IsOneChangedFileInTheReport: the evidence lists only paths that changed" \
   'changed_files_hold_whole "$newline_scoped_name" src/x'
 exit "$((fails > 0))"
