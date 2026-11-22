@@ -1,14 +1,18 @@
 """Select Brain's Flow tests and run independent suites in their own sandboxes.
 
-FLOW_SUITE_LANES sets how many suites run at once, 3 when unset.
+FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. A TERM prints the output so far
+of each suite still running, then ends the run.
 """
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,21 +33,38 @@ UNRELATED_TO_TESTS = (
     "plugins/flow/README.md",
     "plugins/flow/*/README.md",
 )
+COMMIT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+BASE_UNAVAILABLE = "flow: no comparison base available, running every suite"
+STOPPED_BY_TERM = 128 + signal.SIGTERM
+
+
+@dataclass(frozen=True)
+class Selection:
+    suites: frozenset
+    notices: tuple
+
+
+def suite_files(directory: Path) -> "list[Path]":
+    return [
+        file for file in sorted(directory.glob("*.sh"))
+        if not (file.name.startswith(("_", "fake-")) or file.name == "run.sh")
+    ]
+
+
+def suite_entries(file: Path) -> dict:
+    if file.stem == "adapter-contract":
+        return {"contract-" + adapter: ("sh", file, adapter) for adapter in ADAPTERS}
+    return {file.stem: ("sh", file)}
 
 
 def commands(root):
     directory = root / TESTS
     suites = {"inline": ("sh", directory / "run.sh", "inline")}
-    for file in sorted(directory.glob("*.sh")):
-        if file.name.startswith(("_", "fake-")) or file.name == "run.sh":
-            continue
-        if file.stem == "adapter-contract":
-            for adapter in ADAPTERS:
-                suites["contract-" + adapter] = ("sh", file, adapter)
-        elif file.stem not in suites and file.stem != "verify":
-            suites[file.stem] = ("sh", file)
-        else:
+    for file in suite_files(directory):
+        entries = suite_entries(file)
+        if entries.keys() & (suites.keys() | {"verify"}):
             raise ValueError(f"duplicate Flow suite name: {file.stem}")
+        suites.update(entries)
     return suites
 
 
@@ -57,15 +78,20 @@ def changed_paths(root, base):
     return {Path(os.fsdecode(name)) for name in (committed + working + untracked).split(b"\0") if name}
 
 
+def suites_by_path(suites) -> dict:
+    verify_suites = {name for name in suites if name.startswith("verify-")}
+    rules = {
+        TESTS / "_verify_fixture.sh": verify_suites,
+        TESTS / "_base_fixture.sh": set(suites) - {"inline"},
+        TESTS / "adapter-contract.sh": {"contract-" + adapter for adapter in ADAPTERS},
+    }
+    return {**rules, **dict.fromkeys(VERIFY_INPUTS, {"verify", "base-claim", "base-readers"} | verify_suites)}
+
+
 def affected(path, suites):
-    if path in VERIFY_INPUTS:
-        return {"verify", "base-claim", "base-readers"} | {name for name in suites if name.startswith("verify-")}
-    if path == TESTS / "_verify_fixture.sh":
-        return {name for name in suites if name.startswith("verify-")}
-    if path == TESTS / "_base_fixture.sh":
-        return set(suites) - {"inline"}
-    if path == TESTS / "adapter-contract.sh":
-        return {"contract-" + adapter for adapter in ADAPTERS}
+    rules = suites_by_path(suites)
+    if path in rules:
+        return rules[path]
     if path.parent == TESTS and path.suffix == ".sh" and path.stem in suites:
         return {path.stem}
     return set(suites)
@@ -81,28 +107,33 @@ def matches(path: Path, patterns: Sequence[str]) -> bool:
     return any(fnmatchcase(path.as_posix(), pattern) for pattern in patterns)
 
 
-def selection(root, base, suites):
-    if base is None:
-        return set(suites)
-    try:
-        paths = changed_paths(root, base)
-    except subprocess.CalledProcessError:
-        print("flow: no comparison base available, running every suite", flush=True)
-        return set(suites)
+def narrowed(root, paths, suites) -> Selection:
     patterns = flow_inputs(root)
     relevant = (path for path in paths if matches(path, patterns) and not matches(path, UNRELATED_TO_TESTS))
     selected = set().union(*(affected(path, suites) for path in relevant))
     if "inline" in selected:
         selected.discard("verify")
-    return selected
+    return Selection(frozenset(selected), ())
 
 
-def run_suite(command, log):
-    started = time.monotonic()
+def selection(root, base, suites) -> Selection:
+    if base is None:
+        return Selection(frozenset(suites), ())
+    if not COMMIT_ID.fullmatch(base):
+        return Selection(frozenset(suites), (BASE_UNAVAILABLE,))
+    try:
+        paths = changed_paths(root, base)
+    except subprocess.CalledProcessError:
+        return Selection(frozenset(suites), (BASE_UNAVAILABLE,))
+    return narrowed(root, paths, suites)
+
+
+def run_suite(command, log, clock: Callable[[], float]):
+    started = clock()
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     with log.open("wb") as output:
         result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT)
-    return result.returncode, time.monotonic() - started
+    return result.returncode, clock() - started
 
 
 def print_output(name: str, log: Path) -> None:
@@ -113,18 +144,30 @@ def print_output(name: str, log: Path) -> None:
     sys.stdout.buffer.flush()
 
 
-def run_selected(suites, directory, lanes: int) -> "list[str]":
-    failed = []
+def report_suite(name: str, outcome, log: Path) -> int:
+    code, elapsed = outcome
+    print_output(name, log)
+    print(f"flow: {name} {'FAIL' if code else 'pass'} ({elapsed:.1f}s)", flush=True)
+    return code
+
+
+def report_stopped(workers: ThreadPoolExecutor, unfinished, directory: Path) -> None:
+    workers.shutdown(wait=False, cancel_futures=True)
+    for name in sorted(name for name in unfinished if (directory / name).exists()):
+        print_output(name, directory / name)
+        print(f"flow: {name} stopped", flush=True)
+    sys.exit(STOPPED_BY_TERM)
+
+
+def run_selected(suites, directory, lanes: int, clock: Callable[[], float]) -> "list[str]":
+    codes = {}
     with ThreadPoolExecutor(max_workers=lanes) as workers:
-        running = {workers.submit(run_suite, command, directory / name): name for name, command in suites.items()}
+        signal.signal(signal.SIGTERM, lambda number, frame: report_stopped(workers, suites.keys() - codes.keys(), directory))
+        running = {workers.submit(run_suite, command, directory / name, clock): name for name, command in suites.items()}
         for finished in as_completed(running):
             name = running[finished]
-            code, elapsed = finished.result()
-            print_output(name, directory / name)
-            print(f"flow: {name} {'FAIL' if code else 'pass'} ({elapsed:.1f}s)", flush=True)
-            if code:
-                failed.append(name)
-    return sorted(failed)
+            codes[name] = report_suite(name, finished.result(), directory / name)
+    return sorted(name for name, code in codes.items() if code)
 
 
 def lane_count(environment: Mapping[str, str]) -> int:
@@ -134,27 +177,32 @@ def lane_count(environment: Mapping[str, str]) -> int:
     return int(value)
 
 
-def run(root, base, lanes: int):
-    suites = commands(root)
-    selected = selection(root, base, suites)
-    suites["verify"] = ("sh", root / TESTS / "run.sh", "verify")
-    if not selected:
-        print("flow: no Flow test inputs changed", flush=True)
-        return 0
-    missing = selected - suites.keys()
-    if missing:
-        sys.exit("flow: missing selected suites: " + ", ".join(sorted(missing)))
-    planned = {name: command for name, command in suites.items() if name in selected}
-    print("flow: selected " + ", ".join(planned), flush=True)
-    with TemporaryDirectory(prefix="flow-suites-") as logs:
-        failed = run_selected(planned, Path(logs), lanes)
+def report_run(failed: "list[str]") -> int:
     print("flow: failed in " + ", ".join(failed) if failed else "flow: ok")
     return 1 if failed else 0
 
 
+def run(root, base, lanes: int, clock: Callable[[], float]):
+    suites = commands(root)
+    chosen = selection(root, base, suites)
+    for notice in chosen.notices:
+        print(notice, flush=True)
+    suites["verify"] = ("sh", root / TESTS / "run.sh", "verify")
+    if not chosen.suites:
+        print("flow: no Flow test inputs changed", flush=True)
+        return 0
+    missing = chosen.suites - suites.keys()
+    if missing:
+        sys.exit("flow: missing selected suites: " + ", ".join(sorted(missing)))
+    planned = {name: command for name, command in suites.items() if name in chosen.suites}
+    print("flow: selected " + ", ".join(planned), flush=True)
+    with TemporaryDirectory(prefix="flow-suites-") as logs:
+        return report_run(run_selected(planned, Path(logs), lanes, clock))
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["all"]:
-        sys.exit(run(ROOT, None, lane_count(os.environ)))
+        sys.exit(run(ROOT, None, lane_count(os.environ), time.monotonic))
     if len(sys.argv) == 3 and sys.argv[1] == "since":
-        sys.exit(run(ROOT, sys.argv[2], lane_count(os.environ)))
+        sys.exit(run(ROOT, sys.argv[2], lane_count(os.environ), time.monotonic))
     sys.exit("usage: flow_suites.py all | since <base commit>")

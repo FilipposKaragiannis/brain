@@ -19,7 +19,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    with its seconds. A build or test command with `paths` in `.standards/config.json` runs only
    when a changed file is under them, else it is a skipped check that says so. Use `{verify_base}`
    in a build or test command to pass it the merge-base commit. When the base cannot be resolved,
-   the command receives `unavailable` and can run all checks. The resolved command participates
+   the command receives `unavailable` and must run all checks: read any value that is not a full
+   commit id that way, never as a ref, since a ref can take any name. The resolved command participates
    in test-pass reuse. A test command
    that passed on the same command and files is not run again: the check is a pass that names the run it
    came from (`--fresh` runs every command). The verifier

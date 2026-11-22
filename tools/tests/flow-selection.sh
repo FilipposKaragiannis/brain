@@ -26,6 +26,8 @@ base="$(git rev-parse HEAD)"
 
 result() { if "$project/tools/test.sh" flow-since "$base" > "$work/output" 2>&1; then echo pass; else echo fail; fi; }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
+suites_reported() { grep -cE '^flow: [^ ]+ (pass|FAIL) \(' "$work/output"; }
+lane_hold_seconds=1
 
 echo 'exit 0' >> "$suite/sessions.sh"
 mkdir -p plugins/flow/changelog.d
@@ -39,10 +41,10 @@ expect 'SelectedSuiteFails_FailsVerification because a partial run must propagat
 expect 'FailingSuite_PrintsItsLinesWithItsName because the failure must name its suite' "$(grep -c '^\[sessions\]   FAIL StubCheck_Holds$' "$work/output")" 1
 git restore plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
-expect 'NothingSelected_SaysSo because a verifier must see that no suite ran' "$(head -1 "$work/output")" 'flow: no Flow test inputs changed'
+expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
 touch plugins/flow/README.md
 expect 'OnlyAReadmeChanged_SelectsNothing because plain docs are no test input' "$(result)" pass
-expect 'ReadmeOnly_SaysNothingRan because a verifier must see that no suite ran' "$(head -1 "$work/output")" 'flow: no Flow test inputs changed'
+expect 'OnlyAReadmeChanged_RunsNoSuite because plain docs are no test input' "$(suites_reported)" 0
 rm plugins/flow/README.md
 for outside in shared/helper.sh tools/lib/helper.sh; do
   mkdir -p "$(dirname "$outside")"
@@ -86,8 +88,12 @@ expect 'FullCoverage_IncludesJiraContract because each backend has its own contr
 base=unavailable
 expect 'MissingBase_RunsFullCoverage because the changed inputs cannot be determined' "$(result)" fail
 expect 'FailedRun_NamesItsFailedSuitesLast because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in contract-jira, inline'
+git mv plugins/flow/tests/renamed.sh plugins/flow/tests/sessions.sh
+git tag unavailable HEAD
+expect 'MissingBaseWithARefOfThatName_RunsFullCoverage because a ref can take any name' "$(result)" fail
+expect 'MissingBaseWithARefOfThatName_IncludesJiraContract because every suite runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
 for stub in "$suite"/*.sh; do
-  printf 'if mkdir "%s/lane" 2>/dev/null; then sleep 1; rmdir "%s/lane"; else echo overlap >> "%s/overlaps"; fi\n' "$work" "$work" "$work" > "$stub"
+  printf 'if mkdir "%s/lane" 2>/dev/null; then sleep %s; rmdir "%s/lane"; else echo overlap >> "%s/overlaps"; fi\n' "$work" "$lane_hold_seconds" "$work" "$work" > "$stub"
 done
 overlapped() { if [ -f "$work/overlaps" ]; then echo overlapped; else echo alone; fi; }
 export FLOW_SUITE_LANES=1
@@ -98,13 +104,20 @@ expect 'ThreeLanes_Pass because the default count must work when named' "$(resul
 expect 'ThreeLanes_RunSuitesSideBySide because the lanes exist to overlap suites' "$(overlapped)" overlapped
 FLOW_SUITE_LANES=0
 expect 'ZeroLanes_Fails because no suite could ever run' "$(result)" fail
-expect 'ZeroLanes_SaysWhy because the owner must see the bad value' "$(tail -1 "$work/output")" "flow: FLOW_SUITE_LANES takes a whole number from 1, not '0'"
+expect 'ZeroLanes_NamesTheVariableAndTheValue because the owner must see what to fix' "$(tail -1 "$work/output" | grep -c "FLOW_SUITE_LANES.*'0'")" 1
 for bad in abc -1 ''; do
   FLOW_SUITE_LANES="$bad"
   expect "LaneCount${bad:-Empty}_Fails because only a whole number from 1 is a lane count" "$(result)" fail
-  expect "LaneCount${bad:-Empty}_SaysWhy because the owner must see the bad value" "$(tail -1 "$work/output")" "flow: FLOW_SUITE_LANES takes a whole number from 1, not '$bad'"
+  expect "LaneCount${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_LANES.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES
 rm -f "$work/overlaps"
 expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
 expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(overlapped)" overlapped
+rm -f "$work/overlaps"
+cp -p "$root/plugins/flow/tests/run.sh" "$suite/run.sh"
+printf 'sandbox_enter() { exit 0; }\n' > "$project/tools/lib/sandbox.sh"
+if "$project/tools/test.sh" flow > "$work/output" 2>&1; then whole_part=pass; else whole_part=fail; fi
+expect 'FlowPart_Passes because CI runs the whole Flow part through it' "$whole_part" pass
+expect 'FlowPart_RunsEverySuite because a full run leaves none out' "$(suites_reported)" 8
+expect 'FlowPart_RunsTheInlineSection because run.sh with no argument hands the whole run to the runner' "$(grep -c '^flow: inline pass' "$work/output")" 1
