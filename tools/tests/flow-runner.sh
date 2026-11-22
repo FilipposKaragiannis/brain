@@ -249,9 +249,12 @@ expect 'SuiteWithAChildDeafToTermWhileTheListingFails_HasTheChildKilled because 
 expect 'SuiteWithAChildDeafToTermWhileTheListingFails_EndsAtTheGraceTime because a failed listing is no proof the group is gone' "$(if [ "$(suite_seconds termdeaf)" -ge "$((default_limit_seconds + grace_seconds))" ] && [ "$(suite_seconds termdeaf)" -lt "$((default_limit_seconds + grace_seconds + stop_bound_seconds))" ]; then echo at-grace; else echo "at $(suite_seconds termdeaf)s"; fi)" at-grace
 rm -r "$fake_table" "$work/stub-ps" "$work/ps-output" "$work/ps-code" "$work/membership.py" "$work/child" "$work/term-deaf-child-suite.sh" "$work/term-deaf-child-ready" "$work/stepping-logs" "$work/stepping-runner.py"
 mkdir "$work/holders"
+barrier_ticks=30; first_tick=0; one_tick=1
 for stub in "$suite"/*.sh; do
   cat > "$stub" <<STUB
 : > "$work/holders/\$\$"
+waited=$first_tick
+until [ "\$(ls "$work/holders" | wc -l | tr -d ' ')" -ge "\$(cat "$work/lanes-expected")" ] || [ "\$waited" -ge $barrier_ticks ]; do sleep $poll_seconds; waited=\$((waited + $one_tick)); done
 ls "$work/holders" | wc -l | tr -d ' ' >> "$work/holder-counts"
 sleep $lane_hold_seconds
 rm "$work/holders/\$\$"
@@ -259,9 +262,11 @@ STUB
 done
 most_suites_at_once() { sort -n "$work/holder-counts" | tail -1; rm "$work/holder-counts"; }
 export FLOW_SUITE_LANES=1
+echo "$FLOW_SUITE_LANES" > "$work/lanes-expected"
 expect 'OneLane_Passes because one lane is a valid count' "$(result)" pass
 expect 'OneLane_RunsOneSuiteAtATime because a single lane never starts a second suite' "$(most_suites_at_once)" 1
 FLOW_SUITE_LANES=3
+echo "$FLOW_SUITE_LANES" > "$work/lanes-expected"
 expect 'ThreeLanes_Pass because the default count must work when named' "$(result)" pass
 expect 'ThreeLanes_RunThreeSuitesAtOnce because each lane holds one suite' "$(most_suites_at_once)" 3
 FLOW_SUITE_LANES=0
