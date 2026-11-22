@@ -9,7 +9,7 @@ trap 'sandbox_close $?' EXIT
 project="$work/marketplace"
 suite="$project/plugins/flow/tests"
 mkdir -p "$project/tools/lib" "$project/.standards" "$suite"
-cp "$tools/lib/flow_suites.py" "$project/tools/lib/"
+cp "$tools/lib/flow_suites.py" "$tools/lib/flow_selection.py" "$project/tools/lib/"
 cp "$tools/test.sh" "$project/tools/"
 cp "$tools/../.standards/config.json" "$project/.standards/"
 cd "$project"
@@ -63,16 +63,14 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
-limit_seconds=3
+limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
 sleep $child_seconds &
 echo \$! > "$work/child"
-(trap '' TERM; sleep $child_seconds) &
-echo \$! > "$work/stubborn-child"
+(trap 'sleep $cleanup_seconds; echo cleaned > "$work/cleanup"; exit 0' TERM; sleep $child_seconds) &
 sleep $child_seconds
 STUB
-printf "trap '' TERM\nsleep %s\n" "$child_seconds" > "$suite/base-readers.sh"
 printf 'sleep %s\necho "  ok   Stub_WithinTheLimit"\n' "$lane_hold_seconds" > "$suite/sessions.sh"
 process_state() {
   ticks=0; while kill -0 "$1" 2>/dev/null && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
@@ -84,16 +82,15 @@ starts_before_ends() { awk '/^flow: [^ ]+ started$/ { started[$2] = 1 } /^flow: 
 export FLOW_SUITE_LANES=1 FLOW_SUITE_TIME_LIMIT_SECONDS="$limit_seconds"
 expect 'SuitePastItsTimeLimit_FailsTheRun because a hung suite proves nothing' "$(result)" fail
 expect 'SuitePastItsTimeLimit_EndsItsChildCommands because a stopped suite leaves no check behind' "$(process_state "$(cat "$work/child")")" ended
-expect 'SuitePastItsTimeLimit_EndsAChildThatIgnoresTerm because a stopped suite leaves no check behind' "$(process_state "$(cat "$work/stubborn-child")")" ended
-expect 'SuiteThatIgnoresTerm_IsKilledAfterAGraceTime because a suite deaf to TERM must not hang the run' "$(if [ "$(suite_seconds base-readers)" -lt "$child_seconds" ]; then echo bounded; else echo unbounded; fi)" bounded
+expect 'SuiteChildCleaningUpAfterTerm_FinishesBeforeTheRunMovesOn because the grace time lasts until the whole group is gone' "$(cat "$work/cleanup" 2>/dev/null)" cleaned
 expect 'SuitePastItsTimeLimit_PrintsItsOutputSoFarWithItsName because the owner must see how far it got' "$(grep -cFx '[base-claim]   ok   Stub_CheckBeforeTheHang' "$work/output")" 1
 expect 'SuitePastItsTimeLimit_IsNamedWithTheLimit because the owner must see which suite hung and for how long' "$(runner_lines_besides_start_and_end base-claim | grep -cE "[^0-9]${limit_seconds}([^0-9]|\$)")" 1
 expect 'SuiteAfterAHungSuite_StillRunsAndReports because one hung suite must not hold up the rest' "$(grep -cFx '[sessions]   ok   Stub_WithinTheLimit' "$work/output")" 1
 expect 'SuiteWithinTheTimeLimit_Passes because only a suite past the limit is stopped' "$(grep -c '^flow: sessions pass (' "$work/output")" 1
 expect 'SuitePastItsTimeLimit_IsReportedAsFailed because a stopped suite is never counted as a pass' "$(grep -c '^flow: base-claim FAIL (' "$work/output")" 1
 expect 'SuiteWithinTheTimeLimit_IsNotNamedAsStopped because only a suite past the limit is stopped' "$(runner_lines_besides_start_and_end sessions | wc -l | tr -d ' ')" 0
-expect 'EverySelectedSuite_PrintsExactlyOneStartLine because the reader must see each suite begin once' "$(grep -cE '^flow: [^ ]+ started$' "$work/output")" 3
-expect 'SuitePastItsTimeLimit_IsNamedInTheSummary because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in base-claim, base-readers'
+expect 'EverySelectedSuite_PrintsExactlyOneStartLine because the reader must see each suite begin once' "$(grep -cE '^flow: [^ ]+ started$' "$work/output")" 2
+expect 'SuitePastItsTimeLimit_IsNamedInTheSummary because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in base-claim'
 expect 'EverySelectedSuite_PrintsAStartLineBeforeItsEndLine because the reader must see which suites are running' "$(starts_before_ends)" yes
 for bad in 0 abc -1 1.5 ''; do
   FLOW_SUITE_TIME_LIMIT_SECONDS="$bad"
@@ -102,8 +99,50 @@ for bad in 0 abc -1 1.5 ''; do
   expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
-rm "$work/child" "$work/stubborn-child"
-git restore plugins/flow/tests/base-claim.sh plugins/flow/tests/base-readers.sh plugins/flow/tests/sessions.sh
+rm "$work/child" "$work/cleanup"
+git restore plugins/flow/tests/base-claim.sh plugins/flow/tests/sessions.sh
+cat > "$work/deaf-suite.sh" <<STUB
+trap '' TERM
+echo "  ok   Stub_DeafToTerm"
+sleep $child_seconds &
+echo \$! > "$work/child"
+: > "$work/deaf-suite-ready"
+sleep $child_seconds
+STUB
+mkdir "$work/stepping-logs"
+python3 -I - "$project/tools/lib" "$work/deaf-suite.sh" "$work/deaf-suite-ready" "$work/stepping-logs" > "$work/output" 2>&1 <<'PY' &
+import sys
+import time
+from pathlib import Path
+sys.path.append(sys.argv[1])
+import flow_suites
+
+
+class ClockThatStepsOnceTheSuiteIsReady:
+    def __init__(self, ready: Path) -> None:
+        self.seconds = 0.0
+        self.ready = ready
+
+    def now(self) -> float:
+        return self.seconds
+
+    def sleep(self, duration: flow_suites.Duration) -> None:
+        if self.ready.exists():
+            self.seconds += duration.seconds
+            return
+        time.sleep(duration.seconds)
+
+
+settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(sys.argv[3])))
+sys.exit(flow_suites.report_run(flow_suites.run_selected({"deaf": ("sh", sys.argv[2])}, Path(sys.argv[4]), settings)))
+PY
+stepping_runner=$!
+expect 'SuitePastTheDefaultLimitOnTheClockItIsGiven_IsStoppedWithoutTheLimitPassingForReal because the runner times a suite by its injected clock' "$(process_state "$stepping_runner")" ended
+wait "$stepping_runner" || true
+expect 'SuiteDeafToTerm_HasItsChildKilled because a stopped suite leaves no check behind' "$(process_state "$(cat "$work/child")")" ended
+expect 'SuiteDeafToTerm_IsKilledOnlyOnceTheGraceTimePasses because the group gets time to clean up before KILL' "$(if [ "$(suite_seconds deaf)" -gt "$default_limit_seconds" ]; then echo after-grace; else echo at-limit; fi)" after-grace
+expect 'SuiteDeafToTerm_IsReportedAsFailed because a stopped suite is never counted as a pass' "$(tail -1 "$work/output")" 'flow: failed in deaf'
+rm -r "$work/child" "$work/deaf-suite.sh" "$work/deaf-suite-ready" "$work/stepping-logs"
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
 touch plugins/flow/README.md

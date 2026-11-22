@@ -1,65 +1,75 @@
-"""Select Brain's Flow tests and run independent suites in their own sandboxes.
+"""Run Brain's Flow tests, the suites flow_selection.py chooses, each in a sandbox of its own.
 
 FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. FLOW_SUITE_TIME_LIMIT_SECONDS
 sets how long one suite may run, 1800 when unset. Each suite runs in a process group of its own.
 The runner prints a line when a suite starts, and the suite's output with its result when it
 ends. A suite still running at the limit has its process group ended, what is left of the group
-killed after a grace time, its output so far printed, and fails. A TERM, INT or HUP prints the
-output so far of each suite still running, ends the process group of each, then ends the run.
+killed once a grace time passes, its output so far printed, and fails. A TERM, INT or HUP prints
+the output so far of each suite still running, ends the process group of each, then ends the run.
 """
-import json
 import os
-import re
 import signal
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from fnmatch import fnmatchcase
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Protocol
+
+sys.path.append(str(Path(__file__).resolve().parent))
+from flow_selection import commands, selection  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FLOW = Path("plugins/flow")
-TESTS = FLOW / "tests"
-DEFAULT_LANES = 3
 LANES_VARIABLE = "FLOW_SUITE_LANES"
-DEFAULT_TIME_LIMIT_SECONDS = 1800
+DEFAULT_LANES = 3
 TIME_LIMIT_VARIABLE = "FLOW_SUITE_TIME_LIMIT_SECONDS"
-STOP_GRACE_SECONDS = 10
-ADAPTERS = ("github", "local", "jira")
-VERIFY_INPUTS = {
-    FLOW / "scripts" / name for name in ("verify.sh", "_verify_report.py", "_checks.py")
-} | {FLOW / "lib/checks.sh"}
-UNRELATED_TO_TESTS = (
-    "plugins/flow/CHANGELOG.md",
-    "plugins/flow/changelog.d/*",
-    "plugins/flow/README.md",
-    "plugins/flow/*/README.md",
-)
-COMMIT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-BASE_UNAVAILABLE = "flow: no comparison base available, running every suite"
+DEFAULT_TIME_LIMIT_SECONDS = 1800
+LEAST_WHOLE_NUMBER = 1
 SIGNAL_EXIT_BASE = 128
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+PRESENCE_PROBE_SIGNAL = 0
 
 
 @dataclass(frozen=True)
-class Selection:
-    suites: frozenset
-    notices: tuple
+class Duration:
+    seconds: float
+
+
+@dataclass(frozen=True)
+class LaneCount:
+    count: int
+
+
+STOP_GRACE = Duration(10)
+POLL_INTERVAL = Duration(0.1)
+
+
+class Clock(Protocol):
+    def now(self) -> float: ...
+
+    def sleep(self, duration: Duration) -> None: ...
+
+
+class SystemClock:
+    def now(self) -> float:
+        return time.monotonic()
+
+    def sleep(self, duration: Duration) -> None:
+        time.sleep(duration.seconds)
 
 
 @dataclass(frozen=True)
 class Settings:
-    lanes: int
-    limit_seconds: int
-    clock: Callable[[], float]
+    lanes: LaneCount
+    time_limit: Duration
+    clock: Clock
 
 
 class RunningSuites:
@@ -97,93 +107,11 @@ class Ending(Enum):
 @dataclass(frozen=True)
 class SuiteOutcome:
     code: int
-    elapsed: float
+    elapsed: Duration
     ending: Ending
 
     def failed(self) -> bool:
         return self.code != 0 or self.ending is Ending.TIMED_OUT
-
-
-def suite_files(directory: Path) -> "list[Path]":
-    return [
-        file for file in sorted(directory.glob("*.sh"))
-        if not (file.name.startswith(("_", "fake-")) or file.name == "run.sh")
-    ]
-
-
-def suite_entries(file: Path) -> dict:
-    if file.stem == "adapter-contract":
-        return {"contract-" + adapter: ("sh", file, adapter) for adapter in ADAPTERS}
-    return {file.stem: ("sh", file)}
-
-
-def commands(root):
-    directory = root / TESTS
-    suites = {}
-    for file in suite_files(directory):
-        entries = suite_entries(file)
-        if entries.keys() & suites.keys():
-            raise ValueError(f"duplicate Flow suite name: {file.stem}")
-        suites.update(entries)
-    return suites
-
-
-def changed_paths(root, base):
-    def git(*arguments):
-        return subprocess.check_output(("git", *arguments), cwd=root, stderr=subprocess.PIPE)
-
-    committed = git("diff", "--no-renames", "--name-only", "-z", base, "HEAD", "--")
-    working = git("diff", "--no-renames", "--name-only", "-z", "HEAD", "--")
-    untracked = git("ls-files", "--others", "--exclude-standard", "-z")
-    return {Path(os.fsdecode(name)) for name in (committed + working + untracked).split(b"\0") if name}
-
-
-def suites_by_path(suites) -> dict:
-    verify_suites = {name for name in suites if name.startswith("verify-")}
-    rules = {
-        TESTS / "_verify_fixture.sh": verify_suites,
-        TESTS / "_base_fixture.sh": set(suites),
-        TESTS / "adapter-contract.sh": {"contract-" + adapter for adapter in ADAPTERS},
-    }
-    return {**rules, **dict.fromkeys(VERIFY_INPUTS, {"verify-report", "base-claim", "base-readers"} | verify_suites)}
-
-
-def affected(path, suites):
-    rules = suites_by_path(suites)
-    if path in rules and rules[path] <= suites.keys():
-        return rules[path]
-    if path.parent == TESTS and path.suffix == ".sh" and path.stem in suites:
-        return {path.stem}
-    return set(suites)
-
-
-def flow_inputs(root):
-    config = json.loads((root / ".standards/config.json").read_text(encoding="utf-8"))
-    entry = next(check for check in config["test"] if check["name"] == "flow")
-    return [pattern.replace("**/", "*").replace("**", "*") for pattern in entry["paths"]]
-
-
-def matches(path: Path, patterns: Sequence[str]) -> bool:
-    return any(fnmatchcase(path.as_posix(), pattern) for pattern in patterns)
-
-
-def narrowed(root, paths, suites) -> Selection:
-    patterns = flow_inputs(root)
-    relevant = (path for path in paths if matches(path, patterns) and not matches(path, UNRELATED_TO_TESTS))
-    selected = set().union(*(affected(path, suites) for path in relevant))
-    return Selection(frozenset(selected), ())
-
-
-def selection(root, base, suites) -> Selection:
-    if base is None:
-        return Selection(frozenset(suites), ())
-    if not COMMIT_ID.fullmatch(base):
-        return Selection(frozenset(suites), (BASE_UNAVAILABLE,))
-    try:
-        paths = changed_paths(root, base)
-    except subprocess.CalledProcessError:
-        return Selection(frozenset(suites), (BASE_UNAVAILABLE,))
-    return narrowed(root, paths, suites)
 
 
 def announce(lanes: Lanes, line: str) -> None:
@@ -191,36 +119,57 @@ def announce(lanes: Lanes, line: str) -> None:
         print(line, flush=True)
 
 
-def ending_within(process: subprocess.Popen, seconds: int) -> Ending:
+def signal_group(process: subprocess.Popen, number: signal.Signals) -> bool:
     try:
-        process.wait(timeout=seconds)
-    except subprocess.TimeoutExpired:
-        return Ending.TIMED_OUT
+        os.killpg(process.pid, number)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def group_has_members(process: subprocess.Popen) -> bool:
+    try:
+        os.killpg(process.pid, PRESENCE_PROBE_SIGNAL)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def group_ended(process: subprocess.Popen) -> bool:
+    return process.poll() is not None and not group_has_members(process)
+
+
+def ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> Ending:
+    deadline = clock.now() + limit.seconds
+    while not ended():
+        if clock.now() >= deadline:
+            return Ending.TIMED_OUT
+        clock.sleep(POLL_INTERVAL)
     return Ending.EXITED
 
 
-def stop_at_limit(process: subprocess.Popen) -> None:
-    end_process_group(process, signal.SIGTERM)
-    ending_within(process, STOP_GRACE_SECONDS)
-    end_process_group(process, signal.SIGKILL)
+def stop_group(process: subprocess.Popen, clock: Clock) -> None:
+    signal_group(process, signal.SIGTERM)
+    if ending_within(lambda: group_ended(process), STOP_GRACE, clock) is Ending.TIMED_OUT:
+        signal_group(process, signal.SIGKILL)
 
 
-def wait_within(process: subprocess.Popen, limit_seconds: int) -> Ending:
-    ending = ending_within(process, limit_seconds)
+def wait_or_stop_at(process: subprocess.Popen, limit: Duration, clock: Clock) -> Ending:
+    ending = ending_within(lambda: process.poll() is not None, limit, clock)
     if ending is Ending.TIMED_OUT:
-        stop_at_limit(process)
+        stop_group(process, clock)
     return ending
 
 
 def run_suite(name: str, command: tuple, settings: Settings, lanes: Lanes) -> SuiteOutcome:
-    started = settings.clock()
+    started = settings.clock.now()
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     announce(lanes, f"flow: {name} started")
     with (lanes.directory / name).open("wb") as output:
         with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(process):
-            ending = wait_within(process, settings.limit_seconds)
+            ending = wait_or_stop_at(process, settings.time_limit, settings.clock)
             code = process.wait()
-    return SuiteOutcome(code, settings.clock() - started, ending)
+    return SuiteOutcome(code, Duration(settings.clock.now() - started), ending)
 
 
 def print_output(name: str, log: Path) -> None:
@@ -231,56 +180,59 @@ def print_output(name: str, log: Path) -> None:
     sys.stdout.buffer.flush()
 
 
-def report_suite(name: str, outcome: SuiteOutcome, lanes: Lanes, limit_seconds: int) -> bool:
+def report_suite(name: str, outcome: SuiteOutcome, lanes: Lanes, limit: Duration) -> None:
     with lanes.output:
         print_output(name, lanes.directory / name)
         if outcome.ending is Ending.TIMED_OUT:
-            print(f"flow: {name} stopped at the time limit of {limit_seconds}s", flush=True)
-        print(f"flow: {name} {'FAIL' if outcome.failed() else 'pass'} ({outcome.elapsed:.1f}s)", flush=True)
-    return outcome.failed()
+            print(f"flow: {name} stopped at the time limit of {limit.seconds:g}s", flush=True)
+        print(f"flow: {name} {'FAIL' if outcome.failed() else 'pass'} ({outcome.elapsed.seconds:.1f}s)", flush=True)
 
 
-def end_process_group(process: subprocess.Popen, number: signal.Signals) -> None:
-    try:
-        os.killpg(process.pid, number)
-    except ProcessLookupError:
-        pass
-
-
-def report_stopped(number: int, workers: ThreadPoolExecutor, unfinished, directory: Path, running: "tuple[subprocess.Popen, ...]") -> None:
+def report_stopped(number: int, workers: ThreadPoolExecutor, unfinished: "set[str]", lanes: Lanes) -> None:
     workers.shutdown(wait=False, cancel_futures=True)
-    for process in running:
-        end_process_group(process, signal.SIGTERM)
-    for name in sorted(name for name in unfinished if (directory / name).exists()):
-        print_output(name, directory / name)
+    for process in lanes.running.still_running():
+        signal_group(process, signal.SIGTERM)
+    for name in sorted(name for name in unfinished if (lanes.directory / name).exists()):
+        print_output(name, lanes.directory / name)
         print(f"flow: {name} stopped", flush=True)
     sys.exit(SIGNAL_EXIT_BASE + number)
 
 
+def stop_on_signals(workers: ThreadPoolExecutor, unfinished: "Callable[[], set[str]]", lanes: Lanes) -> None:
+    for stop_signal in STOP_SIGNALS:
+        signal.signal(stop_signal, lambda number, frame: report_stopped(number, workers, unfinished(), lanes))
+
+
 def run_selected(suites: "dict[str, tuple]", directory: Path, settings: Settings) -> "list[str]":
-    failures = {}
+    outcomes = {}
     lanes = Lanes(directory, RunningSuites(), threading.Lock())
-    with ThreadPoolExecutor(max_workers=settings.lanes) as workers:
-        for stop_signal in STOP_SIGNALS:
-            signal.signal(stop_signal, lambda number, frame: report_stopped(number, workers, suites.keys() - failures.keys(), directory, lanes.running.still_running()))
+    with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers:
+        stop_on_signals(workers, lambda: suites.keys() - outcomes.keys(), lanes)
         running = {workers.submit(run_suite, name, command, settings, lanes): name for name, command in suites.items()}
         for finished in as_completed(running):
             name = running[finished]
-            failures[name] = report_suite(name, finished.result(), lanes, settings.limit_seconds)
-    return sorted(name for name, failed in failures.items() if failed)
+            outcomes[name] = finished.result()
+            report_suite(name, outcomes[name], lanes, settings.time_limit)
+    return sorted(name for name, outcome in outcomes.items() if outcome.failed())
 
 
-def whole_number_from_one(environment: Mapping[str, str], variable: str, default: int, meaning: str) -> int:
+def _whole_number_from_one(environment: Mapping[str, str], variable: str, default: int, meaning: str) -> int:
     value = environment.get(variable, str(default))
-    if not (value.isascii() and value.isdigit() and int(value) >= 1):
-        sys.exit(f"flow: {variable} takes {meaning} from 1, not '{value}'")
+    if not (value.isascii() and value.isdigit() and int(value) >= LEAST_WHOLE_NUMBER):
+        sys.exit(f"flow: {variable} takes {meaning} from {LEAST_WHOLE_NUMBER}, not '{value}'")
     return int(value)
 
 
-def settings_from(environment: Mapping[str, str], clock: Callable[[], float]) -> Settings:
-    lanes = whole_number_from_one(environment, LANES_VARIABLE, DEFAULT_LANES, "a whole number")
-    limit_seconds = whole_number_from_one(environment, TIME_LIMIT_VARIABLE, DEFAULT_TIME_LIMIT_SECONDS, "a whole number of seconds")
-    return Settings(lanes, limit_seconds, clock)
+def lane_count_from(environment: Mapping[str, str]) -> LaneCount:
+    return LaneCount(_whole_number_from_one(environment, LANES_VARIABLE, DEFAULT_LANES, "a whole number"))
+
+
+def time_limit_from(environment: Mapping[str, str]) -> Duration:
+    return Duration(_whole_number_from_one(environment, TIME_LIMIT_VARIABLE, DEFAULT_TIME_LIMIT_SECONDS, "a whole number of seconds"))
+
+
+def settings_from(environment: Mapping[str, str], clock: Clock) -> Settings:
+    return Settings(lane_count_from(environment), time_limit_from(environment), clock)
 
 
 def report_run(failed: "list[str]") -> int:
@@ -305,9 +257,13 @@ def run(root: Path, base: "str | None", settings: Settings) -> int:
         return report_run(run_selected(planned, Path(logs), settings))
 
 
-if __name__ == "__main__":
-    if sys.argv[1:] == ["all"]:
-        sys.exit(run(ROOT, None, settings_from(os.environ, time.monotonic)))
-    if len(sys.argv) == 3 and sys.argv[1] == "since":
-        sys.exit(run(ROOT, sys.argv[2], settings_from(os.environ, time.monotonic)))
+def main(arguments: "list[str]") -> int:
+    if arguments == ["all"]:
+        return run(ROOT, None, settings_from(os.environ, SystemClock()))
+    if len(arguments) == 2 and arguments[0] == "since":
+        return run(ROOT, arguments[1], settings_from(os.environ, SystemClock()))
     sys.exit("usage: flow_suites.py all | since <base commit>")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -34,7 +34,7 @@ marketplace="$plugin/../.."
 commit_stub_marketplace() {
   stub_suites="$worktree/plugins/flow/tests"
   mkdir -p "$worktree/tools/lib" "$worktree/.standards" "$stub_suites"
-  cp "$marketplace/tools/lib/flow_suites.py" "$worktree/tools/lib/"
+  cp "$marketplace/tools/lib/flow_suites.py" "$marketplace/tools/lib/flow_selection.py" "$worktree/tools/lib/"
   cp "$marketplace/tools/test.sh" "$worktree/tools/"
   cp "$here/_base_fixture.sh" "$stub_suites/"
   python3 -c 'import json,sys; flow=[entry for entry in json.load(open(sys.argv[1]))["test"] if entry["name"]=="flow"]; json.dump({"test": flow}, open(sys.argv[2], "w"))' \
