@@ -300,6 +300,11 @@ changed_files() {
   git diff $(commit_diff_args "$1") --name-only --diff-filter=ACMR 2>/dev/null || true
 }
 
+changed_files_null_byte_separated() {
+  # shellcheck disable=SC2046 # commit_diff_args prints a list of arguments
+  git diff $(commit_diff_args "$1") -z --name-only --diff-filter=ACMR 2>/dev/null || true
+}
+
 block() {
   # $1 title, $2 detail lines. Writes the reason to stderr and exits 2. Never call it in a pipeline.
   { echo "standards: $1"; printf '%s\n' "$2"; } >&2
