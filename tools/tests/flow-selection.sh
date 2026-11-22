@@ -31,6 +31,26 @@ suite_outcomes() { grep -E '^flow: [^ ]+ (pass|FAIL) \(' "$work/output" | cut -d
 lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300; child_seconds=120
 
 echo 'exit 0' >> "$suite/sessions.sh"
+writes_bytecode() {
+  writes_probe="$(mktemp -d "$work/probe.XXXXXX")"; printf 'probed = 1\n' > "$writes_probe/probe.py"
+  "$1" -I -c 'import sys; sys.path.append(sys.argv[1]); import probe' "$writes_probe" 2>/dev/null || true
+  if [ -d "$writes_probe/__pycache__" ]; then rm -r "$writes_probe"; return 0; fi
+  rm -r "$writes_probe"; return 1
+}
+bytecode_writer=""
+for candidate in "$(command -v python3)" /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$candidate" ] && writes_bytecode "$candidate"; then bytecode_writer="$candidate"; break; fi
+done
+if [ -n "$bytecode_writer" ]; then
+  mkdir "$work/bytecode-writer"; ln -s "$bytecode_writer" "$work/bytecode-writer/python3"
+  writer_result="$(PATH="$work/bytecode-writer:$PATH" && result)"
+  expect "OneChangedSuiteUnderAPythonThatWritesBytecode_Passes because $bytecode_writer runs the runner like any python3" "$writer_result" pass
+  expect "OneChangedSuiteUnderAPythonThatWritesBytecode_RunsAlone because the runner's own modules are no change" "$(head -1 "$work/output")" 'flow: selected sessions'
+  expect 'RunUnderAPythonThatWritesBytecode_LeavesNoUntrackedFile because the runner never writes into the project it tests' "$(git status --porcelain --untracked-files=all | grep -c '^??' || true)" 0
+  rm -r "$work/bytecode-writer"
+else
+  echo 'skip OneChangedSuiteUnderAPythonThatWritesBytecode: no python3 here writes bytecode under -I'
+fi
 mkdir -p plugins/flow/changelog.d
 echo release > plugins/flow/changelog.d/release.md
 expect 'OneChangedSuite_RunsAlone because an unrelated failing adapter cannot affect it' "$(result)" pass
@@ -110,7 +130,7 @@ echo \$! > "$work/child"
 sleep $child_seconds
 STUB
 mkdir "$work/stepping-logs"
-python3 -I - "$project/tools/lib" "$work/deaf-suite.sh" "$work/deaf-suite-ready" "$work/stepping-logs" > "$work/output" 2>&1 <<'PY' &
+python3 -I -B - "$project/tools/lib" "$work/deaf-suite.sh" "$work/deaf-suite-ready" "$work/stepping-logs" > "$work/output" 2>&1 <<'PY' &
 import sys
 import time
 from pathlib import Path

@@ -22,6 +22,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
 
+sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
 from flow_selection import commands, selection  # noqa: E402
 
