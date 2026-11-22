@@ -1,0 +1,8 @@
+{
+  "sections": {"alpha": "core"},
+  "children": {"beta": "beta"},
+  "wrappers": [
+    {"section": "beta (tests/beta.sh)", "name_prefix": "beta: ", "child": "beta"}
+  ],
+  "allowances": []
+}

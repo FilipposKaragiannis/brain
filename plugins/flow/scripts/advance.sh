@@ -51,6 +51,7 @@ if [ "$step" = "verify" ] && [ -z "$summary" ] && [ -n "$result" ]; then
   summary="$(json_list "$result" checks | while read -r c; do printf '%s %s; ' "$(json_get "$c" name)" "$(json_get "$c" status)"; done)"
 fi
 [ -n "$status" ] || die "no result for step $step: write $reports/$step.json or pass --status" 2
+[ "$status" != gate ] || gate_known "${gate:-ambiguity}" || die "the result of step $step names a gate profiles.json does not have; nothing written, fix $reports/$step.json or pass --gate" 2
 
 data="$(adapter read "$item")" || die "cannot read $item"
 attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; 0*) attempts="${attempts#"${attempts%%[!0]*}"}"; attempts="${attempts:-0}" ;; esac
@@ -68,10 +69,8 @@ finish_run() { rm -f "$run_file"; }
 asked_file="$home/asked/$(item_slug "$item")"
 
 # raise_asked <gate> <message>: raise the gate the step asked for, with the options and condition
-# its result names; an empty options list is no options. A gate profiles.json does not have is
-# refused before anything is raised.
+# its result names; an empty options list is no options.
 raise_asked() {
-  gate_known "$1" || die "the result of step $step names a gate profiles.json does not have; nothing raised, fix $reports/$step.json or pass --gate" 2
   set -- "$item" "$1" "$2"
   case "$options" in ""|"[]") ;; *) set -- "$@" --options "$options" ;; esac
   [ -z "$condition" ] || set -- "$@" --condition "$condition"

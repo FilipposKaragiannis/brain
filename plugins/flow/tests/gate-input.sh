@@ -99,6 +99,19 @@ check "ResultNamingAnUnknownGate_WritesNoAskedFile: the step is not marked as ha
 check "ResultNamingAnUnknownGate_RunsNoShellText: the name's command substitution did not run" \
   '[ ! -e pwned ]'
 
+echo "gate input: a plan result that names an unknown gate and changes"
+new_repo planning
+planning_item="$(new_task "Planning")"
+start_step "$planning_item"
+python3 -c 'import json, sys; run = json.load(open(sys.argv[1])); run["step"] = "plan"; json.dump(run, open(sys.argv[1], "w"))' "$(run_file "$planning_item")"
+step_result "$planning_item" plan '{"status": "gate", "gate": "not-a-gate", "message": "Which one?", "changes": ["src/**"]}'
+planning_before="$("$local_adapter/read.sh" "$planning_item")"
+"$plugin/scripts/advance.sh" "$planning_item" > "$work/planning.out" 2> "$work/planning.err"; planning_code=$?
+check "PlanResultNamingAnUnknownGate_StopsAdvanceWithAUsageExit: the step does not report a gate that was never raised" \
+  '[ "$planning_code" -eq 2 ]'
+check "PlanResultNamingAnUnknownGate_RecordsNoChanges: the overlap data hold.sh reads is untouched" \
+  '[ "$("$local_adapter/read.sh" "$planning_item")" = "$planning_before" ]'
+
 echo "gate input: a sync step result that names a gate profiles.json does not have"
 new_repo syncing
 syncing_item="$(new_task "Syncing")"

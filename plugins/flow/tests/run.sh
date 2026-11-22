@@ -567,6 +567,11 @@ sh "$here/gate-input.sh" > "$work/gate-input.out" 2>&1; code=$?
 check "gate-input: $(tail -n 1 "$work/gate-input.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-input.out"
 
+echo "the main worktree is found once per folder and git probed once (tests/main-worktree-once.sh)"
+sh "$here/main-worktree-once.sh" > "$work/main-worktree-once.out" 2>&1; code=$?
+check "main-worktree-once: $(tail -n 1 "$work/main-worktree-once.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/main-worktree-once.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"

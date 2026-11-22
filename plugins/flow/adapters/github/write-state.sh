@@ -30,12 +30,11 @@ data.setdefault("gate", "none")
 print(json.dumps(data))' "$@")"
 add_labels=""; remove_labels=""; line_break='
 '
-# stale_labels <prefix> <value>: the labels of the issue that start with the prefix and are not
-# prefix+value, one per line. gh reads a comma as a list separator, so a label with one is left alone.
 stale_labels() {
+  label_prefix="$1"; kept_value="$2"
   while IFS= read -r old; do
-    case "$old" in "$1"*) ;; *) continue ;; esac
-    [ "$old" != "$1$2" ] || continue
+    case "$old" in "$label_prefix"*) ;; *) continue ;; esac
+    [ "$old" != "$label_prefix$kept_value" ] || continue
     case "$old" in *,*) echo "flow: left the label '$old' on gh#$n: a comma in it would make gh remove two" >&2; continue ;; esac
     printf '%s\n' "$old"
   done <<LABELS
