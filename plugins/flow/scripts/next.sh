@@ -10,7 +10,7 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
 # an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
@@ -30,6 +30,7 @@
 . "$FLOW_PLUGIN/lib/branch.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
+EXIT_AT_GATE=4
 item=""; as_json=0; embed=0; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -118,7 +119,12 @@ profile="$(state_get "$data" profile)"
 [ -n "$profile" ] || die "no profile for kind $kind size $size"
 gate="$(state_get "$data" gate)"
 if [ -n "$gate" ] && [ "$gate" != "none" ]; then
-  pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" 4
+  pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" "$EXIT_AT_GATE"
+fi
+gate_record="$home/gates/$(item_slug "$item").json"
+recorded_gate=""; [ ! -f "$gate_record" ] || recorded_gate="$(json_get "$(cat "$gate_record")" gate)"
+if [ -n "$recorded_gate" ]; then
+  pass_over "$item has a $recorded_gate gate recorded on this host ($gate_record) that its tracker does not show, so no step runs. Answer it, then: gate.sh clear $item; or, if it was answered on another host, delete that file" "$EXIT_AT_GATE"
 fi
 step="$(state_get "$data" step)"
 [ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"

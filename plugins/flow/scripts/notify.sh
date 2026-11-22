@@ -46,9 +46,11 @@ fi
 if [ "$(cfg notify.desktop)" != "false" ]; then
   if command -v osascript >/dev/null 2>&1; then
     osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)' -e 'end run' \
-      -- "$(printf '%s' "$body" | head -c "$notification_body_limit")" "$title" "$subtitle" >/dev/null 2>&1 || true
+      -- "$(printf '%s' "$body" | head -c "$notification_body_limit")" "$title" "$subtitle" >/dev/null 2>&1 \
+      || echo "flow: desktop notification failed" >&2
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send -- "$title" "$(printf '%s' "$body" | head -c "$notification_body_limit")" >/dev/null 2>&1 || true
+    notify-send -- "$title" "$(printf '%s' "$body" | head -c "$notification_body_limit")" >/dev/null 2>&1 \
+      || echo "flow: desktop notification failed" >&2
   fi
 fi
 hook="${FLOW_SLACK_WEBHOOK:-$(cfg notify.slack_webhook)}"
