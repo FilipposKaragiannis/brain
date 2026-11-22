@@ -436,13 +436,13 @@ cmd_split() {
     sp_procs="${procs:-${FLOW_HEALTH_PROCS:-}}"; sp_tmp=""
     if [ -z "$sp_procs" ]; then
       sp_tmp="$(mktemp)"; sp_procs="$sp_tmp"
-      python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$sp_tmp" 2>/dev/null || : > "$sp_tmp.failed"
+      cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$sp_tmp" 2>/dev/null || : > "$sp_tmp.failed"
     fi
     if [ -f "$home/runs/$(item_slug "$sp_item").json" ]; then split_kept="a run is in flight"
     elif dirty "$sp_path"; then split_kept="it has uncommitted changes: commit or stash them; the health job then releases it"
     elif [ -n "$sp_tmp" ] && [ -f "$sp_tmp.failed" ]; then split_kept="the processes cannot be listed, so a session may be working in it"
     else
-      sp_live="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$sp_procs" "$sp_item" "$sp_path" "" 2>/dev/null)"
+      sp_live="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$sp_procs" "$sp_item" "$sp_path" "" 2>/dev/null)"
       [ -z "$sp_live" ] || split_kept="a session works in it ($sp_live)"
     fi
     [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
@@ -911,7 +911,7 @@ sweep_drop_gate() {
 }
 
 # --- health: the pool checked in order, claim by claim. See jobs/health.sh, which runs it.
-hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
+hpy() { cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
 
 # health_say <item> <fact>: one line per fact, on stdout and in events.log, of the kind health
 # (resume when the owner resumes a run, unheld when a hold is cleared).
@@ -1025,7 +1025,7 @@ health_free() {
 # Changes holding anything of their own are kept, and said once per first such path.
 health_free_dirty() {
   hd_name="$(basename "$1")"
-  hd_found="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" 2>/dev/null)"
+  hd_found="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" 2>/dev/null)"
   case "$hd_found" in
     redundant*) ;;
     *) hd_why="${hd_found#kept?}"; hd_why="${hd_why:-they could not be checked}"
@@ -1040,7 +1040,7 @@ health_free_dirty() {
   # A destructive step: a session that called health from inside the worktree counts too.
   [ "$procs_ok" -eq 1 ] && [ -z "$(hpy present "$procs" "" "$1" "")" ] || return 1
   if [ "$dry" -eq 1 ]; then health_say pool "would discard the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"; return 1; fi
-  hd_done="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
+  hd_done="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
   case "$hd_done" in
     discarded*)
       health_say pool "discarded the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"
@@ -1463,7 +1463,7 @@ health_gate_closed_sweep() {
 # children are all closed, or one whose every step ran and that waits at no gate (its PR was merged
 # by hand, or its merge gate cleared without the sweep closing it). Say each once and notify.
 health_splits() {
-  hs_rows="$(python3 -I -c '
+  hs_rows="$(cached_python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if line.strip():
@@ -1499,7 +1499,7 @@ for line in sys.stdin:
 # either its steps are past that gate or the owner's last answer cleared it (an answer or an
 # option, not a split sent back).
 approved_epics_with_children() {
-  python3 -I -c '
+  cached_python3 -I -c '
 import json, sys
 profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
 SPLIT_GATE = "decomposition"

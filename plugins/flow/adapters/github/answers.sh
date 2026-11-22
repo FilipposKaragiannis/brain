@@ -9,12 +9,12 @@ repo="$(gh_repo)"
 allowed="$(cfg github.answer_from | paste -sd, -)"
 [ -n "$allowed" ] || allowed="$(gh api user -q .login 2>/dev/null)"
 [ -n "$allowed" ] || die "cannot tell whose answers count: set github.answer_from"
-"$FLOW_PLUGIN/adapters/github/list.sh" | python3 -I -c '
+"$FLOW_PLUGIN/adapters/github/list.sh" | cached_python3 -I -c '
 import json, sys
 for i in json.load(sys.stdin):
     gate = (i.get("state") or {}).get("gate") or "none"
     if gate not in ("none", "merge"): print(i["id"][3:])' | while read -r n; do
-  found="$(gh api "repos/$repo/issues/$n/comments?per_page=100" 2>/dev/null | python3 -I -c '
+  found="$(gh api "repos/$repo/issues/$n/comments?per_page=100" 2>/dev/null | cached_python3 -I -c '
 import json, sys
 allowed = set(sys.argv[1].split(","))
 comments = json.load(sys.stdin)
