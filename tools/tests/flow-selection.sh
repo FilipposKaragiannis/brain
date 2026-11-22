@@ -54,6 +54,7 @@ expect 'RemovedSuite_RunsFullCoverage because its old path has no runnable suite
 expect 'FullCoverage_IncludesJiraContract because each backend has its own contract run' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
 base=unavailable
 expect 'MissingBase_RunsFullCoverage because the changed inputs cannot be determined' "$(result)" fail
+expect 'FailedRun_NamesItsFailedSuitesLast because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in contract-jira, inline'
 for stub in "$suite"/*.sh; do
   printf 'if mkdir "%s/lane" 2>/dev/null; then sleep 1; rmdir "%s/lane"; else echo overlap >> "%s/overlaps"; fi\n' "$work" "$work" "$work" > "$stub"
 done

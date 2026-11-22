@@ -113,8 +113,8 @@ def print_output(name: str, log: Path) -> None:
     sys.stdout.buffer.flush()
 
 
-def run_selected(suites, directory, lanes: int):
-    status = 0
+def run_selected(suites, directory, lanes: int) -> "list[str]":
+    failed = []
     with ThreadPoolExecutor(max_workers=lanes) as workers:
         running = {workers.submit(run_suite, command, directory / name): name for name, command in suites.items()}
         for finished in as_completed(running):
@@ -123,8 +123,8 @@ def run_selected(suites, directory, lanes: int):
             print_output(name, directory / name)
             print(f"flow: {name} {'FAIL' if code else 'pass'} ({elapsed:.1f}s)", flush=True)
             if code:
-                status = 1
-    return status
+                failed.append(name)
+    return sorted(failed)
 
 
 def lane_count(environment: Mapping[str, str]) -> int:
@@ -147,9 +147,9 @@ def run(root, base, lanes: int):
     planned = {name: command for name, command in suites.items() if name in selected}
     print("flow: selected " + ", ".join(planned), flush=True)
     with TemporaryDirectory(prefix="flow-suites-") as logs:
-        status = run_selected(planned, Path(logs), lanes)
-    print("flow: failed" if status else "flow: ok")
-    return status
+        failed = run_selected(planned, Path(logs), lanes)
+    print("flow: failed in " + ", ".join(failed) if failed else "flow: ok")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
