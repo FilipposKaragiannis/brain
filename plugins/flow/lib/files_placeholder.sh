@@ -89,26 +89,30 @@ files_placeholder_opened() {
   if files_placeholder_ends_with_a_script_shell "$2"; then printf ' none'; else printf ' -'; fi
 }
 
-files_placeholder_ends_with_word() {
+files_placeholder_trailing_blanks() {
+  printf '%s' "${1##*[! 	]}"
+}
+
+files_placeholder_before_word() {
   files_placeholder_ends_with_blank_in_a_command "$1" || return 1
-  case "${1%?}" in *"$2") return 0 ;; esac
-  return 1
+  files_placeholder_through_word="${1%"$(files_placeholder_trailing_blanks "$1")"}"
+  case "$files_placeholder_through_word" in *"$2") ;; *) return 1 ;; esac
+  printf '%s' "${files_placeholder_through_word%"$2"}"
 }
 
 files_placeholder_starts_a_command() {
-  files_placeholder_command_start="$1"
-  files_placeholder_ends_with_blank_in_a_command "$1" && files_placeholder_command_start="${1%?}"
-  case "$files_placeholder_command_start" in ''|*[';|&(']) return 0 ;; esac
+  case "${1%"$(files_placeholder_trailing_blanks "$1")"}" in
+    *\\[';|&(']) return 1 ;;
+    ''|*[';|&(']) return 0 ;;
+  esac
   return 1
 }
 
 files_placeholder_ends_with_a_script_shell() {
-  files_placeholder_ends_with_word "$1" -c || return 1
-  files_placeholder_shell_end="${1%?}"; files_placeholder_shell_end="${files_placeholder_shell_end%-c}"
+  files_placeholder_shell_end="$(files_placeholder_before_word "$1" -c)" || return 1
   for files_placeholder_shell in sh bash; do
-    files_placeholder_ends_with_word "$files_placeholder_shell_end" "$files_placeholder_shell" || continue
-    files_placeholder_shell_start="${files_placeholder_shell_end%?}"
-    files_placeholder_starts_a_command "${files_placeholder_shell_start%"$files_placeholder_shell"}" && return 0
+    files_placeholder_shell_start="$(files_placeholder_before_word "$files_placeholder_shell_end" "$files_placeholder_shell")" || continue
+    files_placeholder_starts_a_command "$files_placeholder_shell_start" && return 0
   done
   return 1
 }
@@ -190,10 +194,7 @@ files_placeholder_state_after() {
 }
 
 files_placeholder_last_word() {
-  files_placeholder_word_before="$1"; files_placeholder_last=""
-  while files_placeholder_ends_with_blank_in_a_command "$files_placeholder_word_before"; do
-    files_placeholder_word_before="${files_placeholder_word_before%?}"
-  done
+  files_placeholder_word_before="${1%"$(files_placeholder_trailing_blanks "$1")"}"; files_placeholder_last=""
   while [ -n "$files_placeholder_word_before" ] && ! files_placeholder_ends_with_word_end "$files_placeholder_word_before"; do
     files_placeholder_last="${files_placeholder_word_before#"${files_placeholder_word_before%?}"}$files_placeholder_last"
     files_placeholder_word_before="${files_placeholder_word_before%?}"

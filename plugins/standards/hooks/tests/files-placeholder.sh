@@ -2,9 +2,11 @@
 # Tests the {files} placeholder helper against a real sh and bash. It generates configured commands
 # over the outer quoting (none, or the single- or double-quoted script of a sh -c or a bash -c), the
 # quoting {files} sits in inside it (none, single, double), an escape or quote before {files} or
-# inside those quotes, the blank before {files} (space, tab, newline) and text joined after it,
-# expands each with hostile file names and runs the result as the hooks and verify do. Every command must be refused, or deliver every name intact as
-# one word and run nothing. Run from anywhere. Exit 1 on any failure.
+# inside those quotes, the spacing and text joined after {files}, expands each with hostile file
+# names and runs the result as the hooks and verify do. A spacing puts one blank, two blanks or a
+# space and a tab between the shell and -c, between -c and the script and before {files}, each run
+# once at each place, or a tab or a newline before {files}. Every command must be refused, or
+# deliver every name intact as one word and run nothing. Run from anywhere. Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 hooks="$here/.."
@@ -19,7 +21,7 @@ check() { name="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else fai
 
 received="$work/received"; expected="$work/expected"; run_folder="$work/run"; broken="$work/broken"
 outcomes="$work/outcomes"; tab="$(printf '\t')"; newline='
-'
+'; space=' '
 mkdir -p "$work/bin"
 for recorder in record dotnet npx; do
   printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\n' "$received" > "$work/bin/$recorder" && chmod +x "$work/bin/$recorder"
@@ -54,10 +56,26 @@ script_text() {
   esac
 }
 
-configured_command() {
+shell_gap() {
+  case "$1" in two) printf '%s' "$space$space" ;; mixed) printf '%s' "$space$tab" ;; *) printf '%s' "$space" ;; esac
+}
+
+script_gap() {
+  case "$1" in one) printf '%s' "$space$space" ;; two) printf '%s' "$space$tab" ;; *) printf '%s' "$space" ;; esac
+}
+
+files_gap() {
   case "$1" in
-    *-single) printf "%s -c '%s'" "${1%-*}" "$2" ;;
-    *-double) printf '%s -c "%s"' "${1%-*}" "$2" ;;
+    one) printf '%s' "$space$tab" ;; two) printf '%s' "$space" ;; mixed) printf '%s' "$space$space" ;;
+    tab) printf '%s' "$tab" ;; newline) printf '%s' "$newline" ;;
+  esac
+}
+
+configured_command() {
+  configured_shell_gap="$(shell_gap "$3")"; configured_script_gap="$(script_gap "$3")"
+  case "$1" in
+    *-single) printf "%s%s-c%s'%s'" "${1%-*}" "$configured_shell_gap" "$configured_script_gap" "$2" ;;
+    *-double) printf '%s%s-c%s"%s"' "${1%-*}" "$configured_shell_gap" "$configured_script_gap" "$2" ;;
     *) printf '%s' "$2" ;;
   esac
 }
@@ -70,17 +88,18 @@ else
 fi
 
 fragment_commands() {
-  fragment_outer="$1"; fragment_inner="$2"; fragment_placement="$3"; fragment_blank="$4"
+  fragment_outer="$1"; fragment_inner="$2"; fragment_placement="$3"; fragment_spacing="$4"
+  fragment_blank="$(files_gap "$fragment_spacing")."; fragment_blank="${fragment_blank%.}"
   fragments | while IFS= read -r fragment; do
-    tally_outcome "$(configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "$fragment" "" "$fragment_blank")")"
+    tally_outcome "$(configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "$fragment" "" "$fragment_blank")" "$fragment_spacing")"
     [ "$fragment_inner" = none ] || [ -z "$fragment" ] && continue
-    tally_outcome "$(configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "" "$fragment" "$fragment_blank")")"
+    tally_outcome "$(configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "" "$fragment" "$fragment_blank")" "$fragment_spacing")"
   done
 }
 
 blank_commands() {
-  [ "$3" = joined ] && { fragment_commands "$1" "$2" "$3" ""; return; }
-  for blank in ' ' "$tab" "$newline"; do fragment_commands "$1" "$2" "$3" "$blank"; done
+  [ "$3" = joined ] && { fragment_commands "$1" "$2" "$3" joined; return; }
+  for spacing in one two mixed tab newline; do fragment_commands "$1" "$2" "$3" "$spacing"; done
 }
 
 placement_commands() {
@@ -183,6 +202,21 @@ check "FilesAfterATab_DeliversEveryName: a tab ends the word before it" delivers
 check "FilesBeforeATab_DeliversEveryName: a tab ends the word after it" delivers "record {files}$tab"
 check "ScriptShellSeparatedByTabs_DeliversEveryName: tabs separate sh, -c and the script" \
   delivers "sh$tab-c$tab'record$tab{files}'"
+check "BlanksBeforeTheScriptShell_DeliversEveryName: a run of blanks before sh still starts the command" \
+  delivers "$space$tab${space}sh -c 'record {files}'"
+check "BlanksAfterASeparatorBeforeTheScriptShell_DeliversEveryName: a run of blanks after ; still starts the command" \
+  delivers "true;$tab$space${space}sh -c 'record {files}'"
+check "BlanksAfterFiles_DeliversEveryName: a run of blanks ends the word {files}" delivers "record {files}$space$tab$space"
+check "BlanksAfterFilesAndTheScript_DeliversEveryName: blank runs inside and after the script end the words" \
+  delivers "sh -c 'record {files}$tab$space'$space$tab"
+check "BlanksAfterTheScriptsOpeningQuote_DeliversEveryName: the script may start with a run of blanks" \
+  delivers "sh -c '$space$tab${space}record {files}'"
+check "CombinedShellOptions_IsRefused: only a -c that is a word of its own marks the script" refuses "sh -ec 'record {files}'"
+check "ScriptJoinedToTheCOption_IsRefused: -c joined to the script is not a word of its own" refuses "sh -c'record {files}'"
+check "COptionJoinedToOtherText_IsRefused: x-c is not the option -c" refuses "sh x-c 'record {files}'"
+check "ShellNameJoinedToOtherText_IsRefused: shx is not sh" refuses "shx -c 'record {files}'"
+check "ScriptShellAfterAnEscapedSemicolon_IsRefused: an escaped ; does not start a command" \
+  refuses "record x\\; sh -c 'record {files}'"
 check "FilesOnTheSecondLine_DeliversEveryName: a multi-line command is read line by line" \
   delivers "true${newline}record {files}"
 check "FilesOnTheSecondLineOfAScript_DeliversEveryName: a multi-line script is read line by line" \
