@@ -139,6 +139,10 @@ PY
 # owner's config, and a run that does fails.
 for f in plugins/*/tests/*.sh plugins/*/*/tests/*.sh tools/tests/*.sh; do
   case "$(basename "$f")" in _*|fake-*) continue ;; esac
+  if grep -q '^ *0) exec python3 -I "[^"]*/tools/lib/flow_suites\.py" all ;;$' "$f"; then
+    ! grep -qE '^[[:space:]]*(check|check_all|pass|fail|expect)[[:space:](]' "$f" || fail "a dispatcher that holds checks: $f"
+    continue
+  fi
   grep -q '^\. "[^"]*/tools/lib/sandbox\.sh"; sandbox_enter "\$work" ' "$f" && grep -q "^trap 'sandbox_close \$?' EXIT$" "$f" \
     || fail "test suite outside the sandbox (tools/lib/sandbox.sh): $f"
 done

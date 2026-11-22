@@ -17,8 +17,8 @@ git init -q -b main
 git config user.email tests@example.test
 git config user.name Tests
 printf 'echo "  ok   StubCheck_Holds"\n' > "$suite/sessions.sh"
-printf 'test "$1" = verify\n' > "$suite/run.sh"
-for name in base-claim base-readers verify-scope; do printf 'exit 0\n' > "$suite/$name.sh"; done
+printf 'exit 1\n' > "$suite/run.sh"
+for name in base-claim base-readers verify-scope verify-report; do printf 'exit 0\n' > "$suite/$name.sh"; done
 printf 'test "$1" != jira\n' > "$suite/adapter-contract.sh"
 git add .
 git commit -qm baseline
@@ -82,8 +82,8 @@ expect 'FullCoverageForANewFolder_IncludesJiraContract because every suite runs'
 rm -r plugins/flow/new-runtime
 mkdir -p plugins/flow/scripts
 touch plugins/flow/scripts/verify.sh
-expect 'VerifyImplementationChanges_RunItsIntegrationChecks because the shared inline fixture contains unrelated scenarios' "$(result)" pass
-expect 'VerifyImplementationChanges_IncludeTheReportScenarios because standalone checks cover only part of verify' "$(grep -c '^flow: verify pass' "$work/output")" 1
+expect 'VerifyImplementationChanges_RunItsIntegrationChecks because only the suites that run verify can be affected' "$(result)" pass
+expect 'VerifyImplementationChanges_IncludeTheReportScenarios because standalone checks cover only part of verify' "$(grep -c '^flow: verify-report pass' "$work/output")" 1
 rm plugins/flow/scripts/verify.sh
 cat > "$suite/sessions.sh" <<'STUB'
 echo first
@@ -113,7 +113,7 @@ expect 'RemovedSuite_RunsFullCoverage because its old path has no runnable suite
 expect 'FullCoverage_IncludesJiraContract because each backend has its own contract run' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
 base=unavailable
 expect 'MissingBase_RunsFullCoverage because the changed inputs cannot be determined' "$(result)" fail
-expect 'FailedRun_NamesItsFailedSuitesLast because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in contract-jira, inline'
+expect 'FailedRun_NamesItsFailedSuitesLast because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in contract-jira'
 git mv plugins/flow/tests/renamed.sh plugins/flow/tests/sessions.sh
 git tag unavailable HEAD
 expect 'MissingBaseWithARefOfThatName_RunsFullCoverage because a ref can take any name' "$(result)" fail
@@ -147,8 +147,8 @@ rm -f "$work/holder-counts"
 expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
 expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(most_suites_at_once)" 3
 cp -p "$root/plugins/flow/tests/run.sh" "$suite/run.sh"
-printf 'sandbox_enter() { exit 0; }\n' > "$project/tools/lib/sandbox.sh"
 if "$project/tools/test.sh" flow > "$work/output" 2>&1; then whole_part=pass; else whole_part=fail; fi
 expect 'FlowPart_Passes because CI runs the whole Flow part through it' "$whole_part" pass
 expect 'FlowPart_RunsEverySuite because a full run leaves none out' "$(suites_reported)" 8
-expect 'FlowPart_RunsTheInlineSection because run.sh with no argument hands the whole run to the runner' "$(grep -c '^flow: inline pass' "$work/output")" 1
+if sh "$suite/run.sh" inline > "$work/output" 2>&1; then dispatcher_code=0; else dispatcher_code=$?; fi
+expect 'FlowDispatcherGivenAnArgument_IsAUsageError because run.sh only hands the whole run to the runner' "$dispatcher_code" 2
