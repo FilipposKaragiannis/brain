@@ -13,7 +13,10 @@
 # against the claim's base) the item closes and its worktree is released, no merge gate raised;
 # with none and changes to merge it raises an escalation gate. A lookup gh cannot answer leaves
 # changes at the merge gate, where the sweep looks again.
-# Exit codes: 0 next step ready · 4 waiting at a gate, or split and waiting on its children · 6 done.
+# A gate and the step past it are one tracker write (gate.sh raise ... -- step=...): a write the
+# tracker refuses leaves the item at its step with its run, and advance.sh run again raises it.
+# Exit codes: 0 next step ready · 1 the gate could not be recorded · 4 waiting at a gate, or split
+# and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/pull_request.sh"
@@ -74,29 +77,35 @@ raise_asked() {
   set -- "$item" "$1" "$2"
   case "$options" in ""|"[]") ;; *) set -- "$@" --options "$options" ;; esac
   [ -z "$condition" ] || set -- "$@" --condition "$condition"
-  "$FLOW_PLUGIN/scripts/gate.sh" raise "$@" >/dev/null
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$@" >/dev/null || gate_not_recorded "$2"
+}
+
+gate_not_recorded() {
+  die "the $1 gate on $item is not recorded, so nothing moved past it: $item keeps its run, and advance.sh $item raises it again"
 }
 
 escalate_unopened_epic_pull_request() {
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the epic's pull request could not be opened. Open it, then clear the gate.**
 
-$(cat "$reports/epic-pr.err")" >/dev/null
+$(cat "$reports/epic-pr.err")" >/dev/null || gate_not_recorded escalation
   report 4 "" escalation
 }
 
 close_epic_with_nothing_to_merge() {
   [ "$(json_get "$data" status)" != closed ] || return 0
   adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null 2>&1 && return 0
-  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the tracker refused to close the epic. Clear the gate to run the closeout again, or close the epic by hand.**" >/dev/null
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the tracker refused to close the epic. Clear the gate to run the closeout again, or close the epic by hand.**" >/dev/null \
+    || gate_not_recorded escalation
   report 4 "" escalation
 }
 
 wait_for_the_merge_of() {
-  step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $1 waits for the merge" >/dev/null
   adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The epic's pull request: $1." >/dev/null
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" merge "**$(json_get "$profiles" "gates.merge.asks")**
 
-$1 brings the epic's branch into its base. ${summary:-$step done.}" "$step" >/dev/null
+$1 brings the epic's branch into its base. ${summary:-$step done.}" "$step" \
+    -- "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $1 waits for the merge" >/dev/null \
+    || gate_not_recorded merge
   finish_run
   report 4 "done" merge
 }
@@ -111,7 +120,7 @@ close_with_nothing_to_merge() {
   if ! adapter close "$item" --comment "Closed by flow: the pr step opened no pull request, and the branch has no change against $1, so there is nothing to merge. ${summary:-$step done.}" >/dev/null 2>&1; then
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The pr step opened no pull request and the branch has nothing to merge, but the tracker refused to close the item. Clear the gate to run the pr step again, or close the item by hand.**
 
-${summary:-$step done.}" >/dev/null
+${summary:-$step done.}" >/dev/null || gate_not_recorded escalation
     report 4 "" escalation
   fi
   step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; no pull request and nothing to merge, closed" >/dev/null
@@ -123,7 +132,7 @@ ${summary:-$step done.}" >/dev/null
 escalate_unopened_pull_request() {
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The pr step opened no pull request, but $1 has changes against $2, committed or not. Clear the gate to run the pr step again, or close the item by hand if nothing should merge.**
 
-${summary:-$step done.}" >/dev/null
+${summary:-$step done.}" >/dev/null || gate_not_recorded escalation
   report 4 "" escalation
 }
 
@@ -171,7 +180,8 @@ if [ "$step" = sync ]; then
       raise_asked "$gate" "${message:-$summary}"
       report 4 "" "$gate" ;;
     fail)
-      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "The sync step could not merge into the task branch: ${summary:-no summary}" >/dev/null
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "The sync step could not merge into the task branch: ${summary:-no summary}" >/dev/null \
+        || gate_not_recorded escalation
       report 4 "" escalation ;;
     *) die "unknown status '$status' (done, fail or gate)" 2 ;;
   esac
@@ -237,14 +247,14 @@ case "$status" in
 
 - What happened: $(json_get "$result" checks.0.summary).
 - A check that needs longer: raise \`verify.limit\` in \`.flow/config.yaml\`. A busy machine: clear the gate once it is free.
-- The next run reuses every test command that already passed." >/dev/null
+- The next run reuses every test command that already passed." >/dev/null || gate_not_recorded escalation
       report 4 "" escalation
     fi
     attempts=$((attempts + 1))
     max="$(json_get "$profiles" max_attempts)"
     if [ "$attempts" -ge "${max:-3}" ]; then
-      adapter write-state "$item" "attempts=$attempts" >/dev/null
-      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "Step $step failed $attempts times. Last: ${summary:-no summary}" >/dev/null
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "Step $step failed $attempts times. Last: ${summary:-no summary}" \
+        -- "attempts=$attempts" >/dev/null || gate_not_recorded escalation
       report 4 "" escalation
     fi
     fix="$(json_get "$profiles" "fix_step.$step")"; [ -n "$fix" ] || fix="$step"
@@ -266,14 +276,14 @@ next_profile="$profile"
 if [ "$kind" != epic ] && [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   old_i="$(size_index "$size")"; new_i="$(size_index "$new_size")"
   [ "$new_i" -ge 0 ] || die "unknown size $new_size" 2
-  adapter write-state "$item" "size=$new_size" >/dev/null
   if [ $((new_i - old_i)) -ge 2 ] || { [ "$new_size" = "L" ] && [ "$new_i" -gt "$old_i" ]; }; then
-    step_write "$item" "step=$step" "profile=$(profile_select "$kind" "$new_size")" >/dev/null
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" plan-approval "**Re-sized $size -> $new_size at step $step. Replan or split, then clear the gate.**
 
-${summary:-No summary.}" >/dev/null
+${summary:-No summary.}" -- "size=$new_size" "step=$step" "profile=$(profile_select "$kind" "$new_size")" >/dev/null \
+      || gate_not_recorded plan-approval
     size="$new_size"; report 4 "" plan-approval
   fi
+  adapter write-state "$item" "size=$new_size" >/dev/null
   size="$new_size"
   next_profile="$(profile_select "$kind" "$new_size")"
   [ "$next_profile" = "$profile" ] || adapter comment "$item" --body "Re-sized $size: profile $profile -> $next_profile, continuing with the added depth." >/dev/null
@@ -314,23 +324,25 @@ case "$following" in
       finish_run
       report 0 "$after" ""
     fi
-    step_write "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g" >/dev/null
     # The ask leads, in bold, so the owner reads the decision before the step's summary.
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$g" "**$(json_get "$profiles" "gates.$g.asks")**
 
-${summary:-$step done.}" "$step" >/dev/null
+${summary:-$step done.}" "$step" -- "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g" >/dev/null \
+      || gate_not_recorded "$g"
     report 4 "$after" "$g" ;;
   *)
-    step_write "$item" "step=$following" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done -> $following" >/dev/null
+    moved_on="last_event=$(now_iso) $step done -> $following"
     adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Next: $following." >/dev/null
     if [ "$feel_test" -eq 1 ]; then
       # Problems the owner reports go back to the step that writes the code, not to verify.
       back="$(json_get "$profiles" "fix_step.$step")"
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" feel-test "**$(json_get "$profiles" "gates.feel-test.asks")**
 
-Verify passed and the change touches rendered code. What to launch and what to look for: \`$reports/verify.md\`. Signing off continues with $following." "${back:-$step}" >/dev/null
+Verify passed and the change touches rendered code. What to launch and what to look for: \`$reports/verify.md\`. Signing off continues with $following." "${back:-$step}" \
+        -- "step=$following" "profile=$profile" "attempts=0" "$moved_on" >/dev/null || gate_not_recorded feel-test
       report 4 "$following" feel-test
     fi
+    step_write "$item" "step=$following" "profile=$profile" "attempts=0" "$moved_on" >/dev/null
     finish_run
     report 0 "$following" "" ;;
 esac
