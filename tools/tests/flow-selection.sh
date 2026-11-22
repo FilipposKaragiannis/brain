@@ -81,11 +81,15 @@ expect 'SuitePastItsTimeLimit_PrintsItsOutputSoFarWithItsName because the owner 
 expect 'SuitePastItsTimeLimit_IsNamedWithTheLimit because the owner must see which suite hung and for how long' "$(grep -cFx "flow: base-claim stopped at the time limit of ${limit_seconds}s" "$work/output")" 1
 expect 'SuiteAfterAHungSuite_StillRunsAndReports because one hung suite must not hold up the rest' "$(grep -cFx '[sessions]   ok   Stub_WithinTheLimit' "$work/output")" 1
 expect 'SuiteWithinTheTimeLimit_Passes because only a suite past the limit is stopped' "$(grep -c '^flow: sessions pass (' "$work/output")" 1
+expect 'SuitePastItsTimeLimit_IsReportedAsFailed because a stopped suite is never counted as a pass' "$(grep -c '^flow: base-claim FAIL (' "$work/output")" 1
+expect 'SuiteWithinTheTimeLimit_IsNotNamedAsStopped because only a suite past the limit is stopped' "$(grep -c 'sessions stopped at the time limit' "$work/output")" 0
+expect 'EverySelectedSuite_PrintsExactlyOneStartLine because the reader must see each suite begin once' "$(grep -cE '^flow: [^ ]+ started$' "$work/output")" 2
 expect 'SuitePastItsTimeLimit_IsNamedInTheSummary because a verify summary keeps only the last lines' "$(tail -1 "$work/output")" 'flow: failed in base-claim'
 expect 'EverySelectedSuite_PrintsAStartLineBeforeItsEndLine because the reader must see which suites are running' "$(starts_before_ends)" yes
 for bad in 0 abc -1 1.5 ''; do
   FLOW_SUITE_TIME_LIMIT_SECONDS="$bad"
   expect "TimeLimit${bad:-Empty}_Fails because only a whole number of seconds from 1 is a limit" "$(result)" fail
+  expect "TimeLimit${bad:-Empty}_RunsNoSuite because a usage error comes before any suite starts" "$(suites_reported)" 0
   expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
