@@ -7,7 +7,7 @@ work="$(mktemp -d)"
 trap 'sandbox_close $?' EXIT
 
 . "$here/_flow_project_fixture.sh"
-lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300; child_seconds=120
+lane_hold_seconds=1; hang_ticks=300; child_seconds=120
 
 cat > "$suite/sessions.sh" <<STUB
 echo "  ok   Stub_FirstCheckHolds"
@@ -20,12 +20,10 @@ python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>
 runner=$!
 ticks=0; until [ -f "$work/ticks" ] || [ "$ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
 kill -TERM "$runner"
-ticks=0; while kill -0 "$runner" 2>/dev/null && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
-if kill -0 "$runner" 2>/dev/null; then runner_state=running; else runner_state=ended; fi
+runner_state="$(process_state "$runner")"
 ticks_at_stop="$(wc -l < "$work/ticks")"; sleep "$lane_hold_seconds"
 wait "$runner" || true
-suite_child="$(cat "$work/child")"
-if kill -0 "$suite_child" 2>/dev/null; then child_state=running; kill "$suite_child"; else child_state=ended; fi
+child_state="$(process_state "$(cat "$work/child")")"
 expect 'RunnerGivenTerm_EndsWhileItsSuiteHangs because a hung suite must not block cancellation' "$runner_state" ended
 expect 'RunnerGivenTerm_StopsItsRunningSuite because a stopped run leaves no suite behind' "$(wc -l < "$work/ticks")" "$ticks_at_stop"
 expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run leaves no check behind' "$child_state" ended
@@ -41,11 +39,6 @@ echo \$! > "$work/child"
 sleep $child_seconds
 STUB
 printf 'sleep %s\necho "  ok   Stub_WithinTheLimit"\n' "$lane_hold_seconds" > "$suite/sessions.sh"
-process_running() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) return 1 ;; esac; }
-process_state() {
-  ticks=0; while process_running "$1" && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
-  if process_running "$1"; then kill -KILL "$1"; echo running; else echo ended; fi
-}
 suite_seconds() { awk -v name="$1" '$1 == "flow:" && $2 == name && ($3 == "pass" || $3 == "FAIL") { gsub(/[()s]/, "", $4); print int($4) }' "$work/output"; }
 runner_lines_besides_start_and_end() { grep "^flow: $1 " "$work/output" | grep -vE "^flow: $1 (started\$|(pass|FAIL) \()"; }
 starts_before_ends() { awk '/^flow: [^ ]+ started$/ { started[$2] = 1 } /^flow: [^ ]+ (pass|FAIL) \(/ { ended++; if (!started[$2]) unstarted++ } END { print (ended && !unstarted) ? "yes" : "no" }' "$work/output"; }
@@ -94,23 +87,23 @@ AWAIT_LIMIT_SECONDS = 30
 AWAIT_POLL_SECONDS = 0.05
 
 
-def running(pid: str) -> bool:
-    state = subprocess.run(["ps", "-o", "stat=", "-p", pid], capture_output=True, text=True, timeout=AWAIT_LIMIT_SECONDS, check=False).stdout.strip()
-    return state != "" and not state.startswith("Z")
+def running(pid: str, probe: Path) -> bool:
+    return subprocess.run(["sh", str(probe), pid], timeout=AWAIT_LIMIT_SECONDS, check=False).returncode == 0
 
 
-def wait_until_ended(awaited: Path) -> None:
+def wait_until_ended(awaited: Path, probe: Path) -> None:
     deadline = time.monotonic() + AWAIT_LIMIT_SECONDS
-    while any(running(pid) for pid in awaited.read_text().split()) and time.monotonic() < deadline:
+    while any(running(pid, probe) for pid in awaited.read_text().split()) and time.monotonic() < deadline:
         time.sleep(AWAIT_POLL_SECONDS)
 
 
 class ClockThatStepsOnceTheSuiteIsReady:
-    def __init__(self, ready: Path, awaits_from: float, awaited: Path) -> None:
+    def __init__(self, ready: Path, awaits_from: float, awaited: Path, probe: Path) -> None:
         self.seconds = 0.0
         self.ready = ready
         self.awaits_from = awaits_from
         self.awaited = awaited
+        self.probe = probe
 
     def now(self) -> float:
         return self.seconds
@@ -118,17 +111,17 @@ class ClockThatStepsOnceTheSuiteIsReady:
     def sleep(self, duration: flow_suites.Duration) -> None:
         if self.seconds >= self.awaits_from:
             self.awaits_from = math.inf
-            wait_until_ended(self.awaited)
+            wait_until_ended(self.awaited, self.probe)
         if self.ready.exists():
             self.seconds += duration.seconds
 
 
-name, script, ready, logs, awaits_from, awaited, process_table = sys.argv[2:]
-settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready), float(awaits_from), Path(awaited)), flow_process_groups.ProcessTable(Path(process_table)))
+name, script, ready, logs, awaits_from, awaited, process_table, probe = sys.argv[2:]
+settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready), float(awaits_from), Path(awaited), Path(probe)), flow_process_groups.ProcessTable(Path(process_table)))
 suites = {flow_selection.SuiteName(name): ("sh", script)}
 sys.exit(flow_suites.report_run(flow_suites.run_selected(suites, flow_suites.SuiteLogs(Path(logs)), settings)))
 PY
-run_on_stepping_clock() { rm -rf "$work/stepping-logs"; mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$1" "$2" "$3" "$work/stepping-logs" "$4" "$5" "$6" > "$work/output" 2>&1; }
+run_on_stepping_clock() { rm -rf "$work/stepping-logs"; mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$1" "$2" "$3" "$work/stepping-logs" "$4" "$5" "$6" "$process_probe" > "$work/output" 2>&1; }
 run_on_stepping_clock deaf "$work/deaf-suite.sh" "$work/deaf-suite-ready" inf /dev/null /proc &
 stepping_runner=$!
 expect 'SuitePastTheDefaultLimitOnTheClockItIsGiven_IsStoppedWithoutTheLimitPassingForReal because the runner times a suite by its injected clock' "$(process_state "$stepping_runner")" ended

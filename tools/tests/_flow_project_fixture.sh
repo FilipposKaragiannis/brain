@@ -19,3 +19,11 @@ base="$(git rev-parse HEAD)"
 result() { if "$project/tools/test.sh" flow-since "$base" > "$work/output" 2>&1; then echo pass; else echo fail; fi; }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
 suites_reported() { grep -cE '^flow: [^ ]+ (pass|FAIL) \(' "$work/output"; }
+poll_seconds=0.1; wait_ticks=50
+process_probe="$work/process-running.sh"
+printf '%s\n' 'case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d " ")" in ""|Z*) exit 1 ;; esac' > "$process_probe"
+process_running() { sh "$process_probe" "$1"; }
+process_state() {
+  ticks=0; while process_running "$1" && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
+  if process_running "$1"; then kill -KILL "$1"; echo running; else echo ended; fi
+}
