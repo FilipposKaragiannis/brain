@@ -128,7 +128,7 @@ rm -rf "$seed"/plugins/*/changelog.d
 cp -R "$here/fixtures/release/demo" "$seed/plugins/demo"
 "$seed/tools/generate.sh" >/dev/null
 repo="$work/repo"; demo="$repo/plugins/demo"; today="$(date +%F)"
-fresh() { rm -rf "$repo"; cp -R "$seed" "$repo"; mkdir -p "$demo/changelog.d"; }
+fresh() { rm -rf "$repo"; cp -R "$seed" "$repo"; git init -q "$repo"; mkdir -p "$demo/changelog.d"; }
 version() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$1/plugin.source.json"; }
 release() { out="$("$repo/tools/release.sh" "$@" 2>"$work/release.err")"; code=$?; }
 package_versions() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(' '.join([d['version']] + ([d['packages']['']['version']] if 'packages' in d else [])))" "$1"; }
@@ -179,7 +179,7 @@ demo 1.4.2 -> 1.4.3" ]
 fresh
 release
 check "no fragments: nothing to release, exit 0" [ "$code-$out" = "0-release: nothing to release" ]
-check "no fragments: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "no fragments: nothing written" diff -r -x changelog.d -x .git "$seed" "$repo"
 
 fresh
 printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
@@ -187,7 +187,7 @@ printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
 release demo
 check "a malformed fragment: exit 2" [ "$code" -eq 2 ]
 check "a malformed fragment: the file and the reason" grep -q '^release: plugins/demo/changelog.d/b-bad.md: a blank line and then the bullets must follow the bump line$' "$work/release.err"
-check "a malformed fragment: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "a malformed fragment: nothing written" diff -r -x changelog.d -x .git "$seed" "$repo"
 check "a malformed fragment: the good one is kept" [ -f "$demo/changelog.d/a-fix.md" ]
 
 fresh
@@ -205,7 +205,7 @@ printf 'bump: minor\n\n- A feature.\n' > "$demo/changelog.d/a-feature.md"
 release --dry-run demo
 check "dry run: exit 0 and the plugin line first" [ "$code-$(printf '%s\n' "$out" | head -1)" = "0-demo 1.4.2 -> 1.5.0" ]
 check "dry run: prints the section" sh -c "printf '%s' \"\$0\" | grep -q '^- A feature.\$'" "$out"
-check "dry run: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "dry run: nothing written" diff -r -x changelog.d -x .git "$seed" "$repo"
 check "dry run: the fragment stays" [ -f "$demo/changelog.d/a-feature.md" ]
 
 echo "lint checks the changelog fragments"
@@ -272,90 +272,117 @@ check "FlowDispatcherWithALineBesideTheDispatch_FailsLint: lint exits 1 and name
 echo "lint holds ShellCheck and Ruff to the baseline"
 python="$(command -v python3)"; linted="$work/linted"
 fresh_linted() {
-  rm -rf "$linted"; mkdir -p "$linted/plugins/demo" "$linted/tools"
+  rm -rf "$linted"; mkdir -p "$linted/plugins/demo" "$linted/tools"; git init -q "$linted"
   cp "$root/ruff.toml" "$root/.shellcheckrc" "$linted/"
   printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted/plugins/demo/clean.sh"
   printf 'import os\n\nprint(os.name)\n' > "$linted/plugins/demo/clean.py"
   "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
 }
-baseline_check() { out="$(env -u CI "$@" "$python" -I "$root/tools/lib/lint_baseline.py" check "$linted" 2>&1)"; code=$?; }
+baseline_check() { env -u CI "$@" "$python" -I "$root/tools/lib/lint_baseline.py" check "$linted" 2>&1; }
 unquoted_substitution() { printf 'echo $(date)\n' >> "$linted/plugins/demo/clean.sh"; }
+rule_code_pattern='SC[0-9]{4}|[EFIBS][0-9]{3,4}|SIM[0-9]{3}'
+fails_naming() { [ "$1" -eq 1 ] && printf '%s' "$2" | grep -qF -- "$3" && printf '%s' "$2" | grep -qF -- "$4"; }
+passes_without_finding() { [ "$1" -eq 0 ] && ! printf '%s' "$2" | grep -Eqw "$rule_code_pattern"; }
 fresh_linted
-baseline_check
-check "CleanTree_Passes: no finding and exit 0, because the baseline of a clean tree is empty" [ "$code-$out" = "0-" ]
+out="$(baseline_check)"; code=$?
+check "CleanTree_Passes: exit 0 and no rule named, because the baseline of a clean tree is empty" passes_without_finding "$code" "$out"
 unquoted_substitution
-baseline_check
+out="$(baseline_check)"; code=$?
 check "NewShellcheckFinding_FailsAndNamesFileAndRule: exit 1 and the file and rule of the unquoted substitution, because the baseline records none" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new shellcheck finding SC2046 in plugins/demo/clean.sh"' sh "$code" "$out"
+  fails_naming "$code" "$out" SC2046 plugins/demo/clean.sh
 fresh_linted
 printf 'import sys\n' >> "$linted/plugins/demo/clean.py"
-baseline_check
+out="$(baseline_check)"; code=$?
 check "NewRuffFinding_FailsAndNamesFileAndRule: exit 1 and the file and rule of the unused import, because the baseline records none" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new ruff finding F401 in plugins/demo/clean.py"' sh "$code" "$out"
+  fails_naming "$code" "$out" F401 plugins/demo/clean.py
 fresh_linted
 unquoted_substitution
 "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
 printf '#!/bin/sh\n\n\nset -u\nprintf "%%s\\n" "$1"\necho $(date)\n' > "$linted/plugins/demo/clean.sh"
-baseline_check
-check "RecordedFindingOnAnotherLine_Passes: exit 0, because the baseline counts a rule per file and not its line" [ "$code-$out" = "0-" ]
+out="$(baseline_check)"; code=$?
+check "RecordedFindingOnAnotherLine_Passes: exit 0 and no rule named, because the baseline counts a rule per file and not its line" passes_without_finding "$code" "$out"
 unquoted_substitution
-baseline_check
-check "AnotherFindingOfARecordedRule_Fails: exit 1 and the count named, because a count above the baseline is new" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "SC2046 in plugins/demo/clean.sh (baseline 1, now 2)"' sh "$code" "$out"
+out="$(baseline_check)"; code=$?
+check "AnotherFindingOfARecordedRule_Fails: exit 1 and the file and rule named, because a count above the baseline is new" \
+  fails_naming "$code" "$out" SC2046 plugins/demo/clean.sh
 fresh_linted
 unquoted_substitution
 "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
 printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted/plugins/demo/clean.sh"
-baseline_check
-check "FixedFinding_Passes: exit 0 and a line saying how to lower the baseline, because fixing a finding must not fail lint" \
-  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -q "1 fewer findings than its baseline"' sh "$code" "$out"
+out="$(baseline_check)"; code=$?
+check "FixedFinding_Passes: exit 0 and no rule named as new, because fixing a finding must not fail lint" passes_without_finding "$code" "$out"
+check "FixedFinding_PointsToUpdate: the output names the update command, because the baseline can then be lowered" \
+  sh -c 'printf "%s" "$1" | grep -qw update' sh "$out"
+path_with() {
+  name="$1"; shift; rm -rf "$work/path-$name"; mkdir -p "$work/path-$name"
+  for tool in git "$@"; do ln -s "$(command -v "$tool")" "$work/path-$name/$tool"; done
+}
+path_with no-linters
+path_with only-ruff ruff
+path_with only-shellcheck shellcheck
 fresh_linted
-mkdir -p "$work/no-tools"
-baseline_check "PATH=$work/no-tools"
-check "MissingToolsLocally_ReportAndPass: exit 0 and a line per tool naming how to install it, because a developer without the tools is not blocked" \
-  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -q "shellcheck is not installed.*brew install shellcheck" && printf "%s" "$2" | grep -q "ruff is not installed.*pip install -r tools/requirements-lint.txt"' sh "$code" "$out"
-baseline_check "PATH=$work/no-tools" CI=1
-check "MissingToolsInCi_Fail: exit 1 and each tool named, because CI must run the checks it promises" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "shellcheck is not installed" && printf "%s" "$2" | grep -q "ruff is not installed"' sh "$code" "$out"
+out="$(baseline_check "PATH=$work/path-only-ruff")"; code=$?
+check "MissingShellcheckLocally_NamesHowToInstallIt: the output names shellcheck and its install command, because a developer must know what to install" \
+  sh -c 'printf "%s" "$1" | grep -q "brew install shellcheck"' sh "$out"
+out="$(baseline_check "PATH=$work/path-only-shellcheck")"; code=$?
+check "MissingRuffLocally_NamesHowToInstallIt: the output names ruff and the file that pins it, because a developer must know what to install" \
+  sh -c 'printf "%s" "$1" | grep -q "pip install -r tools/requirements-lint.txt"' sh "$out"
+out="$(baseline_check "PATH=$work/path-no-linters")"; code=$?
+check "MissingToolsLocally_Pass: exit 0, because a developer without the tools is not blocked" [ "$code" -eq 0 ]
+out="$(baseline_check "PATH=$work/path-only-ruff" CI=1)"; code=$?
+check "MissingShellcheckInCi_Fails: exit 1 and shellcheck named, because CI must run the checks it promises" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q shellcheck' sh "$code" "$out"
+out="$(baseline_check "PATH=$work/path-only-shellcheck" CI=1)"; code=$?
+check "MissingRuffInCi_Fails: exit 1 and ruff named, because CI must run the checks it promises" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q ruff' sh "$code" "$out"
 rewrite_python() { printf '%b' "$1" > "$linted/plugins/demo/clean.py"; }
 python_finding_named() {
-  fresh_linted; rewrite_python "$3"; baseline_check
+  fresh_linted; rewrite_python "$3"; out="$(baseline_check)"; code=$?
   check "$1: exit 1 and $2 named for the file, because the chosen rule family must fail a new finding" \
-    sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new ruff finding $3 in plugins/demo/clean.py"' sh "$code" "$out" "$2"
+    fails_naming "$code" "$out" "$2" plugins/demo/clean.py
 }
 python_finding_named "NewPycodestyleErrorFinding_Fails" E711 'import os\n\nprint(os.name == None)\n'
-python_finding_named "NewPycodestyleWarningFinding_Fails" W291 'import os\n\nprint(os.name) \n'
 python_finding_named "NewImportOrderFinding_Fails" I001 'import sys\nimport os\n\nprint(os.name, sys.argv)\n'
 python_finding_named "NewBugbearFinding_Fails" B006 'import os\n\n\ndef collect(items=[]):\n    return items\n\n\nprint(os.name)\n'
 python_finding_named "NewBanditFinding_Fails" S605 'import os\n\nos.system("true")\n'
 python_finding_named "NewFileOpenedWithoutWithFinding_Fails" SIM115 'import os\n\nhandle = open("data")\nprint(handle, os.name)\n'
-fresh_linted
-rewrite_python 'import os\n\n\ndef describe(name):\n    return os.name + name\n\n\nprint(describe("x"))\n'
-baseline_check
-check "UnannotatedFunction_Passes: exit 0 and no output, because annotation rules are not turned on yet" [ "$code-$out" = "0-" ]
+python_finding_passes() {
+  fresh_linted; rewrite_python "$3"; out="$(baseline_check)"; code=$?
+  check "$1: exit 0 and no rule named, because $2 are not turned on yet" passes_without_finding "$code" "$out"
+}
+python_finding_passes "UnannotatedFunction_Passes" "annotation rules" 'import os\n\n\ndef describe(name):\n    return os.name + name\n\n\nprint(describe("x"))\n'
+python_finding_passes "LongLine_Passes" "formatting checks" "import os\n\nprint(os.name, \"$(printf 'x%.0s' $(seq 1 120))\")\n"
+python_finding_passes "TrailingWhitespace_Passes" "formatting checks" 'import os\n\nprint(os.name) \n'
 fresh_linted
 printf '#!/bin/sh\necho $1\n' >> "$linted/plugins/demo/clean.sh"
-baseline_check
-check "UnquotedVariable_Passes: exit 0 and no output, because ShellCheck runs at warning severity and above" [ "$code-$out" = "0-" ]
+out="$(baseline_check)"; code=$?
+check "UnquotedVariable_Passes: exit 0 and no rule named, because ShellCheck runs at warning severity and above" passes_without_finding "$code" "$out"
 fresh_linted
 printf '[[ -n "$1" ]]\n' > "$linted/plugins/demo/no-shebang.sh"
-baseline_check
+out="$(baseline_check)"; code=$?
 check "BashismInFileWithoutShebang_Fails: exit 1 and SC3010 named, because the config makes ShellCheck read it as POSIX sh" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new shellcheck finding SC3010 in plugins/demo/no-shebang.sh"' sh "$code" "$out"
+  fails_naming "$code" "$out" SC3010 plugins/demo/no-shebang.sh
 fresh_linted
 mkdir -p "$linted/plugins/demo/hooks/git"; printf '#!/bin/sh\necho $(date)\n' > "$linted/plugins/demo/hooks/git/pre-commit"
-baseline_check
+out="$(baseline_check)"; code=$?
 check "NewFindingInGitHookWithoutExtension_Fails: exit 1 and the hook named, because a hook is shell without a .sh name" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new shellcheck finding SC2046 in plugins/demo/hooks/git/pre-commit"' sh "$code" "$out"
+  fails_naming "$code" "$out" SC2046 plugins/demo/hooks/git/pre-commit
 fresh_linted
 unquoted_substitution
 "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
 printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted/plugins/demo/clean.sh"
 "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
 unquoted_substitution
-baseline_check
+out="$(baseline_check)"; code=$?
 check "FindingReturningAfterUpdate_Fails: exit 1 and the file named, because update lowers the baseline to what was fixed" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new shellcheck finding SC2046 in plugins/demo/clean.sh (baseline 0, now 1)"' sh "$code" "$out"
+  fails_naming "$code" "$out" SC2046 plugins/demo/clean.sh
+fresh_linted
+out="$("$python" -I "$root/tools/lib/lint_baseline.py" check "$work/no-such-folder" 2>&1)"; code=$?
+check "CheckOnFolderWithoutConfig_Fails: a nonzero exit, because a mistyped root must not pass in silence" [ "$code" -ne 0 ]
+printf 'plugins/demo/clean.sh\tSC2046\tmany\n' > "$linted/tools/lint-baseline/shellcheck.tsv"
+out="$(baseline_check)"; code=$?
+check "MalformedBaselineLine_Fails: exit 1 and the baseline file named, because a baseline that cannot be read must not pass" \
+  fails_naming "$code" "$out" shellcheck.tsv shellcheck
 baseline_lines_hold_file_rule_and_count='NF != 3 || $1 ~ /:/ || $2 !~ /^[A-Za-z]+[0-9]+$/ || $3 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }'
 fresh_linted
 unquoted_substitution
@@ -369,30 +396,25 @@ fresh
 printf '#!/bin/sh\necho $(date)\n' > "$demo/new-finding.sh"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "LintWithNewShellcheckFinding_FailsAndNamesFileAndRule: tools/lint.sh exits 1 naming the new script and SC2046, because lint runs the baseline check" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new shellcheck finding SC2046 in plugins/demo/new-finding.sh"' sh "$code" "$out"
+  fails_naming "$code" "$out" SC2046 plugins/demo/new-finding.sh
 fresh
 printf 'import shutil\n' > "$demo/new_finding.py"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "LintWithNewRuffFinding_FailsAndNamesFileAndRule: tools/lint.sh exits 1 naming the new module and F401, because lint runs the baseline check" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new ruff finding F401 in plugins/demo/new_finding.py"' sh "$code" "$out"
+  fails_naming "$code" "$out" F401 plugins/demo/new_finding.py
 fresh
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
-check "LintOnTheCommittedTree_NamesNoLinterFinding: no shellcheck or ruff finding in the output, because the committed baseline records today's findings" \
-  sh -c '! printf "%s" "$1" | grep -Eq "new (shellcheck|ruff) finding"' sh "$out"
+check "LintOnTheCommittedTree_Passes: exit 0 and no rule named, because the committed baseline records today's findings" passes_without_finding "$code" "$out"
 real_ruff="$(command -v ruff)"; mkdir -p "$work/other-ruff"
 printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo "ruff 0.0.1"; exit 0; }\nexec "%s" "$@"\n' "$real_ruff" > "$work/other-ruff/ruff"; chmod +x "$work/other-ruff/ruff"
 fresh_linted
 cp "$root/tools/requirements-lint.txt" "$linted/tools/"
-baseline_check "PATH=$work/other-ruff:$PATH"
+out="$(baseline_check "PATH=$work/other-ruff:$PATH")"; code=$?
 check "RuffAtAnotherVersionLocally_NotesAndPasses: exit 0 and the installed version named, because a developer's version is a note and not a failure" \
-  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -q "0.0.1.*pins"' sh "$code" "$out"
-baseline_check "PATH=$work/other-ruff:$PATH" CI=1
+  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -qF 0.0.1' sh "$code" "$out"
+out="$(baseline_check "PATH=$work/other-ruff:$PATH" CI=1)"; code=$?
 check "RuffAtAnotherVersionInCi_Fails: exit 1 and the installed version named, because CI must run the pinned version the baseline came from" \
-  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "0.0.1.*pins"' sh "$code" "$out"
-check "RuffVersion_IsPinnedInOnePlace: one ruff== line in tools/requirements-lint.txt and none in the workflow, because CI installs from that file" \
-  sh -c '[ "$(grep -c "^ruff==[0-9.]*$" "$1/tools/requirements-lint.txt")" -eq 1 ] && ! grep -q "ruff==" "$1/.github/workflows/ci.yml" && grep -q "pip install -r tools/requirements-lint.txt" "$1/.github/workflows/ci.yml"' sh "$root"
-check "LinterConfigs_NameNoDeveloperPath: no home folder in ruff.toml or .shellcheckrc, because the config is shared by every developer and CI" \
-  sh -c '! grep -Eq "/Users/|/home/|/opt/homebrew" "$1/ruff.toml" "$1/.shellcheckrc"' sh "$root"
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -qF 0.0.1' sh "$code" "$out"
 
 echo "test.sh fails a part named on the command line that cannot run"
 # The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.

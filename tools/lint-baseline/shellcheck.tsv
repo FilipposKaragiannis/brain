@@ -1,3 +1,4 @@
+.standards/hooks/lib.sh	SC2046	1
 plugins/console/scripts/demo.sh	SC1010	1
 plugins/console/scripts/demo.sh	SC2046	3
 plugins/console/scripts/install.sh	SC2088	3
@@ -139,4 +140,3 @@ tools/cost.sh	SC2164	1
 tools/lint.sh	SC2044	2
 tools/lint.sh	SC2164	1
 tools/test.sh	SC2164	1
-tools/tests/run.sh	SC2154	1

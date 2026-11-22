@@ -6,47 +6,51 @@ separated by tabs, so it survives a finding moving to another line. A finding is
 (path, rule code) pair has more findings than the baseline records, or is not recorded at all.
 
 Usage: lint_baseline.py check [ROOT]
-         run both linters over the shell and Python files under ROOT/tools, ROOT/plugins and
-         ROOT/shared (default: this repo) and list every new finding. Exits 1 on any, and on a
-         missing tool when the CI variable is set.
+         run both linters over the shell and Python files git lists under ROOT (default: this
+         repo), tracked or new and not ignored, and list every new finding. Exits 1 on any, and
+         on a missing tool when the CI variable is set.
        lint_baseline.py update [ROOT]
          rewrite the baseline from today's findings, for when findings were fixed.
-Needs python3 >= 3.9, shellcheck and ruff.
+ShellCheck starts once for all files, because it resolves a sourced file among the files it is
+given and so its findings differ with the set. .shellcheckrc has no key for a severity floor, so
+the floor (warning) is set here. Needs python3 >= 3.9, git, shellcheck and ruff.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import shutil
 import subprocess
 import sys
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Mapping
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SEARCHED_FOLDERS = ("tools", "plugins", "shared")
-SKIPPED_FOLDERS = frozenset({"node_modules", "dist", ".git", "__pycache__"})
+REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+GIT_HOOK_PATTERN = "plugins/*/hooks/git/*"
 GENERATED_RESULTS_FOLDER = "/evals/results/"
 BASELINE_FOLDER = "tools/lint-baseline"
-RUFF_CONFIG = "ruff.toml"
+RUFF_CONFIGURATION = "ruff.toml"
 RUFF_PIN_FILE = "tools/requirements-lint.txt"
 RUFF_PIN_PREFIX = "ruff=="
 COMMAND_TIMEOUT_SECONDS = 300
-SHELLCHECK_PROCESSES = 4
 SHELLCHECK_SEVERITY = "warning"
 LOCATIONS_SHOWN = 5
 CHECK_COMMAND = "check"
 UPDATE_COMMAND = "update"
 UPDATE_INVOCATION = "python3 -I tools/lib/lint_baseline.py " + UPDATE_COMMAND
+COMMANDS = (CHECK_COMMAND, UPDATE_COMMAND)
+MAXIMUM_ROOTS = 1
 USAGE_EXIT_CODE = 2
 FINDINGS_EXIT_CODE = 1
+NO_EXIT_CODE = -1
+LINTER_SUCCESS_EXIT_CODES = (0, 1)
 BASELINE_FIELDS = 3
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Pair:
     path: str
     code: str
@@ -97,28 +101,38 @@ def run_command(command: List[str], working_folder: str) -> CommandResult:
         )
     except subprocess.TimeoutExpired:
         return CommandResult(
-            -1, "", "%s did not finish in %d seconds" % (command[0], COMMAND_TIMEOUT_SECONDS)
+            NO_EXIT_CODE,
+            "",
+            "%s did not finish in %d seconds" % (command[0], COMMAND_TIMEOUT_SECONDS),
         )
     except OSError as error:
-        return CommandResult(-1, "", "%s did not start: %s" % (command[0], error))
+        return CommandResult(NO_EXIT_CODE, "", "%s did not start: %s" % (command[0], error))
     return CommandResult(completed.returncode, completed.stdout, completed.stderr.strip())
 
 
-def project_files(root: str) -> List[str]:
-    found: List[str] = []
-    for folder in SEARCHED_FOLDERS:
-        for directory, subfolders, names in os.walk(os.path.join(root, folder)):
-            subfolders[:] = sorted(name for name in subfolders if name not in SKIPPED_FOLDERS)
-            for name in sorted(names):
-                path = os.path.join(directory, name)
-                if not os.path.islink(path):
-                    found.append(os.path.relpath(path, root).replace(os.sep, "/"))
-    return found
+@dataclass(frozen=True)
+class Listing:
+    files: List[str]
+    failure: str
+
+
+def is_regular_file(root: str, path: str) -> bool:
+    full_path = os.path.join(root, path)
+    return os.path.isfile(full_path) and not os.path.islink(full_path)
+
+
+def project_files(root: str) -> Listing:
+    result = run_command(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], root
+    )
+    if result.failure or result.exit_code != 0:
+        return Listing([], result.failure or "git ls-files exited %d" % result.exit_code)
+    paths = sorted(path for path in result.output.split("\0") if path)
+    return Listing([path for path in paths if is_regular_file(root, path)], "")
 
 
 def is_git_hook(path: str) -> bool:
-    parts = path.split("/")
-    return len(parts) == 5 and parts[0] == "plugins" and parts[2:4] == ["hooks", "git"]
+    return fnmatch.fnmatchcase(path, GIT_HOOK_PATTERN)
 
 
 def shell_files(files: List[str]) -> List[str]:
@@ -133,23 +147,10 @@ def python_files(files: List[str]) -> List[str]:
     ]
 
 
-def balanced_chunks(root: str, files: List[str], count: int) -> List[List[str]]:
-    chunks: List[List[str]] = [[] for _ in range(count)]
-    loads = [0] * count
-    by_size = sorted(
-        files, key=lambda path: os.path.getsize(os.path.join(root, path)), reverse=True
-    )
-    for path in by_size:
-        lightest = loads.index(min(loads))
-        chunks[lightest].append(path)
-        loads[lightest] += os.path.getsize(os.path.join(root, path))
-    return [chunk for chunk in chunks if chunk]
-
-
-def shellcheck_chunk(executable: str, root: str, files: List[str]) -> Outcome:
+def shellcheck_outcome(executable: str, root: str, files: List[str]) -> Outcome:
     command = [executable, "--severity=" + SHELLCHECK_SEVERITY, "--format=json1", "--", *files]
     result = run_command(command, root)
-    if result.failure or result.exit_code not in (0, 1):
+    if result.failure or result.exit_code not in LINTER_SUCCESS_EXIT_CODES:
         return Outcome(
             [], result.failure or "shellcheck exited %d: %s" % (result.exit_code, result.output), ""
         )
@@ -162,17 +163,6 @@ def shellcheck_chunk(executable: str, root: str, files: List[str]) -> Outcome:
         for comment in comments
     ]
     return Outcome(findings, "", "")
-
-
-def shellcheck_outcome(executable: str, root: str, files: List[str]) -> Outcome:
-    chunks = balanced_chunks(root, files, SHELLCHECK_PROCESSES)
-    if not chunks:
-        return Outcome([], "", "")
-    with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
-        outcomes = list(pool.map(lambda chunk: shellcheck_chunk(executable, root, chunk), chunks))
-    failures = [outcome.failure for outcome in outcomes if outcome.failure]
-    findings = [finding for outcome in outcomes for finding in outcome.findings]
-    return Outcome(findings, "; ".join(failures), "")
 
 
 def pinned_ruff_version(root: str) -> str:
@@ -204,20 +194,20 @@ def ruff_version_mismatch(executable: str, root: str) -> str:
 def ruff_outcome(executable: str, root: str, files: List[str]) -> Outcome:
     if not files:
         return Outcome([], "", "")
-    config = os.path.join(root, RUFF_CONFIG)
+    ruff_configuration = os.path.join(root, RUFF_CONFIGURATION)
     command = [
         executable,
         "check",
         "--no-cache",
         "--config",
-        config,
+        ruff_configuration,
         "--output-format",
         "json",
         "--",
         *files,
     ]
     result = run_command(command, root)
-    if result.failure or result.exit_code not in (0, 1):
+    if result.failure or result.exit_code not in LINTER_SUCCESS_EXIT_CODES:
         return Outcome(
             [], result.failure or "ruff exited %d: %s" % (result.exit_code, result.output), ""
         )
@@ -253,19 +243,25 @@ def baseline_path(root: str, linter: Linter) -> str:
     return os.path.join(root, BASELINE_FOLDER, linter.name + ".tsv")
 
 
-def read_baseline(path: str) -> Dict[Pair, int]:
+@dataclass(frozen=True)
+class BaselineRead:
+    counts: Dict[Pair, int]
+    problem: str
+
+
+def read_baseline(path: str) -> BaselineRead:
     counts: Dict[Pair, int] = {}
     try:
         with open(path, encoding="utf-8") as baseline_file:
             lines = baseline_file.read().splitlines()
     except FileNotFoundError:
-        return counts
+        return BaselineRead(counts, "")
     for number, line in enumerate(lines, start=1):
         fields = line.split("\t")
         if len(fields) != BASELINE_FIELDS or not fields[2].isdigit():
-            raise ValueError("%s line %d is not 'path<TAB>rule<TAB>count'" % (path, number))
+            return BaselineRead({}, "%s line %d is not 'path<TAB>rule<TAB>count'" % (path, number))
         counts[Pair(fields[0], fields[1])] = int(fields[2])
-    return counts
+    return BaselineRead(counts, "")
 
 
 def counts_of(findings: List[Finding]) -> Dict[Pair, int]:
@@ -274,10 +270,7 @@ def counts_of(findings: List[Finding]) -> Dict[Pair, int]:
 
 def write_baseline(path: str, counts: Dict[Pair, int]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    lines = [
-        "%s\t%s\t%d\n" % (pair.path, pair.code, counts[pair])
-        for pair in sorted(counts, key=lambda p: (p.path, p.code))
-    ]
+    lines = ["%s\t%s\t%d\n" % (pair.path, pair.code, counts[pair]) for pair in sorted(counts)]
     temporary = path + ".tmp"
     with open(temporary, "w", encoding="utf-8") as baseline_file:
         baseline_file.write("".join(lines))
@@ -289,7 +282,7 @@ def new_finding_lines(
 ) -> List[str]:
     lines: List[str] = []
     current = counts_of(findings)
-    for pair in sorted(current, key=lambda p: (p.path, p.code)):
+    for pair in sorted(current):
         recorded = baseline.get(pair, 0)
         if current[pair] <= recorded:
             continue
@@ -327,14 +320,22 @@ def missing_tool(linter: Linter, in_ci: bool) -> Report:
     )
 
 
-def check_linter(linter: Linter, root: str, executable: str, in_ci: bool) -> Report:
-    outcome = linter.run(executable, root, linter.select_files(project_files(root)))
+def run_linter(linter: Linter, executable: str, root: str, files: List[str]) -> Outcome:
+    return linter.run(executable, root, linter.select_files(files))
+
+
+def check_linter(
+    linter: Linter, root: str, executable: str, files: List[str], in_ci: bool
+) -> Report:
+    outcome = run_linter(linter, executable, root, files)
     if outcome.failure:
         return Report(["lint: %s failed: %s" % (linter.name, outcome.failure)], True)
-    baseline = read_baseline(baseline_path(root, linter))
-    lines = new_finding_lines(linter, baseline, outcome.findings)
+    recorded = read_baseline(baseline_path(root, linter))
+    if recorded.problem:
+        return Report(["lint: " + recorded.problem], True)
+    lines = new_finding_lines(linter, recorded.counts, outcome.findings)
     failed = bool(lines)
-    fixed = fixed_count(baseline, outcome.findings)
+    fixed = fixed_count(recorded.counts, outcome.findings)
     if fixed:
         lines.append(
             "lint: %s has %d fewer findings than its baseline; run %s"
@@ -346,13 +347,16 @@ def check_linter(linter: Linter, root: str, executable: str, in_ci: bool) -> Rep
 
 
 def run_check(root: str, environment: Mapping[str, str]) -> Report:
+    listing = project_files(root)
+    if listing.failure:
+        return Report(["lint: cannot list the project files: " + listing.failure], True)
     in_ci = bool(environment.get("CI"))
     lines: List[str] = []
     failed = False
     for linter in LINTERS:
         executable = shutil.which(linter.name, path=environment.get("PATH", os.defpath))
         report = (
-            check_linter(linter, root, executable, in_ci)
+            check_linter(linter, root, executable, listing.files, in_ci)
             if executable
             else missing_tool(linter, in_ci)
         )
@@ -362,6 +366,9 @@ def run_check(root: str, environment: Mapping[str, str]) -> Report:
 
 
 def run_update(root: str, environment: Mapping[str, str]) -> Report:
+    listing = project_files(root)
+    if listing.failure:
+        return Report(["lint: cannot list the project files: " + listing.failure], True)
     lines: List[str] = []
     recorded: Dict[str, Dict[Pair, int]] = {}
     for linter in LINTERS:
@@ -374,7 +381,7 @@ def run_update(root: str, environment: Mapping[str, str]) -> Report:
                 ],
                 True,
             )
-        outcome = linter.run(executable, root, linter.select_files(project_files(root)))
+        outcome = run_linter(linter, executable, root, listing.files)
         if outcome.failure:
             return Report(
                 [
@@ -393,25 +400,29 @@ def run_update(root: str, environment: Mapping[str, str]) -> Report:
     return Report(lines, False)
 
 
+def root_problem(root: str) -> str:
+    if not os.path.isfile(os.path.join(root, RUFF_CONFIGURATION)):
+        return "%s is not a repository root: it holds no %s" % (root, RUFF_CONFIGURATION)
+    return ""
+
+
 def main(arguments: List[str], environment: Mapping[str, str], repository_root: str) -> int:
-    command = arguments[0] if arguments else ""
-    if command not in (CHECK_COMMAND, UPDATE_COMMAND) or len(arguments) > 2:
+    command, *roots = arguments or [""]
+    if command not in COMMANDS or len(roots) > MAXIMUM_ROOTS:
         print("usage: lint_baseline.py check|update [ROOT]", file=sys.stderr)
         return USAGE_EXIT_CODE
-    root = arguments[1] if len(arguments) == 2 else repository_root
-    try:
-        report = (
-            run_check(root, environment)
-            if command == CHECK_COMMAND
-            else run_update(root, environment)
-        )
-    except ValueError as error:
-        print("lint: %s" % error)
-        return FINDINGS_EXIT_CODE
+    root = roots[0] if roots else repository_root
+    problem = root_problem(root)
+    if problem:
+        print("lint_baseline.py: " + problem, file=sys.stderr)
+        return USAGE_EXIT_CODE
+    report = (
+        run_check(root, environment) if command == CHECK_COMMAND else run_update(root, environment)
+    )
     for line in report.lines:
         print(line)
     return FINDINGS_EXIT_CODE if report.failed else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:], os.environ, REPO_ROOT))
+    sys.exit(main(sys.argv[1:], os.environ, REPOSITORY_ROOT))
