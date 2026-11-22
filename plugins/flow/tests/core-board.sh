@@ -9,6 +9,8 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
+v1="$("$P/adapters/local/create.sh" task "Parent" --size S)"
+t2="$("$P/adapters/local/create.sh" task "Claimed by the worktree hook")"
 echo "parent and create"
 c1="$("$P/adapters/local/create.sh" task "Child" --size S --parent "$v1")"
 check "local parent"      [ "$("$P/adapters/local/read.sh" "$c1" | jget parent)" = "$v1" ]
