@@ -1,7 +1,7 @@
 project="$work/marketplace"
 suite="$project/plugins/flow/tests"
 mkdir -p "$project/tools/lib" "$project/.standards" "$suite"
-cp "$tools/lib/flow_suites.py" "$tools/lib/flow_selection.py" "$tools/lib/flow_process_groups.py" "$project/tools/lib/"
+cp "$tools/lib/flow_suites.py" "$tools/lib/flow_selection.py" "$tools/lib/flow_process_groups.py" "$tools/lib/flow_shards.py" "$tools/lib/flow_suite_durations.json" "$project/tools/lib/"
 cp "$tools/test.sh" "$project/tools/"
 cp "$tools/../.standards/config.json" "$project/.standards/"
 cd "$project"

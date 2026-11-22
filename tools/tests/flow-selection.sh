@@ -100,3 +100,32 @@ git mv plugins/flow/tests/renamed.sh plugins/flow/tests/sessions.sh
 git tag unavailable HEAD
 expect 'MissingBaseWithARefOfThatName_RunsFullCoverage because a ref can take any name' "$(result)" fail
 expect 'MissingBaseWithARefOfThatName_IncludesJiraContract because every suite runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
+git tag -d unavailable > /dev/null
+suite_names() { grep -E '^flow: [^ ]+ (pass|FAIL) \(' "$work/output" | cut -d ' ' -f 2 | sort; }
+run_shards() {
+  : > "$work/shard-suites"; shard=1
+  while [ "$shard" -le "$1" ]; do
+    python3 -I tools/lib/flow_suites.py all --shard "$shard/$1" > "$work/output" 2>&1 || true
+    suite_names >> "$work/shard-suites"; shard=$((shard + 1))
+  done
+}
+printf 'exit 0\n' > "$suite/unmeasured.sh"
+python3 -I tools/lib/flow_suites.py all > "$work/output" 2>&1 || true
+every_suite="$(suite_names)"
+for count in 1 2 3 4 12; do
+  run_shards "$count"
+  expect "ShardsOf${count}_TogetherRunEverySuite because a suite left out of every shard never runs in CI" "$(sort -u "$work/shard-suites")" "$every_suite"
+  expect "ShardsOf${count}_RunNoSuiteTwice because shards must not overlap" "$(sort "$work/shard-suites" | uniq -d)" ''
+  expect "ShardsOf${count}_RunTheUnmeasuredSuiteOnce because a suite missing from the table still belongs to exactly one shard" "$(grep -cx unmeasured "$work/shard-suites")" 1
+done
+rm "$suite/unmeasured.sh"
+printf '%s\n' "$every_suite" | python3 -I -c 'import json, sys; json.dump({name: 100 if name == "base-claim" else 1 for name in sys.stdin.read().split()}, open(sys.argv[1], "w"))' tools/lib/flow_suite_durations.json
+python3 -I tools/lib/flow_suites.py all --shard 1/2 > "$work/output" 2>&1 || true
+expect 'SuiteLongerThanTheRestTogether_RunsInAShardOfItsOwn because shards are balanced by measured time' "$(suite_names | tr '\n' ' ')" 'base-claim '
+git restore tools/lib/flow_suite_durations.json
+for bad in 0/4 5/4 4 a/4 1/0 ''; do
+  label="$(printf '%s' "${bad:-Empty}" | sed 's#/#Of#')"
+  if python3 -I tools/lib/flow_suites.py all --shard "$bad" > "$work/output" 2>&1; then outcome=pass; else outcome=fail; fi
+  expect "Shard${label}_Fails because only <number>/<count> with the number from 1 to the count names a shard" "$outcome" fail
+  expect "Shard${label}_RunsNoSuite because a usage error comes before any suite starts" "$(suites_reported)" 0
+done

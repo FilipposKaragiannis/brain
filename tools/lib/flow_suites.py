@@ -1,5 +1,6 @@
 """Run Brain's Flow tests, the suites flow_selection.py chooses, each in a sandbox of its own.
 
+`all --shard <number>/<count>` runs one shard of every suite, as flow_shards.py splits them.
 FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. FLOW_SUITE_TIME_LIMIT_SECONDS
 sets how long one suite may run, 1800 when unset. Each suite runs in a process group of its own.
 The runner prints a line when a suite starts, and the suite's output with its result when it
@@ -8,6 +9,7 @@ killed once a grace time passes, its output so far printed, and fails. A TERM, I
 the output so far of each suite still running, ends the process group of each, then ends the run.
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -26,6 +28,7 @@ sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
 from flow_process_groups import PROCESS_TABLE, ProcessGroupId, ProcessTable, group_ended, signal_group  # noqa: E402
 from flow_selection import Checkout, ComparisonBase, SuiteCommand, SuiteName, commands, selection  # noqa: E402
+from flow_shards import WHOLE_RUN, Shard, suites_in  # noqa: E402
 
 
 _ROOT = Checkout(Path(__file__).resolve().parents[2])
@@ -36,6 +39,7 @@ _DEFAULT_TIME_LIMIT_SECONDS = 1800
 _LEAST_WHOLE_NUMBER = 1
 _SIGNAL_EXIT_BASE = 128
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+_SHARD = re.compile(r"([1-9][0-9]*)/([1-9][0-9]*)")
 
 
 @dataclass(frozen=True)
@@ -237,7 +241,14 @@ def report_run(failed: "frozenset[SuiteName]") -> int:
     return 1 if failed else 0
 
 
-def _run(checkout: Checkout, base: "ComparisonBase | None", settings: Settings) -> int:
+def _shard_from(text: str) -> Shard:
+    parts = _SHARD.fullmatch(text)
+    if parts is None or int(parts[1]) > int(parts[2]):
+        sys.exit(f"flow: --shard takes <number>/<count> with the number from 1 to the count, not '{text}'")
+    return Shard(int(parts[1]), int(parts[2]))
+
+
+def _run(checkout: Checkout, base: "ComparisonBase | None", shard: Shard, settings: Settings) -> int:
     suites = commands(checkout)
     chosen = selection(checkout, base, suites)
     if chosen.notice is not None:
@@ -248,7 +259,10 @@ def _run(checkout: Checkout, base: "ComparisonBase | None", settings: Settings) 
     missing = chosen.suites - suites.keys()
     if missing:
         sys.exit("flow: missing selected suites: " + ", ".join(name.text for name in sorted(missing)))
-    planned = {name: command for name, command in suites.items() if name in chosen.suites}
+    to_run = chosen.suites & suites_in(shard, frozenset(suites), checkout)
+    planned = {name: command for name, command in suites.items() if name in to_run}
+    if shard != WHOLE_RUN:
+        print(f"flow: shard {shard.number}/{shard.count}", flush=True)
     print("flow: selected " + ", ".join(name.text for name in planned), flush=True)
     with TemporaryDirectory(prefix="flow-suites-") as logs:
         return report_run(run_selected(planned, SuiteLogs(Path(logs)), settings))
@@ -256,10 +270,12 @@ def _run(checkout: Checkout, base: "ComparisonBase | None", settings: Settings) 
 
 def main(arguments: "list[str]") -> int:
     if arguments == ["all"]:
-        return _run(_ROOT, None, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+        return _run(_ROOT, None, WHOLE_RUN, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+    if len(arguments) == 3 and arguments[:2] == ["all", "--shard"]:
+        return _run(_ROOT, None, _shard_from(arguments[2]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
     if len(arguments) == 2 and arguments[0] == "since":
-        return _run(_ROOT, ComparisonBase(arguments[1]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
-    sys.exit("usage: flow_suites.py all | since <base commit>")
+        return _run(_ROOT, ComparisonBase(arguments[1]), WHOLE_RUN, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+    sys.exit("usage: flow_suites.py all [--shard <number>/<count>] | since <base commit>")
 
 
 if __name__ == "__main__":
