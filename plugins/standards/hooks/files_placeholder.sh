@@ -32,20 +32,37 @@ names_backslash_escaped() {
   done
 }
 
-quote_state_after() {
+quote_state_after_unquoted() {
+  case "$1" in
+    "'") printf single ;;
+    '"') printf double ;;
+    *) printf none ;;
+  esac
+}
+
+quote_state_after_in_single() {
   case "$1:$2" in
-    none:"'") printf single ;;
-    none:'"') printf double ;;
-    single:"'") printf none ;;
+    *:"'") printf none ;;
     single:'"') printf single_inner ;;
     single_inner:'"') printf single ;;
-    single_inner:"'") printf none ;;
-    double:"'") printf double_inner_single ;;
-    double:'"') printf none ;;
-    double_inner_single:"'") printf double ;;
-    double_inner_single:'"') printf none ;;
-    double_inner_escaped:'"') printf none ;;
     *) printf '%s' "$1" ;;
+  esac
+}
+
+quote_state_after_in_double() {
+  case "$1:$2" in
+    *:'"') printf none ;;
+    double:"'") printf double_inner_single ;;
+    double_inner_single:"'") printf double ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+quote_state_after() {
+  case "$1" in
+    none) quote_state_after_unquoted "$2" ;;
+    single*) quote_state_after_in_single "$1" "$2" ;;
+    *) quote_state_after_in_double "$1" "$2" ;;
   esac
 }
 
@@ -53,12 +70,13 @@ quote_state_after_escaped() {
   case "$1:$2" in
     double:'"') printf double_inner_escaped ;;
     double_inner_escaped:'"') printf double ;;
+    single_inner:"'") printf none ;;
     *) printf '%s' "$1" ;;
   esac
 }
 
 begins_an_escape() {
-  case "$1" in none|double|double_inner_escaped) [ "$2" = '\' ] && return 0 ;; esac
+  case "$1" in none|double|double_inner_escaped|single_inner) [ "$2" = '\' ] && return 0 ;; esac
   return 1
 }
 

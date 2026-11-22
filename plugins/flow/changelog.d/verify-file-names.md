@@ -8,4 +8,6 @@ bump: patch
 - A `{files}` that sits inside a quote inside another quote is a failed check with its reason, since
   its names could not stay data through two shells; pass them on as arguments, as in
   `sh -c '... "$@"' sh {files}`. A language with a format command and no extensions is a failed
-  check, and a changed file name with a newline still matches the paths of a gate or a test command.
+  check, and a changed file name with a newline still matches the paths of a gate or a test command
+  and is one entry in `changed_files`. An escaped double quote inside the nested shell's quotes no
+  longer makes a later `{files}` look nested.

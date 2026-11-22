@@ -217,17 +217,14 @@ esac
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
-changed_names="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
-{ git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } > "$changed_names" 2>/dev/null
 name_separator="$(printf '\037')"
 separator_exit=3; unreadable_names=""
-changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names "$changed_names")"; names_exit=$?
+changed_units="$({ git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } 2>/dev/null | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names)"; names_exit=$?
 case "$names_exit" in
   0) ;;
   "$separator_exit") unreadable_names=1; changed_units="" ;;
   *) die "cannot read the changed file names" ;;
 esac
-changed="$(printf '%s' "$changed_units" | tr "$name_separator" '\n' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 [ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
@@ -237,9 +234,9 @@ run_started="$(now_seconds)"
 records=""; changed_list=""; timings=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${changed_names:+"$changed_names"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${changed_names:+"$changed_names"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${changed_names:+"$changed_names"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
@@ -297,13 +294,16 @@ run_with_names() {
   format_names_escaped="$run_names_escaped" sh -c "$run_command" sh "$@"
 }
 
+log_check_files() {
+  [ "$#" -eq 0 ] || { printf '  files:\n'; printf '    %s\n' "$@"; } >> "$log"
+}
+
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
   IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
   printf '\n== %s: %s\n' "$name" "$command" >> "$log"
-  [ "$#" -eq 0 ] || printf '  files:\n' >> "$log"
-  [ "$#" -eq 0 ] || printf '    %s\n' "$@" >> "$log"
+  log_check_files "$@"
   check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
   if run_with_names "$command" "$@" >> "$log" 2>&1; then check_status="pass"; summary="ok"
   else
@@ -391,7 +391,7 @@ feel=false
 for g in $(cfg feel_test_paths); do
   changed_unit_matches "$g" && { feel=true; break; }
 done
-printf '%s\n' "$changed" > "$changed_list"
+printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"
 
 report_failed() {

@@ -12,9 +12,10 @@
       nothing when a file under them has an uncommitted change, or when there is no commit, so
       the check runs and its pass is not kept.
 
-  _checks.py names <file of NUL-separated names>
-      Prints each distinct name that is not under .flow/, each followed by U+001F. Prints nothing
-      and exits 3 when a name holds U+001F itself, which cannot be told from the separator.
+  _checks.py names
+      Reads NUL-separated names from stdin and prints each distinct name that is not under
+      .flow/, in byte order, each followed by U+001F. Prints nothing and exits 3 when a name holds U+001F itself,
+      which cannot be told from the separator.
   _checks.py existing <prefix> <extensions>
       Reads names, each followed by U+001F, from stdin and prints those that start with the prefix,
       end in one of the extensions (blank separated; none keeps no name) and are files now, in the
@@ -173,28 +174,26 @@ def input_key(command, globs):
 
 
 def distinct_names(raw):
-    kept = {}
-    for name in raw.split(b"\0"):
-        if name and not name.startswith(os.fsencode(FLOW_FOLDER)):
-            kept[name] = True
-    return list(kept)
+    return sorted({name for name in raw.split(b"\0") if name and not name.startswith(os.fsencode(FLOW_FOLDER))})
 
 
-def print_names(names_path):
-    with open(names_path, "rb") as names_file:
-        names = distinct_names(names_file.read())
+def print_names():
+    names = distinct_names(sys.stdin.buffer.read())
     if any(NAME_SEPARATOR in name for name in names):
         return SEPARATOR_EXIT
     sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in names))
     return 0
 
 
+def is_existing_file_under(name, wanted_prefix, wanted_endings):
+    return name.startswith(wanted_prefix) and name.endswith(wanted_endings) and os.path.isfile(name)
+
+
 def print_existing(prefix, extensions):
     wanted_prefix = os.fsencode(prefix)
     wanted_endings = tuple(os.fsencode(extension) for extension in extensions.split())
     names = sys.stdin.buffer.read().split(NAME_SEPARATOR)
-    kept = [name for name in names
-            if name and name.startswith(wanted_prefix) and name.endswith(wanted_endings) and os.path.isfile(name)]
+    kept = [name for name in names if is_existing_file_under(name, wanted_prefix, wanted_endings)]
     sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in kept))
     return 0
 
@@ -206,11 +205,11 @@ def main(argv):
         globs = [line.strip() for line in sys.stdin if line.strip()]
         print(input_key(argv[1], globs), end="")
         return 0
-    if len(argv) == 2 and argv[0] == "names":
-        return print_names(argv[1])
+    if len(argv) == 1 and argv[0] == "names":
+        return print_names()
     if len(argv) == 3 and argv[0] == "existing":
         return print_existing(argv[1], argv[2])
-    print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | names <file> | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
+    print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | names (names on stdin) | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
     return 2
 
 
