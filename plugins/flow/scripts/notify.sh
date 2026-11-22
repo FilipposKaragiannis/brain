@@ -55,7 +55,7 @@ if [ "$(cfg notify.desktop)" != "false" ]; then
 fi
 hook="${FLOW_SLACK_WEBHOOK:-$(cfg notify.slack_webhook)}"
 if [ -n "$hook" ] && command -v curl >/dev/null 2>&1; then
-  payload="$(python3 -I "$FLOW_PLUGIN/scripts/_slack.py" "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$body")"
+  payload="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_slack.py" "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$body")"
   curl -s -S -m 10 -X POST -H 'Content-type: application/json' --data "$payload" "$hook" >/dev/null 2>&1 || echo "flow: Slack notification failed" >&2
 fi
 echo "notified: $title"

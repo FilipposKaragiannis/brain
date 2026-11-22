@@ -104,7 +104,7 @@ duration() {
 now_seconds() { case "${FLOW_NOW_SECONDS:-}" in ''|*[!0-9]*) date +%s ;; *) printf '%s' "$FLOW_NOW_SECONDS" ;; esac; }
 # limit_seconds: verify.limit from the flow config in seconds; a value that is no duration says so
 # on stderr and returns 1.
-limit_seconds() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
+limit_seconds() { cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
 # running_now: the check the run is on, as the log names it, or starting before the first.
 running_now() { current_check="$(verify_running_check "$log")"; printf '%s' "${current_check:-starting}"; }
 # unfinished_report <cause> <stop cause>: the fail report of a run that ended with none, naming the
@@ -320,7 +320,7 @@ planned_checks() {
 
 # A build or test entry the plan cannot read is a failed check that names the entry, and neither
 # kind runs.
-if ! planned="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
+if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
 planned_checks build build
@@ -370,7 +370,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
+err="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]

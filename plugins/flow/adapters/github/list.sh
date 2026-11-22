@@ -24,8 +24,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 repo="$(gh_repo)"
-raw="$(python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" list "$repo" "$STATE_MARKER" "$state" "$limit")" || die "cannot list issues"
-printf '%s\n' "$raw" | while read -r line; do [ -n "$line" ] && printf '%s\n' "$line" | issue_to_item; done | python3 -I -c '
+raw="$(cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" list "$repo" "$STATE_MARKER" "$state" "$limit")" || die "cannot list issues"
+printf '%s\n' "$raw" | while read -r line; do [ -n "$line" ] && printf '%s\n' "$line" | issue_to_item; done | cached_python3 -I -c '
 import json, sys
 kind = sys.argv[1]
 items = [json.loads(line) for line in sys.stdin if line.strip()]
