@@ -21,11 +21,12 @@
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base (scripts/_change_list.py). A moved file is changed at its old path and its
-# new one. When the base is unresolved, a git listing fails or a name holds U+001F, a failed
-# `changed files` check names why, every check with paths runs, no kept pass is reused and
-# feel_test is true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is no
-# valid branch name.
+# else the item state's base, else the config base (scripts/_change_list.py). A moved file is
+# changed at its old path and its new one. When the base is unresolved, is the item's own branch
+# or a claim base that differs from the item state's base, a git listing fails or a name holds
+# U+001F, a failed `changed files` check names why, every check with paths runs, no kept pass is
+# reused and feel_test is true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when
+# --base is no valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -62,14 +63,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$wait_for" in ''|*[!0-9]*) die "--wait takes a number of seconds, not $wait_for" 2 ;; esac
-given_base="$base"
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
 main_worktree_resolve
-[ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
-[ -n "$base" ] || base="$(recorded_base "$root")"
-reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
-log="$reports/verify.log"; run_out="$reports/verify.out"
+given_base="$base"; [ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
+claimed_base=""; [ -n "$base" ] || claimed_base="$(claim_name "$root" base)"; record_base="$(checked_name "$(state_get "$(adapter read "$item" 2>/dev/null)" base)")"
+[ -n "$base" ] || base="${claimed_base:-${record_base:-$(cfg_or base main)}}"
+reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"; log="$reports/verify.log"; run_out="$reports/verify.out"
 # The checks the run failed so far, one name per line, so a run stopped before its report still
 # names them.
 failed_file="$reports/verify.failed"
@@ -238,7 +238,7 @@ changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot mak
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 change_list_causes_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
-changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" "$log" "$change_list_causes_file" "$base" "$base_commit")"
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" "$log" "$change_list_causes_file" "$base" "$base_commit" "$claimed_base" "$record_base" "$(cfg_or base main)")"
 case "$?" in
   0) change_list=complete; listed_files_only="" ;;
   "$unreadable_names_exit") change_list=unreadable_names ;;

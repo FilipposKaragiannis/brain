@@ -1,14 +1,21 @@
 """The changed file list verify reads, and whether it holds every change. See scripts/verify.sh.
 
-  _change_list.py <log> <causes file> <base name> <base commit | unavailable>
+  _change_list.py <log> <causes file> <base name> <base commit | unavailable> <claimed base>
+                  <recorded base> <fallback base>
       Lists the files changed since the base commit (none when it is unavailable), the files
       changed and not committed, and the untracked files, one git call each, with git's errors
       appended to the log. Prints each distinct name that is not under .flow/, in byte order, each
       followed by U+001F, and writes the cause of each failed listing, joined by "; ", to the
       causes file through a temp file and a rename. A failed listing gives only the names its
       output ended with a NUL. Exits 0 for a complete list, 4 when a listing failed or the base is
-      unavailable, and 3, printing no name, when a name holds U+001F itself, which cannot be told
-      from the separator.
+      unavailable or untrusted, and 3, printing no name, when a name holds U+001F itself, which
+      cannot be told from the separator.
+      The claimed base is the claim's base when it chose the base name, else empty; the recorded
+      base is the item state's base, else empty; the fallback base is the config base. The base is
+      untrusted when it is the item's own branch: it names the current branch while that branch is
+      not the item's base (the recorded base, else the fallback), or its commit is HEAD while HEAD
+      holds commits the item's base does not. It is untrusted too when a claimed and a recorded
+      base differ: the claim sits in the worktree whose work is verified, the record does not.
 """
 from __future__ import annotations
 
@@ -27,14 +34,22 @@ END_OF_REVISIONS = "--"
 NAME_DIFF_ARGUMENTS = ("diff", "--no-renames", "--name-only", "-z")
 UNTRACKED_ARGUMENTS = ("ls-files", "--others", "--exclude-standard", "-z")
 UNAVAILABLE_COMMIT = "unavailable"
+CURRENT_BRANCH_ARGUMENTS = ("symbolic-ref", "--short", "-q", HEAD)
+HEAD_COMMIT_ARGUMENTS = ("rev-parse", "--verify", "-q", HEAD + "^{commit}")
+ORIGIN_BRANCH_PREFIX = "refs/remotes/origin/"
+GIT_SUCCESS = 0
+GIT_DID_NOT_RUN = -1
 FLOW_FOLDER = b".flow/"
 NAME_TERMINATOR = b"\0"
 NAME_SEPARATOR = b"\x1f"
 CAUSE_SEPARATOR = "; "
 UNREADABLE_NAME_CAUSE = "a changed file name holds the character U+001F, which verify cannot hand to a command"
-ARGUMENT_COUNT = 4
+ARGUMENT_COUNT = 7
 USAGE_EXIT = 2
-USAGE = "usage: _change_list.py <log> <causes file> <base name> <base commit | unavailable>"
+USAGE = (
+    "usage: _change_list.py <log> <causes file> <base name> <base commit | unavailable>"
+    " <claimed base> <recorded base> <fallback base>"
+)
 
 
 class ChangeList(enum.Enum):
@@ -107,6 +122,65 @@ class UnresolvedBase:
         return Listed(b"", ("the comparison base %s cannot be resolved" % self.name,))
 
 
+@dataclass(frozen=True)
+class GitAnswer:
+    exit_code: int
+    output: str
+
+
+def git_answer(arguments: tuple[str, ...], log: BinaryIO) -> GitAnswer:
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed git arguments and no shell
+            (GIT,) + arguments,
+            stdout=subprocess.PIPE,
+            stderr=log,
+            timeout=GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return GitAnswer(GIT_DID_NOT_RUN, "")
+    return GitAnswer(completed.returncode, completed.stdout.decode("utf-8", "replace").strip())
+
+
+def branch_ref(name: str, log: BinaryIO) -> str:
+    origin_ref = ORIGIN_BRANCH_PREFIX + name
+    if git_answer(("show-ref", "--verify", "--quiet", origin_ref), log).exit_code == GIT_SUCCESS:
+        return origin_ref
+    return name
+
+
+def holds_head(name: str, log: BinaryIO) -> bool:
+    return git_answer(("merge-base", "--is-ancestor", HEAD, branch_ref(name, log)), log).exit_code == GIT_SUCCESS
+
+
+@dataclass(frozen=True)
+class BaseRecord:
+    claimed: str
+    recorded: str
+    fallback: str
+
+    def item_base(self) -> str:
+        return self.recorded or self.fallback
+
+    def disagreement(self) -> tuple[str, ...]:
+        if self.claimed and self.recorded and self.claimed != self.recorded:
+            return ("the claim names the base %s, the item's record names %s" % (self.claimed, self.recorded),)
+        return ()
+
+
+def is_own_branch(name: str, commit: str, record: BaseRecord, log: BinaryIO) -> bool:
+    current_branch = git_answer(CURRENT_BRANCH_ARGUMENTS, log).output
+    if current_branch and name == current_branch and current_branch != record.item_base():
+        return True
+    head_commit = git_answer(HEAD_COMMIT_ARGUMENTS, log).output
+    return commit == head_commit and not holds_head(record.item_base(), log)
+
+
+def untrusted_base_causes(name: str, commit: str, record: BaseRecord, log: BinaryIO) -> tuple[str, ...]:
+    own_branch = ("the comparison base %s is the item's own branch" % name,) if is_own_branch(name, commit, record, log) else ()
+    return own_branch + record.disagreement()
+
+
 def comparison_base(name: str, commit: str) -> Union[ResolvedBase, UnresolvedBase]:
     if commit == UNAVAILABLE_COMMIT:
         return UnresolvedBase(name)
@@ -150,9 +224,12 @@ def main(arguments: list[str]) -> int:
     if len(arguments) != ARGUMENT_COUNT:
         print(USAGE, file=sys.stderr)
         return USAGE_EXIT
-    log, causes_file, base_name, base_commit = arguments
+    log, causes_file, base_name, base_commit, claimed_base, recorded_base, fallback_base = arguments
+    record = BaseRecord(claimed_base, recorded_base, fallback_base)
     with open(log, "ab") as log_file:
-        changed = changed_files(all_listed(comparison_base(base_name, base_commit), log_file))
+        untrusted = untrusted_base_causes(base_name, base_commit, record, log_file)
+        listed = all_listed(comparison_base(base_name, base_commit), log_file)
+        changed = changed_files(Listed(listed.names, untrusted + listed.causes))
     replaced_atomically(causes_file, CAUSE_SEPARATOR.join(changed.causes))
     sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in changed.names))
     return changed.state.value

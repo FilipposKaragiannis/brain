@@ -114,7 +114,7 @@ plugins/flow/tests/sessions.sh	SC2154	3
 plugins/flow/tests/unattended.sh	SC2034	4
 plugins/flow/tests/unattended.sh	SC2154	2
 plugins/flow/tests/verify-base-command.sh	SC2034	3
-plugins/flow/tests/verify-base-command.sh	SC2154	6
+plugins/flow/tests/verify-base-command.sh	SC2154	5
 plugins/flow/tests/verify-detached.sh	SC2034	15
 plugins/flow/tests/verify-detached.sh	SC2154	6
 plugins/flow/tests/verify-ends.sh	SC2034	13

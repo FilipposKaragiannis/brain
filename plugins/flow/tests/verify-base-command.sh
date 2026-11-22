@@ -228,4 +228,73 @@ check "UnresolvedBaseWithNothingElseWrong_RaisesFeelTest because a change under 
   '[ "$(feel_test)" = true ]'
 check "UnresolvedBaseWithNothingElseWrong_SaysWhyTheFeelTestIsNeeded because a reader must not look for a matching file" \
   'grep -q "cannot be ruled out" "$reports/verify.md"'
+
+changed_source_item own-branch-claim "$failing_scoped_test" committed
+item_branch="$(git -C "$worktree" symbolic-ref --short HEAD)"
+set_claim_base "$item" "$item_branch"
+verify >/dev/null 2>&1
+# shellcheck disable=SC2034 # the check's condition reads it
+own_branch_claim_result=$?
+printf "the comparison base %s is the item's own branch\n" "$item_branch" > "$work/expected-own-branch"
+check "ClaimBaseRewrittenToTheItemsOwnBranch_ExitsFailing because a base that hides every committed change cannot prove the change" \
+  '[ "$own_branch_claim_result" -eq 1 ]'
+check "ClaimBaseRewrittenToTheItemsOwnBranch_ReportsFail because the report reader must not read a hidden change as green" \
+  '[ "$(report_status)" = fail ]'
+check "ClaimBaseRewrittenToTheItemsOwnBranch_NamesTheOwnBranch because the reader must know why the base is refused" \
+  'check_field "changed files" summary | grep -qF -f "$work/expected-own-branch"'
+check "ClaimBaseRewrittenToTheItemsOwnBranch_RunsTheScopedTest because a hiding base cannot show that nothing under its paths changed" \
+  '[ "$(check_field "tests scoped" status)" = fail ]'
+check "ClaimBaseRewrittenToTheItemsOwnBranch_RaisesFeelTest because a change under the feel-test paths cannot be ruled out" \
+  '[ "$(feel_test)" = true ]'
+
+changed_source_item claim-disagrees '{"test":[]}' committed
+git -C "$worktree" branch elsewhere main
+set_claim_base "$item" elsewhere
+verify >/dev/null 2>&1
+# shellcheck disable=SC2034 # the check's condition reads it
+claim_disagrees_result=$?
+printf "the claim names the base elsewhere, the item's record names main\n" > "$work/expected-disagreement"
+check "ClaimBaseDiffersFromTheItemsRecord_ExitsFailing because verify cannot tell which of the two bases is the item's" \
+  '[ "$claim_disagrees_result" -eq 1 ]'
+check "ClaimBaseDiffersFromTheItemsRecord_NamesBothBases because the reader must see the two names to fix the claim" \
+  'check_field "changed files" summary | grep -qF -f "$work/expected-disagreement"'
+
+changed_source_item own-branch-option '{"test":[]}' committed
+verify --base "$(git -C "$worktree" symbolic-ref --short HEAD)" >/dev/null 2>&1
+# shellcheck disable=SC2034 # the check's condition reads it
+own_branch_option_result=$?
+check "BaseOptionNamingTheItemsOwnBranch_ExitsFailing because the caller's choice of base still cannot hide the committed change" \
+  '[ "$own_branch_option_result" -eq 1 ]'
+check "BaseOptionNamingTheItemsOwnBranch_FailsOnTheChangedFilesCheckAlone because the refused base is the only fault" \
+  '[ "$(failed_checks)" = "changed files" ]'
+
+changed_source_item no-commits-yet "$failing_scoped_test" staged
+git -C "$worktree" reset -q --soft main
+verify >/dev/null 2>&1
+check "ItemWithNoCommitsYet_FailsOnItsScopedTestAlone because a base at HEAD hides nothing when the branch holds no commit of its own" \
+  '[ "$(failed_checks)" = "tests scoped" ]'
+
+changed_source_item no-recorded-base "$failing_scoped_test" committed
+"$local_adapter/write-state.sh" "$item" base= >/dev/null
+rm -f "$worktree/.flow/claim.json"
+verify >/dev/null 2>&1
+check "NoClaimAndNoRecordedBase_FailsOnItsScopedTestAlone because the config base is the base of an item nothing records one for" \
+  '[ "$(failed_checks)" = "tests scoped" ]'
+
+new_item slice-parent ""
+slice_parent="$item"
+# shellcheck disable=SC2034 # the check's condition reads it
+slice_parent_branch="$(git -C "$worktree" symbolic-ref --short HEAD)"
+item="$("$local_adapter/create.sh" task "Slice child" --size S --body x --parent "$slice_parent")"
+"$plugin/scripts/next.sh" "$item" >/dev/null 2>&1
+worktree="$("$plugin/scripts/steward.sh" find "$item")"; reports="$worktree/.flow/reports/$(slug "$item")"
+mkdir -p "$worktree/.standards" "$worktree/source"
+printf '%s\n' "$failing_scoped_test" > "$worktree/.standards/config.json"
+echo change > "$worktree/source/file.sh"
+git -C "$worktree" add .standards/config.json source/file.sh && git -C "$worktree" commit -qm "slice change"
+verify >/dev/null 2>&1
+check "EpicSliceOnItsParentsBranch_ComparesWithTheParentsBranch because the slice merges into its parent's branch" \
+  '[ "$(json_value base < "$reports/verify.json")" = "$slice_parent_branch" ]'
+check "EpicSliceOnItsParentsBranch_FailsOnItsScopedTestAlone because the parent's branch is the slice's recorded base" \
+  '[ "$(failed_checks)" = "tests scoped" ]'
 exit "$((fails > 0))"
