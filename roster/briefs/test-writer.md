@@ -66,6 +66,15 @@ T-13), and the public interfaces the plan names.
     that only checks a constant against its own literal is deleted. Assert on a value or a named
     marker, never on report or card prose. Never branch or guard on today's tuning state (a
     target still short): build the state the test needs, or derive the expectation from it.
+13. A shell suite has no assertion messages, so the check's label carries the rules. The label
+    is `Scenario_Outcome: what holds, because why` (T-11). A stub command's log file is its
+    call list (T-08): assert the folder, file, exit code or state the real command would leave,
+    or make the stub refuse a wrong argument and assert that outcome. An exit code and a
+    message are two checks, and a guard ANDed into a check is a second reason to fail (T-09).
+    A check must fail when the behaviour breaks (T-01): assert a pid or result file is not
+    empty before reading it, and place fixtures so file order alone gives the wrong answer.
+    No comment retells what a check does (C-01), and no item id goes in a label, echo,
+    fixture or folder name (C-03). Old checks in the file that break these are no precedent.
 
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,
