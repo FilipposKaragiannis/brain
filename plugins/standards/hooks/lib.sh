@@ -300,9 +300,7 @@ changed_files() {
   git diff $(commit_diff_args "$1") --name-only --diff-filter=ACMR 2>/dev/null || true
 }
 
-changed_files_nul() {
-  # $1 segment. The same files as changed_files, each name ended by a NUL byte, so no name is
-  # split or altered. Feed it to a program that reads NUL-separated names (xargs -0).
+changed_files_null_byte_separated() {
   # shellcheck disable=SC2046
   git diff $(commit_diff_args "$1") -z --name-only --diff-filter=ACMR 2>/dev/null || true
 }

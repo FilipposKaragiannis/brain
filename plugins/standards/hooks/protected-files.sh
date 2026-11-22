@@ -5,8 +5,7 @@
 #   protected-files.sh <patterns, one per line, * crossing directories> <name>...
 set -u
 
-print_matches() {
-  # $1 name, $2 patterns. Prints one line for each pattern the name matches.
+print_each_pattern_the_name_matches() {
   for print_pattern in $2; do
     # shellcheck disable=SC2254
     case "$1" in $print_pattern) printf '  %s (matches %s)\n' "$1" "$print_pattern" ;; esac
@@ -17,5 +16,5 @@ patterns="$1"
 shift
 set -f
 for name in "$@"; do
-  print_matches "$name" "$patterns"
+  print_each_pattern_the_name_matches "$name" "$patterns"
 done

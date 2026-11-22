@@ -84,6 +84,9 @@ check "FormatCommand_CraftedNamesCreateNoFile: no name ran as a command" no_inje
 names_do bad_name_blocks
 
 echo "check-comments: content is found by name"
+git reset -q --hard "$base"
+names_do write_interface
+git add -A
 run_hook check-comments.sh; interface_status=$?
 check "CommentHook_DocOnInterfaceMemberPasses: every special name's content was found, so the doc is allowed" [ "$interface_status" -eq 0 ]
 check "CommentHook_CraftedNamesCreateNoFile: no name ran as a command" no_injection

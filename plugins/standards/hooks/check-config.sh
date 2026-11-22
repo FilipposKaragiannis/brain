@@ -13,6 +13,6 @@ config="$(config_text)"
 commit_has_marker "$seg" "[config]" && exit 0
 hooks_dir="$(cd "$(dirname "$0")" && pwd)"
 patterns="$(json_list "$config" "protected" | sed 's|\*\*|*|g')"
-hits="$(changed_files_nul "$seg" | xargs -0 sh "$hooks_dir/protected-files.sh" "$patterns")"
+hits="$(changed_files_null_byte_separated "$seg" | xargs -0 sh "$hooks_dir/protected-files.sh" "$patterns")"
 [ -n "$hits" ] || exit 0
 block "protected configuration files in this commit. They are owner-only. Add [config] to the commit message when the owner approved the change." "$hits"

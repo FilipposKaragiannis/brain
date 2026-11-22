@@ -16,7 +16,7 @@ passed_seen check-format && exit 0   # the agent hook already passed this index
 hooks_dir="$(cd "$(dirname "$0")" && pwd)"
 names="$(mktemp)" || exit 0
 trap 'rm -f "$names"' EXIT
-changed_files_nul "$seg" > "$names"
+changed_files_null_byte_separated "$seg" > "$names"
 [ -s "$names" ] || exit 0
 failed=""
 count="$(json_length "$config" "languages")"

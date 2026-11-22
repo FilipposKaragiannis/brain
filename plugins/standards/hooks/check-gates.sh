@@ -48,7 +48,7 @@ elif [ -n "$push_seg" ]; then stage=push; fi
 hooks_dir="$(cd "$(dirname "$0")" && pwd)"
 names="$(mktemp)" || exit 0
 trap 'rm -f "$names"' EXIT
-[ -n "$commit_seg" ] && changed_files_nul "$commit_seg" > "$names"
+[ -n "$commit_seg" ] && changed_files_null_byte_separated "$commit_seg" > "$names"
 commit_msg=""
 [ -n "$commit_seg" ] && commit_msg="$(commit_message_text "$commit_seg")"
 code="$(command_code "$cmd")"

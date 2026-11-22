@@ -9,17 +9,14 @@
 # word and runs none of them. Exit 0 when no name is kept. On failure it lists the kept names.
 set -u
 
-has_extension() {
-  # $1 name, $2 extensions. Succeeds when the name ends in one of them.
-  for has_extension_suffix in $2; do
-    case "$1" in *"$has_extension_suffix") return 0 ;; esac
+name_ends_in_one_of_extensions() {
+  for matched_extension in $2; do
+    case "$1" in *"$matched_extension") return 0 ;; esac
   done
   return 1
 }
 
-escape_name() {
-  # $1 name. Prints it with every character outside [A-Za-z0-9_./-] backslash-escaped. Fails on a
-  # newline, which no backslash can carry.
+backslash_escape_name_failing_on_newline() {
   escape_rest="$1"; escape_result=""
   while [ -n "$escape_rest" ]; do
     escape_tail="${escape_rest#?}"; escape_character="${escape_rest%"$escape_tail"}"
@@ -34,16 +31,14 @@ escape_name() {
   printf '%s' "$escape_result"
 }
 
-escape_all() {
-  # $@ names. Prints them escaped, one space apart.
+backslash_escape_names_space_separated() {
   for escape_all_name in "$@"; do
-    escape_all_one="$(escape_name "$escape_all_name")" || return 1
+    escape_all_one="$(backslash_escape_name_failing_on_newline "$escape_all_name")" || return 1
     printf ' %s' "$escape_all_one"
   done
 }
 
-expand_placeholder() {
-  # $1 command. Prints it with each {files} written for the quote it sits in.
+expand_files_placeholder_for_its_quote() {
   expand_rest="$1"; expand_state=none; expand_result=""
   while [ -n "$expand_rest" ]; do
     case "$expand_state:$expand_rest" in
@@ -71,14 +66,14 @@ remaining=$#
 while [ "$remaining" -gt 0 ]; do
   name="$1"; shift; remaining=$((remaining - 1))
   case "$name" in "$prefix"*) ;; *) continue ;; esac
-  has_extension "$name" "$extensions" && set -- "$@" "$name"
+  name_ends_in_one_of_extensions "$name" "$extensions" && set -- "$@" "$name"
 done
 [ "$#" -gt 0 ] || exit 0
-run="$(expand_placeholder "$command")"
+run="$(expand_files_placeholder_for_its_quote "$command")"
 names_escaped=""
 case "$run" in
   *format_names_escaped*)
-    names_escaped="$(escape_all "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; exit 1; } ;;
+    names_escaped="$(backslash_escape_names_space_separated "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; exit 1; } ;;
 esac
 format_names_escaped="$names_escaped" sh -c "$run" sh "$@" && exit 0
 status=$?
