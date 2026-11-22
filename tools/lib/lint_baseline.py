@@ -5,28 +5,33 @@ The baseline is one file per tool in tools/lint-baseline/: a line of path, rule 
 separated by tabs, so it survives a finding moving to another line. A finding is new when its
 (path, rule code) pair has more findings than the baseline records, or is not recorded at all.
 
-Usage: lint_baseline.py check [ROOT]
+Usage: lint_baseline.py check [ROOT] [--shellcheck-chunks N]
          run both linters over the shell and Python files git lists under ROOT (default: this
          repo), tracked or new and not ignored, and list every new finding. Exits 1 on any, and
          on a missing tool when the CI variable is set.
-       lint_baseline.py update [ROOT]
+       lint_baseline.py update [ROOT] [--shellcheck-chunks N]
          rewrite the baseline from today's findings, for when findings were fixed.
-ShellCheck starts once for all files, because it resolves a sourced file among the files it is
-given and so its findings differ with the set. .shellcheckrc has no key for a severity floor, so
-the floor (warning) is set here. Needs python3 >= 3.9, git, shellcheck and ruff.
+ShellCheck runs in parallel over a fixed split of the sorted files, each file in exactly one
+chunk: N chunks, or by default one per processor up to SHELLCHECK_MAXIMUM_CHUNKS. It follows every
+sourced file it can resolve (--external-sources), not only those in its own chunk, so the split
+cannot change a finding. .shellcheckrc has no key for a severity floor, so the floor (warning) is
+set here. Needs python3 >= 3.9, git, shellcheck and ruff.
 """
 
 from __future__ import annotations
 
+import argparse
 import fnmatch
+import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Mapping
+from typing import Callable, Dict, List, Mapping, Tuple
 
 REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GIT_HOOK_PATTERN = "plugins/*/hooks/git/*"
@@ -37,12 +42,15 @@ RUFF_PIN_FILE = "tools/requirements-lint.txt"
 RUFF_PIN_PREFIX = "ruff=="
 COMMAND_TIMEOUT_SECONDS = 300
 SHELLCHECK_SEVERITY = "warning"
+SHELLCHECK_SOURCE_HANDLING = "--external-sources"
+SHELLCHECK_MINIMUM_CHUNKS = 1
+SHELLCHECK_MAXIMUM_CHUNKS = 8
+SHELLCHECK_CHUNK_CHOICES = range(SHELLCHECK_MINIMUM_CHUNKS, SHELLCHECK_MAXIMUM_CHUNKS + 1)
 LOCATIONS_SHOWN = 5
 CHECK_COMMAND = "check"
 UPDATE_COMMAND = "update"
 UPDATE_INVOCATION = "python3 -I tools/lib/lint_baseline.py " + UPDATE_COMMAND
 COMMANDS = (CHECK_COMMAND, UPDATE_COMMAND)
-MAXIMUM_ROOTS = 1
 USAGE_EXIT_CODE = 2
 FINDINGS_EXIT_CODE = 1
 NO_EXIT_CODE = -1
@@ -147,8 +155,15 @@ def python_files(files: List[str]) -> List[str]:
     ]
 
 
-def shellcheck_outcome(executable: str, root: str, files: List[str]) -> Outcome:
-    command = [executable, "--severity=" + SHELLCHECK_SEVERITY, "--format=json1", "--", *files]
+def shellcheck_chunk_outcome(executable: str, root: str, files: List[str]) -> Outcome:
+    command = [
+        executable,
+        "--severity=" + SHELLCHECK_SEVERITY,
+        SHELLCHECK_SOURCE_HANDLING,
+        "--format=json1",
+        "--",
+        *files,
+    ]
     result = run_command(command, root)
     if result.failure or result.exit_code not in LINTER_SUCCESS_EXIT_CODES:
         return Outcome(
@@ -163,6 +178,28 @@ def shellcheck_outcome(executable: str, root: str, files: List[str]) -> Outcome:
         for comment in comments
     ]
     return Outcome(findings, "", "")
+
+
+def file_chunks(files: List[str], chunk_count: int) -> List[List[str]]:
+    ordered = sorted(files)
+    used_chunks = min(chunk_count, len(ordered))
+    return [ordered[start::used_chunks] for start in range(used_chunks)]
+
+
+def merged_outcome(outcomes: List[Outcome]) -> Outcome:
+    failures = [outcome.failure for outcome in outcomes if outcome.failure]
+    if failures:
+        return Outcome([], failures[0], "")
+    return Outcome([finding for outcome in outcomes for finding in outcome.findings], "", "")
+
+
+def shellcheck_outcome(chunk_count: int, executable: str, root: str, files: List[str]) -> Outcome:
+    chunks = file_chunks(files, chunk_count)
+    if not chunks:
+        return Outcome([], "", "")
+    run_chunk = functools.partial(shellcheck_chunk_outcome, executable, root)
+    with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+        return merged_outcome(list(pool.map(run_chunk, chunks)))
 
 
 def pinned_ruff_version(root: str) -> str:
@@ -228,15 +265,16 @@ def ruff_outcome(executable: str, root: str, files: List[str]) -> Outcome:
     return Outcome(findings, "", ruff_version_mismatch(executable, root))
 
 
-LINTERS = (
-    Linter(
-        "shellcheck",
-        "brew install shellcheck, or apt-get install shellcheck",
-        shell_files,
-        shellcheck_outcome,
-    ),
-    Linter("ruff", "pip install -r " + RUFF_PIN_FILE, python_files, ruff_outcome),
-)
+def configured_linters(shellcheck_chunks: int) -> Tuple[Linter, ...]:
+    return (
+        Linter(
+            "shellcheck",
+            "brew install shellcheck, or apt-get install shellcheck",
+            shell_files,
+            functools.partial(shellcheck_outcome, shellcheck_chunks),
+        ),
+        Linter("ruff", "pip install -r " + RUFF_PIN_FILE, python_files, ruff_outcome),
+    )
 
 
 def baseline_path(root: str, linter: Linter) -> str:
@@ -346,14 +384,16 @@ def check_linter(
     return Report(lines, failed or (in_ci and bool(outcome.version_mismatch)))
 
 
-def run_check(root: str, environment: Mapping[str, str]) -> Report:
+def run_check(
+    root: str, environment: Mapping[str, str], active_linters: Tuple[Linter, ...]
+) -> Report:
     listing = project_files(root)
     if listing.failure:
         return Report(["lint: cannot list the project files: " + listing.failure], True)
     in_ci = bool(environment.get("CI"))
     lines: List[str] = []
     failed = False
-    for linter in LINTERS:
+    for linter in active_linters:
         executable = shutil.which(linter.name, path=environment.get("PATH", os.defpath))
         report = (
             check_linter(linter, root, executable, listing.files, in_ci)
@@ -365,13 +405,15 @@ def run_check(root: str, environment: Mapping[str, str]) -> Report:
     return Report(lines, failed)
 
 
-def run_update(root: str, environment: Mapping[str, str]) -> Report:
+def run_update(
+    root: str, environment: Mapping[str, str], active_linters: Tuple[Linter, ...]
+) -> Report:
     listing = project_files(root)
     if listing.failure:
         return Report(["lint: cannot list the project files: " + listing.failure], True)
     lines: List[str] = []
     recorded: Dict[str, Dict[Pair, int]] = {}
-    for linter in LINTERS:
+    for linter in active_linters:
         executable = shutil.which(linter.name, path=environment.get("PATH", os.defpath))
         if not executable:
             return Report(
@@ -395,7 +437,7 @@ def run_update(root: str, environment: Mapping[str, str]) -> Report:
             "lint: %s baseline holds %d findings in %d pairs"
             % (linter.name, len(outcome.findings), len(recorded[linter.name]))
         )
-    for linter in LINTERS:
+    for linter in active_linters:
         write_baseline(baseline_path(root, linter), recorded[linter.name])
     return Report(lines, False)
 
@@ -406,23 +448,44 @@ def root_problem(root: str) -> str:
     return ""
 
 
-def main(arguments: List[str], environment: Mapping[str, str], repository_root: str) -> int:
-    command, *roots = arguments or [""]
-    if command not in COMMANDS or len(roots) > MAXIMUM_ROOTS:
-        print("usage: lint_baseline.py check|update [ROOT]", file=sys.stderr)
-        return USAGE_EXIT_CODE
-    root = roots[0] if roots else repository_root
-    problem = root_problem(root)
+@dataclass(frozen=True)
+class Invocation:
+    command: str
+    root: str
+    shellcheck_chunks: int
+
+
+def parsed_invocation(
+    arguments: List[str], repository_root: str, processor_count: int
+) -> Invocation:
+    parser = argparse.ArgumentParser(prog="lint_baseline.py")
+    parser.add_argument("command", choices=COMMANDS)
+    parser.add_argument("root", nargs="?", default=repository_root)
+    parser.add_argument(
+        "--shellcheck-chunks", type=int, choices=SHELLCHECK_CHUNK_CHOICES, metavar="N"
+    )
+    parsed = parser.parse_args(arguments)
+    default_chunks = min(processor_count, SHELLCHECK_MAXIMUM_CHUNKS)
+    return Invocation(parsed.command, parsed.root, parsed.shellcheck_chunks or default_chunks)
+
+
+def main(
+    arguments: List[str], environment: Mapping[str, str], repository_root: str, processor_count: int
+) -> int:
+    invocation = parsed_invocation(arguments, repository_root, processor_count)
+    problem = root_problem(invocation.root)
     if problem:
         print("lint_baseline.py: " + problem, file=sys.stderr)
         return USAGE_EXIT_CODE
-    report = (
-        run_check(root, environment) if command == CHECK_COMMAND else run_update(root, environment)
-    )
+    active_linters = configured_linters(invocation.shellcheck_chunks)
+    command_runner = run_check if invocation.command == CHECK_COMMAND else run_update
+    report = command_runner(invocation.root, environment, active_linters)
     for line in report.lines:
         print(line)
     return FINDINGS_EXIT_CODE if report.failed else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:], os.environ, REPOSITORY_ROOT))
+    sys.exit(
+        main(sys.argv[1:], os.environ, REPOSITORY_ROOT, os.cpu_count() or SHELLCHECK_MINIMUM_CHUNKS)
+    )

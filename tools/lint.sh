@@ -6,6 +6,10 @@ set -u
 cd "$(dirname "$0")/.."
 status=0
 fail() { echo "lint: $1"; status=1; }
+baseline_report="$(mktemp)" || exit 1
+trap 'rm -f "$baseline_report"' EXIT
+python3 -I tools/lib/lint_baseline.py check > "$baseline_report" 2>&1 &
+baseline_check=$!
 
 python3 tools/lib/generate.py --check || status=1
 
@@ -23,8 +27,6 @@ for f in $(find tools plugins -name '*.py' -not -path '*/evals/results/*' -not -
 done
 # py_compile writes bytecode whatever PYTHONDONTWRITEBYTECODE says; drop every cache it left.
 find tools plugins -name '__pycache__' -type d -not -path '*/node_modules/*' -prune -exec rm -rf {} +
-
-python3 -I tools/lib/lint_baseline.py check || status=1
 
 # Every skill has a SKILL.md whose name matches its directory and that has a description.
 for skill_dir in plugins/*/skills/*/; do
@@ -163,6 +165,9 @@ done
 # The installed block must stay under 6 KB (Codex budget).
 size="$(wc -c < plugins/standards/rules/block.md | tr -d ' ')"
 [ "$size" -le 6144 ] || fail "standards block is $size bytes, limit 6144"
+
+wait "$baseline_check" || status=1
+cat "$baseline_report"
 
 [ "$status" -eq 0 ] && echo "lint: ok"
 exit $status

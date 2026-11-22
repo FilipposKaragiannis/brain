@@ -258,7 +258,7 @@ out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "AppTestScriptOutsideSandbox_FailsLint: lint exits 1 and names an app whose test script skips tools/lib/sandboxed.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
 fresh
 flow_dispatcher="$repo/plugins/flow/tests/run.sh"
-out="$("$repo/tools/lint.sh" 2>/dev/null)"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; committed_tree_code=$?; committed_tree_out="$out"
 check "FlowDispatcherHoldingOnlyTheDispatch_IsNotNamedByLint: the flow run.sh that only hands the run to flow_suites.py needs no sandbox lines" sh -c "! printf '%s' \"\$0\" | grep -q 'plugins/flow/tests/run.sh'" "$out"
 mkdir -p "$demo/tests"
 cp "$flow_dispatcher" "$demo/tests/run.sh"
@@ -270,14 +270,13 @@ out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "FlowDispatcherWithALineBesideTheDispatch_FailsLint: lint exits 1 and names the flow run.sh once it runs anything but the dispatch" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'flow dispatcher holds more than the dispatch.*plugins/flow/tests/run.sh'" "$out"
 
 echo "lint holds ShellCheck and Ruff to the baseline"
-python="$(command -v python3)"; linted="$work/linted"
-fresh_linted() {
-  rm -rf "$linted"; mkdir -p "$linted/plugins/demo" "$linted/tools"; git init -q "$linted"
-  cp "$root/ruff.toml" "$root/.shellcheckrc" "$linted/"
-  printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted/plugins/demo/clean.sh"
-  printf 'import os\n\nprint(os.name)\n' > "$linted/plugins/demo/clean.py"
-  "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
-}
+python="$(command -v python3)"; linted="$work/linted"; linted_template="$work/linted-template"
+mkdir -p "$linted_template/plugins/demo" "$linted_template/tools"; git init -q "$linted_template"
+cp "$root/ruff.toml" "$root/.shellcheckrc" "$linted_template/"
+printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted_template/plugins/demo/clean.sh"
+printf 'import os\n\nprint(os.name)\n' > "$linted_template/plugins/demo/clean.py"
+"$python" -I "$root/tools/lib/lint_baseline.py" update "$linted_template" >/dev/null
+fresh_linted() { rm -rf "$linted"; cp -R "$linted_template" "$linted"; }
 baseline_check() { env -u CI "$@" "$python" -I "$root/tools/lib/lint_baseline.py" check "$linted" 2>&1; }
 unquoted_substitution() { printf 'echo $(date)\n' >> "$linted/plugins/demo/clean.sh"; }
 rule_code_pattern='SC[0-9]{4}|[EFIBS][0-9]{3,4}|SIM[0-9]{3}'
@@ -392,19 +391,27 @@ check "UpdatedBaselineFiles_HoldFileRuleAndCountOnly: every line is a file, a ru
   sh -c '[ -s "$2/shellcheck.tsv" ] && [ -s "$2/ruff.tsv" ] && awk -F "\t" "$1" "$2"/shellcheck.tsv "$2"/ruff.tsv' sh "$baseline_lines_hold_file_rule_and_count" "$linted/tools/lint-baseline"
 check "CommittedBaselineFiles_HoldFileRuleAndCountOnly: the real baselines have no line numbers, because they must survive line shifts" \
   sh -c '[ -s "$2/shellcheck.tsv" ] && awk -F "\t" "$1" "$2"/shellcheck.tsv "$2"/ruff.tsv' sh "$baseline_lines_hold_file_rule_and_count" "$root/tools/lint-baseline"
-fresh
-printf '#!/bin/sh\necho $(date)\n' > "$demo/new-finding.sh"
-out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+fresh_linted
+unquoted_substitution
+printf 'greeting=hello\n' > "$linted/plugins/demo/settings.sh"
+printf '#!/bin/sh\n# shellcheck source=plugins/demo/settings.sh\n. "$(dirname "$0")/settings.sh"\nprintf "%%s\\n" "$greeting"\n' > "$linted/plugins/demo/greet.sh"
+"$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" --shellcheck-chunks 1 >/dev/null
+cp "$linted/tools/lint-baseline/shellcheck.tsv" "$work/one-chunk.tsv"
+"$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" --shellcheck-chunks 3 >/dev/null
+check "ShellcheckBaselineFromThreeChunks_EqualsOneChunk: the same baseline file, because ShellCheck reports per file and follows a sourced file outside its own chunk" \
+  sh -c '[ -s "$1" ] && cmp -s "$1" "$2"' sh "$work/one-chunk.tsv" "$linted/tools/lint-baseline/shellcheck.tsv"
+fresh_linted
+mkdir -p "$linted/tools/lib"; cp "$root/tools/lint.sh" "$linted/tools/"; cp "$root/tools/lib/lint_baseline.py" "$linted/tools/lib/"
+"$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
+printf '#!/bin/sh\necho $(date)\n' > "$linted/plugins/demo/new-finding.sh"
+printf 'import shutil\n' > "$linted/plugins/demo/new_finding.py"
+out="$("$linted/tools/lint.sh" 2>/dev/null)"; code=$?
 check "LintWithNewShellcheckFinding_FailsAndNamesFileAndRule: tools/lint.sh exits 1 naming the new script and SC2046, because lint runs the baseline check" \
   fails_naming "$code" "$out" SC2046 plugins/demo/new-finding.sh
-fresh
-printf 'import shutil\n' > "$demo/new_finding.py"
-out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "LintWithNewRuffFinding_FailsAndNamesFileAndRule: tools/lint.sh exits 1 naming the new module and F401, because lint runs the baseline check" \
   fails_naming "$code" "$out" F401 plugins/demo/new_finding.py
-fresh
-out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
-check "LintOnTheCommittedTree_Passes: exit 0 and no rule named, because the committed baseline records today's findings" passes_without_finding "$code" "$out"
+check "LintOnTheCommittedTree_Passes: exit 0 and no rule named, because the committed baseline records today's findings" \
+  passes_without_finding "$committed_tree_code" "$committed_tree_out"
 real_ruff="$(command -v ruff)"; mkdir -p "$work/other-ruff"
 printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo "ruff 0.0.1"; exit 0; }\nexec "%s" "$@"\n' "$real_ruff" > "$work/other-ruff/ruff"; chmod +x "$work/other-ruff/ruff"
 fresh_linted
