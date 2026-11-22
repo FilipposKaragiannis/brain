@@ -49,6 +49,7 @@ for part in $parts; do
     lint) tools/lint.sh || status=1 ;;
     standards)
       clean plugins/standards/hooks/tests/run.sh || status=1
+      clean plugins/standards/hooks/tests/file-names.sh || status=1
       clean plugins/standards/hooks/tests/testing-guide.sh || status=1
       ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;

@@ -300,6 +300,13 @@ changed_files() {
   git diff $(commit_diff_args "$1") --name-only --diff-filter=ACMR 2>/dev/null || true
 }
 
+changed_files_nul() {
+  # $1 segment. The same files as changed_files, each name ended by a NUL byte, so no name is
+  # split or altered. Feed it to a program that reads NUL-separated names (xargs -0).
+  # shellcheck disable=SC2046
+  git diff $(commit_diff_args "$1") -z --name-only --diff-filter=ACMR 2>/dev/null || true
+}
+
 block() {
   # $1 title, $2 detail lines. Writes the reason to stderr and exits 2. Never call it in a pipeline.
   { echo "standards: $1"; printf '%s\n' "$2"; } >&2

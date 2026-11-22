@@ -40,7 +40,7 @@ cat > .standards/config.json <<'JSON'
   "version": "0.1.0",
   "languages": [
     { "name": "csharp", "extensions": [".cs"],
-      "format": [ { "prefix": "src/", "command": "sh -c 'for f in {files}; do grep -q TABS \"$f\" && exit 1; done; exit 0'" } ],
+      "format": [ { "prefix": "src/", "command": "for f in {files}; do grep -q TABS \"$f\" && exit 1; done; exit 0" } ],
       "comments": { "line": "//", "doc": "///", "public": "public", "doc_inside": ["interface", "enum"], "allow_markers": ["float-boundary:"] } }
   ],
   "build": "true",

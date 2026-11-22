@@ -1,7 +1,8 @@
 #!/bin/sh
 # Block a commit whose files fail the formatter check. The commands come from
 # .standards/config.json: languages[].format is a list of {prefix, command}; {files} in the
-# command is replaced by the staged files under that prefix (relative to the repo root).
+# command stands for the staged files under that prefix (relative to the repo root), each one a
+# separate argument: the command runs as `sh -c <command with {files} as "$@"> sh <names>`.
 . "$(dirname "$0")/lib.sh"
 payload="$(read_payload)"
 cmd="$(payload_command "$payload")"
@@ -12,8 +13,11 @@ cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
 passed_seen check-format && exit 0   # the agent hook already passed this index
-files="$(changed_files "$seg")"
-[ -n "$files" ] || exit 0
+hooks_dir="$(cd "$(dirname "$0")" && pwd)"
+names="$(mktemp)" || exit 0
+trap 'rm -f "$names"' EXIT
+changed_files_nul "$seg" > "$names"
+[ -s "$names" ] || exit 0
 failed=""
 count="$(json_length "$config" "languages")"
 i=0
@@ -26,14 +30,8 @@ while [ "$i" -lt "$count" ]; do
     command="$(json_get "$config" "languages.$i.format.$j.command")"
     j=$((j + 1))
     [ -n "$command" ] || continue
-    scoped=""
-    for file in $files; do
-      case "$file" in "$prefix"*) ;; *) continue ;; esac
-      for ext in $exts; do case "$file" in *"$ext") scoped="$scoped $file" ;; esac; done
-    done
-    [ -n "$scoped" ] || continue
-    run="$(printf '%s' "$command" | sed "s|{files}|$(printf '%s' "$scoped" | sed 's|[&|]|\\&|g')|g")"
-    if ! output="$(sh -c "$run" 2>&1)"; then
+    run="$(printf '%s' "$command" | sed 's|{files}|"$@"|g')"
+    if ! output="$(xargs -0 sh "$hooks_dir/format-files.sh" "$prefix" "$exts" "$run" < "$names" 2>&1)"; then
       failed="$failed  $run
 $(printf '%s\n' "$output" | tail -40 | sed 's/^/    /')
 "

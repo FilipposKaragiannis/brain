@@ -22,6 +22,8 @@ commit_has_marker "$seg" "[why-comment]" && allow_line=1
 commit_has_marker "$seg" "[allow-docs]" && allow_doc=1
 [ "$allow_line" -eq 1 ] && [ "$allow_doc" -eq 1 ] && exit 0
 diff_args="$(commit_diff_args "$seg")"
+content_dir="$(mktemp -d)" || exit 0
+trap 'rm -rf "$content_dir"' EXIT
 hits=""
 count="$(json_length "$config" "languages")"
 i=0
@@ -38,13 +40,18 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
   [ -n "$line_tok" ] && [ -n "$globs" ] || continue
   # shellcheck disable=SC2086
-  diff="$(git diff $diff_args -U1 --no-color -- $globs 2>/dev/null || true)"
+  diff="$(git -c core.quotePath=false diff $diff_args -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
-  # The committed content of a file, for the enclosing-type lookup: the index, or the working tree
-  # when the commit reads it.
-  if [ "$diff_args" = "--cached" ]; then show="git show :"; else show="cat "; fi
+  # The committed content of a file, for the enclosing-type lookup: the index, written under
+  # content_dir, or the working tree when the commit reads it.
+  if [ "$diff_args" = "--cached" ]; then
+    # shellcheck disable=SC2086
+    git diff $diff_args -z --name-only --diff-filter=ACMR -- $globs 2>/dev/null \
+      | git checkout-index -z --stdin --prefix="$content_dir/"
+    root="$content_dir/"
+  else root="./"; fi
   found="$(printf '%s\n' "$diff" | awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
-      -v markers="$markers" -v kinds="$kinds" -v show="$show" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
+      -v markers="$markers" -v kinds="$kinds" -v root="$root" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
     BEGIN { nk = split(kinds, karr, " "); for (k = 1; k <= nk; k++) if (karr[k] != "") okkind[karr[k]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
     function kind_of(l,   m) {
@@ -53,13 +60,26 @@ while [ "$i" -lt "$count" ]; do
       }
       return ""
     }
-    function doc_allowed(file, line,   cmd, l, i, k, ind, li, kind, buf) {
+    function unquote(name,   out, i, c, d, octal) {
+      if (substr(name, 1, 1) != "\"") return name
+      name = substr(name, 2, length(name) - 2); out = ""
+      for (i = 1; i <= length(name); i++) {
+        c = substr(name, i, 1)
+        if (c != "\\") { out = out c; continue }
+        d = substr(name, ++i, 1)
+        if (d ~ /[0-7]/) { octal = substr(name, i, 3); i += 2; out = out sprintf("%c", oct(octal)) }
+        else out = out (d == "t" ? "\t" : d == "n" ? "\n" : d)
+      }
+      return out
+    }
+    function oct(digits,   v, k) { v = 0; for (k = 1; k <= length(digits); k++) v = v * 8 + substr(digits, k, 1); return v }
+    function doc_allowed(file, line,   path, l, i, k, ind, li, kind, buf) {
       # True when the declaration at line, or the nearest enclosing type declaration (the first
       # type keyword above it at a smaller indentation), is one of the allowed kinds.
       if (nk == 0) return 0
-      cmd = show "\047" file "\047"
-      i = 0; while ((cmd | getline l) > 0) buf[++i] = l
-      close(cmd)
+      path = root file
+      i = 0; while ((getline l < path) > 0) buf[++i] = l
+      close(path)
       if (line > i) return 0
       kind = kind_of(buf[line]); if (kind != "") return (kind in okkind)
       match(buf[line], /^[ \t]*/); ind = RLENGTH
@@ -83,7 +103,7 @@ while [ "$i" -lt "$count" ]; do
       return 0
     }
     function is_public(b) { return pub != "" && b ~ ("(^|[^A-Za-z0-9_])" pub "([^A-Za-z0-9_]|$)") }
-    /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); next }
+    /^\+\+\+ / { f = substr($0, 5); sub(/\t$/, "", f); f = unquote(f); sub(/^b\//, "", f); next }
     /^--- /    { next }
     /^@@ /     { flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
     /^\+/ {
