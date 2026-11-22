@@ -250,8 +250,7 @@ skipped() {
   record "$1" skipped "" "$2" 0 ""
 }
 changed_matches() {
-  # changed_matches <globs, one per line>: true when a changed file matches one of them, or the base is unavailable.
-  [ "$base_commit" != unavailable ] || return 0
+  # changed_matches <globs, one per line>: true when a changed file matches one of them.
   while IFS= read -r g; do
     [ -n "$g" ] || continue
     while IFS= read -r f; do
@@ -263,6 +262,15 @@ EOF_FILES
 $1
 EOF_GLOBS
   return 1
+}
+# in_scope <globs, one per line>: true when a changed file matches one of them, or the base is unavailable.
+in_scope() { [ "$base_commit" = unavailable ] || changed_matches "$1"; }
+# resolved_command <command>: the command with {verify_base} replaced by the comparison base commit.
+resolved_command() {
+  case "$1" in
+    *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
+    *) printf '%s' "$1" ;;
+  esac
 }
 
 run_check() {
@@ -287,12 +295,8 @@ scoped_check() {
   # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
   # --fresh runs the command whatever is kept. A test pass is kept for the next run, and a fail
   # drops what is kept. A build has no key, so it always runs and nothing of it is kept.
-  if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
-  case "$2" in
-    *'{verify_base}'*)
-      set -- "$1" "$(printf '%s\n' "$2" | sed "s/{verify_base}/$base_commit/g")" "$3" "$4"
-      ;;
-  esac
+  if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  set -- "$1" "$(resolved_command "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
   if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
@@ -348,7 +352,7 @@ for name in $(yaml_keys "$(config_file)" gates); do
   command="$(cfg "gates.$name")"; paths=""
   if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; fi
   [ -n "$command" ] || continue
-  if [ -n "$paths" ] && ! changed_matches "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
+  if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
 done
 feel=false
