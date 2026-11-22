@@ -12,6 +12,11 @@ status=0
 # The suites run in an empty environment, so nothing the owner exports (a Slack webhook, a token)
 # reaches them. Each suite also stubs the network, desktop and agent tools itself.
 clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
+if [ "${1:-}" = flow-since ]; then
+  [ "$#" -eq 2 ] || { echo "usage: tools/test.sh flow-since <base commit>" >&2; exit 2; }
+  clean python3 -I tools/lib/flow_suites.py since "$2"
+  exit $?
+fi
 # A part whose tools are missing: the whole run skips it, as CI's test job has no Node and a job
 # of its own runs the console app; a part named on the command line fails, so a check that names
 # it never passes on a suite that did not run.
@@ -54,7 +59,10 @@ for part in $parts; do
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
     console) clean plugins/console/tests/run.sh || status=1 ;;
-    tools) clean tools/tests/run.sh || status=1 ;;
+    tools)
+      clean tools/tests/run.sh || status=1
+      clean sh tools/tests/flow-selection.sh || status=1
+      ;;
     console-app) console_app || status=1 ;;
     plugins) plugins_valid || status=1 ;;
     *) echo "test: no part named $part; the parts are $every_part" >&2; exit 2 ;;

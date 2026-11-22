@@ -286,6 +286,12 @@ scoped_check() {
   # --fresh runs the command whatever is kept. A test pass is kept for the next run, and a fail
   # drops what is kept. A build has no key, so it always runs and nothing of it is kept.
   if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  case "$2" in
+    *'{verify_base}'*)
+      base_commit="$(git rev-parse --verify "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
+      set -- "$1" "$(printf '%s\n' "$2" | sed "s/{verify_base}/$base_commit/g")" "$3" "$4"
+      ;;
+  esac
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
   if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
