@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fnmatch import fnmatchcase
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,12 @@ ADAPTERS = ("github", "local", "jira")
 VERIFY_INPUTS = {
     FLOW / "scripts" / name for name in ("verify.sh", "_verify_report.py", "_checks.py")
 } | {FLOW / "lib/checks.sh"}
+UNRELATED_TO_TESTS = (
+    "plugins/flow/CHANGELOG.md",
+    "plugins/flow/changelog.d/*",
+    "plugins/flow/README.md",
+    "plugins/flow/*/README.md",
+)
 
 
 def commands(root):
@@ -67,6 +74,10 @@ def flow_inputs(root):
     return [pattern.replace("**/", "*").replace("**", "*") for pattern in entry["paths"]]
 
 
+def matches(path: Path, patterns: Sequence[str]) -> bool:
+    return any(fnmatchcase(path.as_posix(), pattern) for pattern in patterns)
+
+
 def selection(root, base, suites):
     if base is None:
         return set(suites)
@@ -76,7 +87,7 @@ def selection(root, base, suites):
         print("flow: no comparison base available, running every suite", flush=True)
         return set(suites)
     patterns = flow_inputs(root)
-    relevant = (path for path in paths if any(fnmatchcase(path.as_posix(), pattern) for pattern in patterns))
+    relevant = (path for path in paths if matches(path, patterns) and not matches(path, UNRELATED_TO_TESTS))
     selected = set().union(*(affected(path, suites) for path in relevant))
     if "inline" in selected:
         selected.discard("verify")

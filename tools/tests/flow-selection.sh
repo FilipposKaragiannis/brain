@@ -35,6 +35,13 @@ expect 'SelectedSuite_IsReported because the verifier needs to show what ran' "$
 printf 'exit 1\n' > "$suite/sessions.sh"
 expect 'SelectedSuiteFails_FailsVerification because a partial run must propagate failure' "$(result)" fail
 git restore plugins/flow/tests/sessions.sh
+expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
+expect 'NothingSelected_SaysSo because a verifier must see that no suite ran' "$(head -1 "$work/output")" 'flow: no Flow test inputs changed'
+mkdir -p plugins/flow/new-runtime
+touch plugins/flow/new-runtime/check.sh
+expect 'FileInANewFolder_RunsFullCoverage because the runner cannot know which suites read it' "$(result)" fail
+expect 'FullCoverageForANewFolder_IncludesJiraContract because every suite runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
+rm -r plugins/flow/new-runtime
 mkdir -p plugins/flow/scripts
 touch plugins/flow/scripts/verify.sh
 expect 'VerifyImplementationChanges_RunItsIntegrationChecks because the shared inline fixture contains unrelated scenarios' "$(result)" pass
