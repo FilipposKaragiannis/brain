@@ -11,6 +11,7 @@ trap 'sandbox_close $?' EXIT
 . "$here/_github_fixture.sh"
 . "$here/_jobs_fixture.sh"
 . "$here/_worktree_helpers.sh"
+. "$here/_fake_curl_fixture.sh"
 echo "decomposition: a split parent and its children"
 mkdir -p "$work/split" && cd "$work/split" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init

@@ -134,7 +134,7 @@ for n in 1 2 3 4 5; do git worktree add -q "../app-wt-$n" -b "wt$n" >/dev/null 2
 out="$(FLOW_PLUGIN="$plugin_copy" "$init" 2>&1)"
 check "init: more worktrees than three raise pool_max to match" sh -c "grep -qx 'pool_max: 5' .flow/config.yaml && [ \"\$(grep -c '^  - ../app-wt-' .flow/config.yaml)\" = 5 ]"
 check "init: says every listed worktree becomes a task slot" sh -c 'printf "%s" "$1" | grep -q "5 worktrees already exist"' _ "$out"
-mkdir -p "$work/fakebin" && printf '#!/bin/sh\necho "$@" >> "%s/curl.log"\n' "$work" > "$work/fakebin/curl" && chmod +x "$work/fakebin/curl"
+. "$here/_fake_curl_fixture.sh"
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop: false\n  slack_webhook: https://config.example/hook\n' > .flow/config.yaml
 : > "$work/curl.log"
 PATH="$work/fakebin:$PATH" "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
