@@ -1,5 +1,120 @@
 # flow
 
+## 1.48.0 (2026-11-22)
+
+- `gate.sh raise` refuses a gate that is not in `profiles.json`, before it writes a record, a
+  state, a comment or a notification; `advance.sh` stops the same way on a step result that
+  names one.
+- `notify.sh` hands the desktop notifier its title, subtitle and body as arguments, so quotes,
+  backslashes and `$(...)` in a gate text or an item title show literally.
+- The GitHub adapter's `write-state` passes each label to `gh issue edit` as one argument, so a
+  label value with a space stays whole.
+- The GitHub adapter's `write-state` refuses a label value with a comma, which `gh` would read as
+  two labels, and leaves an existing label with a comma alone instead of passing it to
+  `--remove-label`.
+- `advance.sh` refuses an unknown gate on every path that raises one, the sync step included.
+- Every gate the flow raises (interview, plan-approval, decomposition, feel-test, merge,
+  escalation, ambiguity) is in `profiles.json`, so no caller needed a looser shape check.
+- An item never moves past a human gate the tracker has not recorded. `advance.sh` writes the
+  step after a gate and the gate itself in one tracker write (`gate.sh raise ... -- step=...`),
+  on every path that raises one: the profile's gates, a gate the step asked for, the feel-test
+  gate, the merge gate of an epic, a re-size and each escalation.
+- A gate write the tracker refuses, or that dies, raises nothing: `advance.sh` exits 1 with the
+  reason, the item keeps its step and its run, and `advance.sh` run again raises the gate once.
+  A write that fails after its labels landed (GitHub's state comment, Jira's state property)
+  leaves the gate on the tracker, so `gate.sh` lets it stand, warns, and finishes the raise.
+- `advance.sh` also exits 1, with its run kept, when any state write a step ends with is refused:
+  the touches, the plan's changes, its hold or the lift of one, a failed step's attempt, the next
+  step, or the step done after a closeout or a pr step with nothing to merge. The retry applies the
+  step as the first try would have.
+- A re-size lands in the same tracker write as the step it moves to, so a refused write keeps the
+  old size and profile and the retry re-sizes again; before, the retry kept the old profile.
+- The run keeps the gate its step asked for, and the ask is recorded before the gate is raised, so
+  neither a retry nor a stop after the raise asks the owner the same gate twice.
+- `hold.sh set` exits 3 when the tracker does not take the hold, apart from 1 for a refused holder.
+- A gate comment or notification that fails after the gate is recorded is said on stderr, and
+  the gate stands. `notify.sh` says when the desktop notification fails.
+- `next.sh` runs no step for an item with a gate record on this host that its tracker does not
+  show; it exits 4 and names the record and how to answer it.
+- What a retry can still double: the "Step ... done" and re-size comments and the plan's `held`
+  line in `events.log`, which come before the write; and after a stop between a write and the
+  run's removal, the gate comment, the notification and its `events.log` line, and a failed
+  step's attempt. A comment cannot
+  go in the same tracker write as the state, so one of them comes first and a retry repeats it.
+  The state, the gate and its record stay one.
+- Flow finds the main worktree once per working folder and checks git once per command, and
+  hands both to the scripts it starts. A config read no longer lists the worktrees each time,
+  which cuts the listings of one `new.sh` from 11 to 1. A git put first on `PATH` for one
+  script is still asked there, and `verify.sh` finds the main worktree once more after it moves
+  to the repository root.
+- Flow's python starts keep their compiled modules in `flow/python` under `XDG_CACHE_HOME`, or
+  `~/.cache` when that is not an absolute path, made owner-only. On a Mac whose `python3` is
+  Xcode's, a start no longer compiles the standard library and flow's helpers each time, which
+  takes about a quarter off the holds and blockers suites. Python still runs isolated. A missing or
+  unwritable cache folder, or a cache file python does not recognise, only costs time; a damaged
+  compiled file that still reads as one fails the start, as in any `__pycache__`, until
+  `flow/python` is removed. No `__pycache__` lands in the plugin.
+- A Claude step waits up to an hour for the background subagents its session left running
+  (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; a value the owner exported wins). At the host's own
+  10 minutes, a review's Unity reviewer was stopped mid-run and the step wrote no result.
+- A step whose session left no result file runs again, not its fix step. The runner writes that
+  result with status `lost`. A lost review used to go back to implement, which had nothing to
+  do, and the steps after it reset the attempt count, so the loop never reached the escalation
+  gate. Run `/flow:init` to install the new `run-unattended.sh`.
+- The implementer, sent back for a rule breach, fixes every instance of it in the branch diff,
+  not only the line the review cites.
+- The test writer's helpers, fakes and rigs meet the hard rules as production code does: a name
+  that says every write (M-08), wrapped non-private parameters (S-05), named literals (N-06), and
+  no production member added to reset state.
+- The test writer's brief gains a step for shell suites. The check label is
+  `Scenario_Outcome: what holds, because why` (T-11). A stub command's log is its call list
+  (T-08). An exit code and a message are two checks (T-09). A check must not pass on an empty
+  pid file or on fixture order (T-01). No narrating comments or item ids in tests (C-01, C-03).
+- The implementer's brief says how M-08, N-05, N-06 and C-01 read in shell and script code:
+  functions print their result instead of setting globals, loop counters and temporaries are
+  spelt in full, and the short names around them are no precedent.
+- Build and test commands can use `{verify_base}` to select checks against the same commit as
+  verify. A cached pass belongs to that comparison.
+- The verify log receives a check's output while the check runs, so a run stopped at its limit
+  shows where it stood.
+- Verify runs every build, test and gate command that has paths when its comparison base cannot
+  be resolved, instead of skipping them, and `{verify_base}` is then `unavailable`, which is no
+  commit id. The log and the report say the base was unavailable.
+- The checks of `tests/run.sh` live in 16 suite files by area, each of which runs alone, such as
+  `sh plugins/flow/tests/health.sh`. `run.sh` takes no argument and hands the whole run to the
+  suite runner once; `run.sh inline` and `run.sh verify` are gone.
+- The worktree check that ran `git worktree remove -q` now runs it without `-q`, a switch git does
+  not have, so the pin worktree is removed.
+- Verify no longer passes when it cannot list every changed file. A comparison base that cannot
+  be resolved, or a git listing of changes that fails (the diff from the base, the diff of
+  uncommitted changes or the listing of untracked files), is a failed `changed files` check that
+  names the cause, and git's error reaches the verify log. In that state, and when a changed file
+  name holds U+001F (already a failed `changed files` check), every build, test and gate command
+  with paths runs, no kept test pass is reused, and `feel_test` is true when `feel_test_paths` is
+  set, with verify.md saying a change there cannot be ruled out. A format or mutation command with
+  `{files}` that finds no file says it looked only among the files verify could list.
+- Verify lists the changed files of a repository that tracks a file named `HEAD` at its root. Git
+  read that name as both a revision and a file and refused the diffs, so those changes went
+  unlisted.
+- `feel_test` is true for a changed file under a `feel_test_paths` glob such as
+  `ui/src/**/*.tsx` even when the glob also names an unchanged file in the worktree; the shell
+  no longer expands the glob against the folder first.
+- Verify hands the changed file names to a format or mutation command as separate arguments, read
+  NUL-separated from git. `{files}` outside quotes is the names as arguments and inside quotes the
+  names escaped for the nested shell, as in the commit hooks; a name never becomes command text.
+  A deleted file is not passed, and a command that is empty or cannot take a name is a failed
+  check with its reason.
+- `{files}` is accepted in two forms: as an unquoted word of its own in the command, or as an
+  unquoted word of its own in the script of a `sh -c` or `bash -c` that starts a command. A word
+  ends at a blank or at one of `; & | < > ( )` and a newline. Every other placement is refused, as
+  a failed check whose message names the accepted forms. To pass the names into any other
+  construct, write `"$@"` there and put `{files}` as the last word of the command, as in
+  `sh -c '... "$@"' sh {files}`.
+- An escaped quote inside the nested shell's quotes no longer moves a later `{files}`, and any run
+  of spaces and tabs separates the shell, `-c`, the script and `{files}`. A language with a format
+  command and no extensions is a failed check, and a changed file name with a newline still
+  matches the paths of a gate or a test command and is one entry in `changed_files`.
+
 ## 1.47.0 (2026-11-21)
 
 - On GitHub with no `github.fields.priority`, a `priority:<name>` label gives an item its
