@@ -3,7 +3,8 @@
 `all --shard <number>/<count>` runs one shard of every suite, as flow_shards.py splits them.
 FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. FLOW_SUITE_TIME_LIMIT_SECONDS
 sets how long one suite may run, 1800 when unset. FLOW_SUITE_STOP_GRACE_SECONDS sets the grace
-time a stopped suite gets to clean up, 10 when unset. Each suite runs in a process group of its own.
+time a stopped suite gets to clean up, 5 when unset: below the 10 seconds Flow's verify gives the
+whole run on a stop before it kills the runner. Each suite runs in a process group of its own.
 The runner prints a line when a suite starts, and the suite's output with its result when it
 ends. A suite still running at the limit has its process group ended, what is left of the group
 killed once the grace time passes, its output so far printed, and fails. A TERM, INT or HUP ends
@@ -15,7 +16,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -26,8 +26,8 @@ from tempfile import TemporaryDirectory
 
 sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
-from flow_clock import Clock, Duration, Ending, Instant, ending_within  # noqa: E402
-from flow_process_groups import PROCESS_TABLE, LedGroup, ProcessGroupId, ProcessTable, stop_groups  # noqa: E402
+from flow_clock import Clock, Duration, Ending, SystemClock, ending_within  # noqa: E402
+from flow_process_groups import PROCESS_TABLE, LedGroup, ProcessGroupId, ProcessTable, kill_group, stop_groups  # noqa: E402
 from flow_selection import Checkout, ComparisonBase, SuiteCommand, SuiteName, commands, selection  # noqa: E402
 from flow_shards import WHOLE_RUN, Shard, shard_from, suites_in  # noqa: E402
 
@@ -38,7 +38,7 @@ _DEFAULT_LANES = 3
 _TIME_LIMIT_VARIABLE = "FLOW_SUITE_TIME_LIMIT_SECONDS"
 _DEFAULT_TIME_LIMIT_SECONDS = 1800
 _STOP_GRACE_VARIABLE = "FLOW_SUITE_STOP_GRACE_SECONDS"
-_DEFAULT_STOP_GRACE_SECONDS = 10
+_DEFAULT_STOP_GRACE_SECONDS = 5
 _LEAST_WHOLE_NUMBER = 1
 _SIGNAL_EXIT_BASE = 128
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
@@ -58,14 +58,6 @@ class SuiteLogs:
 
 
 _NO_TIME = Duration(0)
-
-
-class _SystemClock:
-    def now(self) -> Instant:
-        return Instant(time.monotonic())
-
-    def sleep(self, duration: Duration) -> None:
-        time.sleep(duration.seconds)
 
 
 @dataclass(frozen=True)
@@ -88,6 +80,11 @@ class _Admitted:
     time_limit: Duration
 
 
+def _killed_at_once(suite: LedGroup) -> _Admitted:
+    kill_group(suite)
+    return _Admitted(suite, _NO_TIME)
+
+
 class _RunningSuites:
     def __init__(self) -> None:
         self._suites: "set[LedGroup]" = set()
@@ -98,7 +95,7 @@ class _RunningSuites:
     def track(self, suite: LedGroup, time_limit: Duration) -> Iterator[_Admitted]:
         with self._lock:
             self._suites.add(suite)
-            admitted = _Admitted(suite, time_limit if self._admission is _Admission.OPEN else _NO_TIME)
+            admitted = _Admitted(suite, time_limit) if self._admission is _Admission.OPEN else _killed_at_once(suite)
         try:
             yield admitted
         finally:
@@ -179,9 +176,12 @@ def _report_suite(name: SuiteName, outcome: _SuiteOutcome, lanes: _Lanes, limit:
         print(f"flow: {name.text} {'FAIL' if outcome.failed() else 'pass'} ({outcome.elapsed.seconds:.1f}s)", flush=True)
 
 
-def _stop_running(workers: ThreadPoolExecutor, lanes: _Lanes, settings: Settings) -> None:
+def _ignore_further_stop_signals() -> None:
     for stop_signal in _STOP_SIGNALS:
-        signal.signal(stop_signal, signal.SIG_IGN)
+        signal.signal(stop_signal, lambda number, frame: None)
+
+
+def _stop_running(workers: ThreadPoolExecutor, lanes: _Lanes, settings: Settings) -> None:
     workers.shutdown(wait=False, cancel_futures=True)
     lanes.running.close()
     _stop(lanes.running.still_running(), settings)
@@ -196,6 +196,7 @@ def _report_stopped(number: int, unfinished: "set[SuiteName]", lanes: _Lanes) ->
 
 def _stop_on_signals(workers: ThreadPoolExecutor, unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes, settings: Settings) -> None:
     def stop(number: int, frame: object) -> None:
+        _ignore_further_stop_signals()
         _stop_running(workers, lanes, settings)
         _report_stopped(number, unfinished(), lanes)
 
@@ -284,9 +285,9 @@ def _shard_of(options: "list[str]") -> Shard:
 
 def main(arguments: "list[str]") -> int:
     if arguments[:1] == ["all"]:
-        return _run(_ROOT, None, _shard_of(arguments[1:]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+        return _run(_ROOT, None, _shard_of(arguments[1:]), settings_from(os.environ, SystemClock(), PROCESS_TABLE))
     if len(arguments) == len(_SINCE) and arguments[0] == _SINCE[0]:
-        return _run(_ROOT, ComparisonBase(arguments[1]), WHOLE_RUN, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+        return _run(_ROOT, ComparisonBase(arguments[1]), WHOLE_RUN, settings_from(os.environ, SystemClock(), PROCESS_TABLE))
     sys.exit(_USAGE)
 
 

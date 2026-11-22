@@ -1,5 +1,5 @@
 """Signal a Flow suite's process group, tell whether any member of it is still running, and stop
-groups: TERM, one grace time shared by all, then KILL for each group not yet ended."""
+groups: TERM, one grace time shared by all, then KILL for each group not yet ended, or KILL at once."""
 import os
 import signal
 import subprocess
@@ -121,10 +121,14 @@ def _group_ended(led: LedGroup, table: ProcessTable) -> bool:
     return led.leader.poll() is not None and _group_membership(led.group, table) is Membership.NO_MEMBER_REMAINS
 
 
+def kill_group(led: LedGroup) -> None:
+    _signal_group(led.group, signal.SIGKILL)
+
+
 def stop_groups(groups: "frozenset[LedGroup]", grace: Duration, clock: Clock, table: ProcessTable) -> None:
     for led in groups:
         _signal_group(led.group, signal.SIGTERM)
     ending_within(lambda: all(_group_ended(led, table) for led in groups), grace, clock)
     for led in groups:
         if not _group_ended(led, table):
-            _signal_group(led.group, signal.SIGKILL)
+            kill_group(led)

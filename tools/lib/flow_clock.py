@@ -1,4 +1,6 @@
-"""The time a Flow suite run reads and waits on, always through a clock its caller gives it."""
+"""The time a Flow suite run reads and waits on, always through a clock its caller gives it, such
+as the system clock."""
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +21,14 @@ class Clock(Protocol):
     def now(self) -> Instant: ...
 
     def sleep(self, duration: Duration) -> None: ...
+
+
+class SystemClock:
+    def now(self) -> Instant:
+        return Instant(time.monotonic())
+
+    def sleep(self, duration: Duration) -> None:
+        time.sleep(duration.seconds)
 
 
 class Ending(Enum):
