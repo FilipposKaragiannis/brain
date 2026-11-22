@@ -9,7 +9,6 @@ killed once a grace time passes, its output so far printed, and fails. A TERM, I
 the output so far of each suite still running, ends the process group of each, then ends the run.
 """
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -28,7 +27,7 @@ sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
 from flow_process_groups import PROCESS_TABLE, ProcessGroupId, ProcessTable, group_ended, signal_group  # noqa: E402
 from flow_selection import Checkout, ComparisonBase, SuiteCommand, SuiteName, commands, selection  # noqa: E402
-from flow_shards import WHOLE_RUN, Shard, suites_in  # noqa: E402
+from flow_shards import WHOLE_RUN, Shard, shard_from, suites_in  # noqa: E402
 
 
 _ROOT = Checkout(Path(__file__).resolve().parents[2])
@@ -39,7 +38,6 @@ _DEFAULT_TIME_LIMIT_SECONDS = 1800
 _LEAST_WHOLE_NUMBER = 1
 _SIGNAL_EXIT_BASE = 128
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
-_SHARD = re.compile(r"([1-9][0-9]*)/([1-9][0-9]*)")
 _SHARD_OPTION = ("--shard", "<number>/<count>")
 _SINCE = ("since", "<base commit>")
 _USAGE = f"usage: flow_suites.py all [{' '.join(_SHARD_OPTION)}] | {' '.join(_SINCE)}"
@@ -244,13 +242,6 @@ def report_run(failed: "frozenset[SuiteName]") -> int:
     return 1 if failed else 0
 
 
-def _shard_from(text: str) -> Shard:
-    parts = _SHARD.fullmatch(text)
-    if parts is None or int(parts[1]) > int(parts[2]):
-        sys.exit(f"flow: --shard takes <number>/<count> with the number from 1 to the count, not '{text}'")
-    return Shard(int(parts[1]), int(parts[2]))
-
-
 def _run(checkout: Checkout, base: "ComparisonBase | None", shard: Shard, settings: Settings) -> int:
     suites = commands(checkout)
     chosen = selection(checkout, base, suites)
@@ -286,7 +277,7 @@ def _shard_of(options: "list[str]") -> Shard:
         return WHOLE_RUN
     if len(options) != len(_SHARD_OPTION) or options[0] != _SHARD_OPTION[0]:
         sys.exit(_USAGE)
-    return _shard_from(options[1])
+    return shard_from(options[1])
 
 
 def main(arguments: "list[str]") -> int:

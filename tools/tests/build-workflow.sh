@@ -19,9 +19,12 @@ json_to_yaml() {
 cat > "$work/shape.py" <<'PY'
 import json
 import re
+import shlex
 import sys
+from itertools import takewhile
 
-_TEST_SCRIPT_PARTS = re.compile(r"tools/test\.sh((?: [a-z][a-z-]*)*)")
+_TEST_SCRIPT = "tools/test.sh"
+_PART_NAME = re.compile(r"[a-z][a-z-]*")
 _NEW_JOB = {"runs-on": "ubuntu-latest", "timeout-minutes": 5, "steps": [{"run": "true"}]}
 
 
@@ -29,8 +32,13 @@ def _runs(workflow: dict) -> "list[str]":
     return [step["run"] for job in workflow["jobs"].values() for step in job.get("steps", []) if "run" in step]
 
 
+def _parts_after(words: "list[str]") -> "list[str]":
+    return list(takewhile(_PART_NAME.fullmatch, words))
+
+
 def _part_lists(workflow: dict) -> "list[list[str]]":
-    return [found[1].split() for run in _runs(workflow) for found in _TEST_SCRIPT_PARTS.finditer(run)]
+    commands = [shlex.split(run) for run in _runs(workflow)]
+    return [_parts_after(words[at + 1:]) for words in commands for at, word in enumerate(words) if word == _TEST_SCRIPT]
 
 
 def _listed(needs: "str | list[str]") -> "set[str]":

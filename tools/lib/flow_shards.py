@@ -1,5 +1,7 @@
 """Split Brain's Flow suites into shards balanced by the seconds in flow_suite_durations.json."""
 import json
+import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +12,7 @@ from flow_selection import Checkout, SuiteName
 _TABLE = Path("tools/lib/flow_suite_durations.json")
 _SECONDS_WHEN_NOTHING_IS_MEASURED = 1.0
 _FIRST_SHARD_NUMBER = 1
+_NUMBER_OF_COUNT = re.compile(r"([1-9][0-9]*)/([1-9][0-9]*)")
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,13 @@ class Shard:
 
 
 WHOLE_RUN = Shard(_FIRST_SHARD_NUMBER, 1)
+
+
+def shard_from(text: str) -> Shard:
+    parts = _NUMBER_OF_COUNT.fullmatch(text)
+    if parts is None or int(parts[1]) > int(parts[2]):
+        sys.exit(f"flow: --shard takes <number>/<count> with the number from 1 to the count, not '{text}'")
+    return Shard(int(parts[1]), int(parts[2]))
 
 
 def _measured_seconds(checkout: Checkout) -> "Mapping[SuiteName, float]":
