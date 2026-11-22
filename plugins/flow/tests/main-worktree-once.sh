@@ -71,6 +71,8 @@ check "FolderThatIsNoRepository_UsesTheFolderItself: outside git the flow home i
   '[ "$(sh "$scripts/child-flow-home.sh" "$work/no-repository")" = "$work/no-repository/.flow" ]'
 check "AnswerHandedDownForAnotherFolder_IsIgnored: a value is trusted only in the folder it was found for" \
   '[ "$(env FLOW_MAIN_WORKTREE="$work/no-repository" FLOW_MAIN_WORKTREE_FOLDER="$work/no-repository" sh "$scripts/flow-home.sh")" = "$app/.flow" ]'
+check "GitDirNamingAnotherRepository_IgnoresTheHandedDownAnswer: a repository the caller names wins over the answer found for the folder" \
+  '[ "$(env GIT_DIR="$root/other/.git" FLOW_MAIN_WORKTREE="$work/no-repository" FLOW_MAIN_WORKTREE_FOLDER="$PWD" sh "$scripts/flow-home.sh")" != "$work/no-repository/.flow" ]'
 
 echo "main worktree once: how often git is asked"
 check "AnswerHandedDownForThisFolder_ListsNoWorktree: a child script in its parent's folder takes the parent's answer" \
