@@ -2,6 +2,7 @@
 # Tests that the CI workflow limits every job, gathers them under one result and skips no part,
 # and that a job that runs lint, in CI or in the release workflow, has installed the linters by then.
 # The lint checks run the job's own steps here, with stand-ins for pip, lint and the release script.
+# The stand-ins cover what these two jobs use: bash steps, plain env values and a constant `if`.
 # Ruby reads the workflow because python3 has no YAML module here or in CI.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
@@ -108,23 +109,36 @@ PY
 cat > "$work/run_job.py" <<'PY'
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 _STEP_LIMIT_SECONDS = 60
+_EXPRESSION = re.compile(r"\$\{\{(.*)\}\}", re.DOTALL)
+_EXPRESSION_START = "${{"
 _CONDITIONS_THAT_HOLD = ("true", "always()", "success()")
 _SHELL = ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c"]
 _NO_LINT = "lint did not run"
 
 
+def _condition(step: dict) -> str:
+    written = str(step.get("if", "true")).strip()
+    wrapped = _EXPRESSION.fullmatch(written)
+    return (wrapped.group(1) if wrapped else written).strip().lower()
+
+
 def _runs_here(step: dict) -> bool:
-    return "run" in step and str(step.get("if", "true")).strip().lower() in _CONDITIONS_THAT_HOLD
+    return "run" in step and _condition(step) in _CONDITIONS_THAT_HOLD
+
+
+def _plain_values(holder: dict) -> "dict[str, str]":
+    return {name: str(value) for name, value in holder.get("env", {}).items() if _EXPRESSION_START not in str(value)}
 
 
 def _passes(step: dict, checkout: Path, environment: "dict[str, str]") -> bool:
     try:
-        return subprocess.run([*_SHELL, step["run"]], cwd=checkout, env=environment, capture_output=True, timeout=_STEP_LIMIT_SECONDS, check=False).returncode == 0
+        return subprocess.run([*_SHELL, step["run"]], cwd=checkout, env={**environment, **_plain_values(step)}, capture_output=True, timeout=_STEP_LIMIT_SECONDS, check=False).returncode == 0
     except subprocess.TimeoutExpired:
         return False
 
@@ -139,9 +153,9 @@ def lint_outcome(job: dict, checkout: Path, outcome: Path, environment: "dict[st
 def main(arguments: "list[str]") -> int:
     workflow, job, checkout, outcome, stand_ins = arguments
     with open(workflow, encoding="utf-8") as source:
-        jobs = json.load(source)["jobs"]
-    environment = dict(os.environ, PATH=stand_ins + os.pathsep + os.environ["PATH"])
-    print(lint_outcome(jobs[job], Path(checkout), Path(outcome), environment))
+        read = json.load(source)
+    environment = {**os.environ, "PATH": stand_ins + os.pathsep + os.environ["PATH"], **_plain_values(read), **_plain_values(read["jobs"][job])}
+    print(lint_outcome(read["jobs"][job], Path(checkout), Path(outcome), environment))
     return 0
 
 
@@ -174,6 +188,7 @@ shift
 requirements=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --dry-run) exit 0 ;;
     -r|--requirement) requirements="${2:-}" ;;
     --requirement=*) requirements="${1#--requirement=}" ;;
     -r*) requirements="${1#-r}" ;;
@@ -195,7 +210,7 @@ lint_outcome_of() {
   rm -rf "$work/checkout" "$work/lint-outcome" "$work/linters-installed"
   mkdir -p "$work/checkout/tools"
   cp "$root/tools/requirements-lint.txt" "$work/checkout/tools/requirements-lint.txt"
-  printf '%s\n' '#!/bin/sh' 'if [ -f "$LINTERS_INSTALLED" ]; then echo "linted with the linters" > "$LINT_OUTCOME"; exit 0; fi' 'echo "linted without the linters" > "$LINT_OUTCOME"; exit 1' > "$work/checkout/tools/lint.sh"
+  printf '%s\n' '#!/bin/sh' 'if [ ! -f "$LINTERS_INSTALLED" ]; then echo "linted without the linters" > "$LINT_OUTCOME"; exit 1; fi' '[ -f "$LINT_OUTCOME" ] || echo "linted with the linters" > "$LINT_OUTCOME"' > "$work/checkout/tools/lint.sh"
   printf '%s\n' '#!/bin/sh' 'for part in "$@"; do [ "$part" != lint ] || exec tools/lint.sh; done' > "$work/checkout/tools/test.sh"
   printf '%s\n' '#!/bin/sh' 'echo "flow 1.0.0 -> 1.1.0"' > "$work/checkout/tools/release.sh"
   chmod +x "$work/checkout/tools/lint.sh" "$work/checkout/tools/test.sh" "$work/checkout/tools/release.sh"
@@ -256,3 +271,13 @@ expect 'JobThatInstallsAndLintsInOneStep_LintsWithTheLinters because the order o
 expect 'JobThatPrintsTheLintScriptNameBeforeItsInstall_LintsWithTheLinters because printing a name runs nothing' "$(job_with_steps 'echo tools/lint.sh' "$install && ./tools/lint.sh")" 'linted with the linters'
 expect 'JobThatInstallsWithTheLongOption_LintsWithTheLinters because pip takes a requirements file in this form too' "$(job_with_steps 'pip install --requirement=./tools/requirements-lint.txt' 'tools/test.sh lint')" 'linted with the linters'
 expect 'JobThatNeverLints_SaysLintDidNotRun because a job with no lint needs no linters' "$(job_with_steps 'true')" 'lint did not run'
+cat > "$work/expression-job.json" <<JSON
+{"jobs": {"job": {"steps": [{"if": "\${{ true }}", "run": "$install"}, {"run": "tools/lint.sh"}]}}}
+JSON
+cat > "$work/environment-job.json" <<JSON
+{"jobs": {"job": {"steps": [{"env": {"REQUIREMENTS": "tools/requirements-lint.txt"}, "run": "pip install -r \"\$REQUIREMENTS\""}, {"run": "tools/lint.sh"}]}}}
+JSON
+expect 'JobWhoseInstallStepHasATrueExpression_LintsWithTheLinters because a condition that always holds skips nothing' "$(lint_outcome_of "$work/expression-job.json" job)" 'linted with the linters'
+expect 'JobWhoseInstallReadsTheFileFromItsEnvironment_LintsWithTheLinters because a step sees the values its workflow sets' "$(lint_outcome_of "$work/environment-job.json" job)" 'linted with the linters'
+expect 'JobWhoseInstallIsADryRun_LintsWithoutTheLinters because a dry run installs nothing' "$(job_with_steps 'pip install --dry-run -r tools/requirements-lint.txt' 'tools/lint.sh')" 'linted without the linters'
+expect 'JobThatLintsBeforeAndAfterItsInstall_LintsWithoutTheLinters because a later lint must not hide the one that ran without them' "$(job_with_steps "tools/lint.sh || true; $install; tools/lint.sh")" 'linted without the linters'
