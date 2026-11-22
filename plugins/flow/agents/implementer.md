@@ -29,6 +29,13 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
    A method writes an argument only when its name says so (M-08), even where the file
    around it threads state through `ref`: a method that decides returns its result.
+   In shell and script code the same rules hold. A function that computes prints its result
+   for the caller to assign, never a global, and one named as a check or lookup never fetches,
+   writes or creates (M-08). Loop counters, `read` variables, temporaries and helper prefixes
+   are spelt in full (`poll_count`, `pool_path`, never `i`, `p`, `tmp`, `cfg`, `vl_`): short
+   names in the file around them are no precedent, and only the glossary's allowed list is
+   (N-05). A bound, delay or cut length gets a named constant (N-06). A comment gives a why,
+   never what the next lines do, in script headers too (C-01).
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
    handling for impossible cases. When the plan is wrong, ambiguous or impossible, stop with
    status `gate` and gate `ambiguity` instead of improvising.
