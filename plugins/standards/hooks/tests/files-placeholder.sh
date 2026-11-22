@@ -2,8 +2,8 @@
 # Tests the {files} placeholder helper against a real sh and bash. It generates configured commands
 # over the outer quoting (none, or the single- or double-quoted script of a sh -c or a bash -c), the
 # quoting {files} sits in inside it (none, single, double), an escape or quote before {files} or
-# inside those quotes and text joined after it, expands each with hostile file names and runs the
-# result as the hooks and verify do. Every command must be refused, or deliver every name intact as
+# inside those quotes, the blank before {files} (space, tab, newline) and text joined after it,
+# expands each with hostile file names and runs the result as the hooks and verify do. Every command must be refused, or deliver every name intact as
 # one word and run nothing. Run from anywhere. Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -18,6 +18,8 @@ fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
 check() { name="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else fail "$name"; fi; }
 
 received="$work/received"; expected="$work/expected"; run_folder="$work/run"; broken="$work/broken"
+outcomes="$work/outcomes"; tab="$(printf '\t')"; newline='
+'
 mkdir -p "$work/bin"
 for recorder in record dotnet npx; do
   printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "%s"\n' "$received" > "$work/bin/$recorder" && chmod +x "$work/bin/$recorder"
@@ -45,10 +47,10 @@ script_text() {
     single) script_quote="'" ;; double) script_quote='"' ;; *) script_quote="" ;;
   esac
   case "$2" in
-    inside) printf 'record %s %s%s {files}%s' "$3" "$script_quote" "$4" "$script_quote" ;;
-    after) printf 'record %s %s%s%s {files}' "$3" "$script_quote" "$4" "$script_quote" ;;
+    inside) printf 'record %s %s%s%s{files}%s' "$3" "$script_quote" "$4" "$5" "$script_quote" ;;
+    after) printf 'record %s %s%s%s%s{files}' "$3" "$script_quote" "$4" "$script_quote" "$5" ;;
     joined) printf 'record %s %s%s%s{files}' "$3" "$script_quote" "$4" "$script_quote" ;;
-    followed) printf 'record %s %s%s {files}x%s' "$3" "$script_quote" "$4" "$script_quote" ;;
+    followed) printf 'record %s %s%s%s{files}x%s' "$3" "$script_quote" "$4" "$5" "$script_quote" ;;
   esac
 }
 
@@ -68,19 +70,24 @@ else
 fi
 
 fragment_commands() {
-  fragment_outer="$1"; fragment_inner="$2"; fragment_placement="$3"
+  fragment_outer="$1"; fragment_inner="$2"; fragment_placement="$3"; fragment_blank="$4"
   fragments | while IFS= read -r fragment; do
-    configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "$fragment" "")"; echo
+    tally_outcome "$(configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "$fragment" "" "$fragment_blank")")"
     [ "$fragment_inner" = none ] || [ -z "$fragment" ] && continue
-    configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "" "$fragment")"; echo
+    tally_outcome "$(configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "" "$fragment" "$fragment_blank")")"
   done
+}
+
+blank_commands() {
+  [ "$3" = joined ] && { fragment_commands "$1" "$2" "$3" ""; return; }
+  for blank in ' ' "$tab" "$newline"; do fragment_commands "$1" "$2" "$3" "$blank"; done
 }
 
 placement_commands() {
   placement_outer="$1"; placement_inner="$2"
   for placement in after inside joined followed; do
     [ "$placement_inner:$placement" = none:inside ] && continue
-    fragment_commands "$placement_outer" "$placement_inner" "$placement"
+    blank_commands "$placement_outer" "$placement_inner" "$placement"
   done
 }
 
@@ -88,7 +95,7 @@ inner_quoting_commands() {
   for inner_quoting in none single double; do placement_commands "$1" "$inner_quoting"; done
 }
 
-generated_commands() {
+tally_generated_commands() {
   for generated_outer in $outer_quotings; do inner_quoting_commands "$generated_outer"; done
 }
 
@@ -104,16 +111,15 @@ outcome() {
   if tail -n "$names_total" "$received" | cmp -s - "$expected" && [ -z "$(ls -A "$run_folder")" ]; then echo intact; else echo broken; fi
 }
 
-: > "$broken"; generated_total=0; delivered_total=0
-while IFS= read -r generated; do
-  generated_total=$((generated_total + 1))
-  case "$(outcome "$generated")" in
-    broken) printf '%s\n' "$generated" >> "$broken" ;;
-    intact) delivered_total=$((delivered_total + 1)) ;;
-  esac
-done <<EOF_COMMANDS
-$(generated_commands)
-EOF_COMMANDS
+tally_outcome() {
+  tally_result="$(outcome "$1")"
+  printf '%s\n' "$tally_result" >> "$outcomes"
+  if [ "$tally_result" = broken ]; then printf '%s\n' "$1" >> "$broken"; fi
+}
+
+: > "$broken"; : > "$outcomes"
+tally_generated_commands
+generated_total="$(grep -c '' "$outcomes")"; delivered_total="$(grep -c '^intact$' "$outcomes")"
 echo "files placeholder: $generated_total generated commands, $delivered_total delivered, the rest refused"
 sed 's/^/    broken: /' "$broken"
 check "GeneratedCommand_IsRefusedOrDeliversEveryNameIntact: no generated command runs a name or changes one" [ ! -s "$broken" ]
@@ -173,6 +179,16 @@ else
   echo "  skip FilesAfterAndInABashScript_DeliversEveryName: bash is not installed"
 fi
 check "FilesAsACommand_IsRefused: the first name would run" refuses 'true; {files}'
+check "FilesAfterATab_DeliversEveryName: a tab ends the word before it" delivers "record$tab{files}"
+check "FilesBeforeATab_DeliversEveryName: a tab ends the word after it" delivers "record {files}$tab"
+check "ScriptShellSeparatedByTabs_DeliversEveryName: tabs separate sh, -c and the script" \
+  delivers "sh$tab-c$tab'record$tab{files}'"
+check "FilesOnTheSecondLine_DeliversEveryName: a multi-line command is read line by line" \
+  delivers "true${newline}record {files}"
+check "FilesOnTheSecondLineOfAScript_DeliversEveryName: a multi-line script is read line by line" \
+  delivers "sh -c 'true${newline}record {files}'"
+check "FilesAfterANewline_IsRefused: the first name would run" refuses "record$newline{files}"
+check "ScriptAfterANewline_IsRefused: the quoted text is not the script of sh -c" refuses "sh -c$newline'record {files}'"
 check "FilesAfterACommandSubstitution_IsRefused: the scanner does not follow its quoting" refuses 'record $(echo "x") y {files}'
 check "FilesInACommandSubstitutionInDoubleQuotes_IsRefused: a quote inside it does not close the outer one" \
   refuses 'record "$(echo " x {files} ")"'

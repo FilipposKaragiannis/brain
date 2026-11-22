@@ -38,9 +38,34 @@ files_placeholder_refused() {
   return 1
 }
 
+files_placeholder_is_blank() {
+  case "$1" in ' '|'	'|'
+') return 0 ;; esac
+  return 1
+}
+
+files_placeholder_is_blank_in_a_command() {
+  [ "$1" != '
+' ] && files_placeholder_is_blank "$1"
+}
+
+files_placeholder_begins_with_blank() {
+  files_placeholder_is_blank "${1%"${1#?}"}"
+}
+
+files_placeholder_ends_with_blank_in_a_command() {
+  files_placeholder_is_blank_in_a_command "${1#"${1%?}"}"
+}
+
+files_placeholder_ends_with_word_end() {
+  files_placeholder_is_blank "${1#"${1%?}"}" && return 0
+  case "$1" in *[';|&()<>']) return 0 ;; esac
+  return 1
+}
+
 files_placeholder_begins_with_word_end() {
-  case "$1" in [' ;|&']*|'
-'*) return 0 ;; esac
+  files_placeholder_begins_with_blank "$1" && return 0
+  case "$1" in [';|&']*) return 0 ;; esac
   return 1
 }
 
@@ -56,7 +81,7 @@ files_placeholder_begins_unfollowed_in_double() {
 
 files_placeholder_unquoted_after() {
   files_placeholder_begins_unfollowed_unquoted "$1" && { printf unsure; return 0; }
-  case "$1" in ' '*) printf edge ;; *) printf none ;; esac
+  if files_placeholder_begins_with_blank "$1"; then printf edge; else printf none; fi
 }
 
 files_placeholder_opened() {
@@ -64,11 +89,27 @@ files_placeholder_opened() {
   if files_placeholder_ends_with_a_script_shell "$2"; then printf ' none'; else printf ' -'; fi
 }
 
+files_placeholder_ends_with_word() {
+  files_placeholder_ends_with_blank_in_a_command "$1" || return 1
+  case "${1%?}" in *"$2") return 0 ;; esac
+  return 1
+}
+
+files_placeholder_starts_a_command() {
+  files_placeholder_command_start="$1"
+  files_placeholder_ends_with_blank_in_a_command "$1" && files_placeholder_command_start="${1%?}"
+  case "$files_placeholder_command_start" in ''|*[';|&(']) return 0 ;; esac
+  return 1
+}
+
 files_placeholder_ends_with_a_script_shell() {
-  case "$1" in
-    "sh -c "|*[';|&(']"sh -c "|*[';|&(']" sh -c ") return 0 ;;
-    "bash -c "|*[';|&(']"bash -c "|*[';|&(']" bash -c ") return 0 ;;
-  esac
+  files_placeholder_ends_with_word "$1" -c || return 1
+  files_placeholder_shell_end="${1%?}"; files_placeholder_shell_end="${files_placeholder_shell_end%-c}"
+  for files_placeholder_shell in sh bash; do
+    files_placeholder_ends_with_word "$files_placeholder_shell_end" "$files_placeholder_shell" || continue
+    files_placeholder_shell_start="${files_placeholder_shell_end%?}"
+    files_placeholder_starts_a_command "${files_placeholder_shell_start%"$files_placeholder_shell"}" && return 0
+  done
   return 1
 }
 
@@ -148,9 +189,20 @@ files_placeholder_state_after() {
   esac
 }
 
+files_placeholder_last_word() {
+  files_placeholder_word_before="$1"; files_placeholder_last=""
+  while files_placeholder_ends_with_blank_in_a_command "$files_placeholder_word_before"; do
+    files_placeholder_word_before="${files_placeholder_word_before%?}"
+  done
+  while [ -n "$files_placeholder_word_before" ] && ! files_placeholder_ends_with_word_end "$files_placeholder_word_before"; do
+    files_placeholder_last="${files_placeholder_word_before#"${files_placeholder_word_before%?}"}$files_placeholder_last"
+    files_placeholder_word_before="${files_placeholder_word_before%?}"
+  done
+  printf '%s' "$files_placeholder_last"
+}
+
 files_placeholder_follows_an_argument() {
-  files_placeholder_word="${1%"${1##*[! ]}"}"; files_placeholder_word="${files_placeholder_word##*[' ;|&()<>
-']}"
+  files_placeholder_word="$(files_placeholder_last_word "$1")"
   case "${files_placeholder_word#[\'\"]}" in
     ''|'!'|'{'|do|then|else|elif|if|while|until|time|exec|[A-Za-z_]*=*) return 1 ;;
   esac
