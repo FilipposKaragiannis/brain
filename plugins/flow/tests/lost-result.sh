@@ -1,7 +1,5 @@
 #!/bin/sh
-# lost-result.sh: tests for a step whose session left no result file, on the local adapter in a
-# throwaway repo, and for how long a Claude step waits for its background subagents.
-# Exit 0 when every check passes, 1 on any failure. run.sh runs it.
+# lost-result.sh: a step whose session left no result file, and how long a Claude step waits.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
@@ -11,16 +9,15 @@ MAX_ATTEMPTS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[
 DEFAULT_CEILING_IN_MILLISECONDS="$(sh -c '. "$FLOW_PLUGIN/lib/host.sh" && printf %s "$HOST_BACKGROUND_WAIT_MILLISECONDS"')"
 OWNER_CEILING_IN_MILLISECONDS=120000
 ONE_SESSION=1
+HOST_DEFAULT_MODEL=""
+HOST_DEFAULT_EFFORT=""
+ROSTER_NAMING=roster
 fake_claude_folder="$work/fake-claude"
-# set_at_review <item>: the item's state set to the review step of the small task profile.
 set_at_review() { "$local_adapter/write-state.sh" "$1" step=review profile=task-S >/dev/null; }
-# run_silent_sessions <item> <steps>: the unattended loop on the item for <steps> steps, each on the
-# offline claude, which writes no result file.
 run_silent_sessions() { "$plugin/templates/run-unattended.sh" claude "$1" --max-steps "$2" >/dev/null 2>&1; }
-# ceiling_seen_by_claude [arguments for the env command]: the background wait ceiling a Claude
-# session that host_run starts reads, printed back by a fake claude.
 ceiling_seen_by_claude() {
-  env "$@" PATH="$fake_claude_folder:$PATH" sh -c '. "$FLOW_PLUGIN/lib/host.sh" && host_run claude . hi' 2>/dev/null
+  env "$@" PATH="$fake_claude_folder:$PATH" sh -c '. "$FLOW_PLUGIN/lib/host.sh" && host_run claude . hi "$1" "$2" "$3"' \
+    ceiling_seen_by_claude "$HOST_DEFAULT_MODEL" "$HOST_DEFAULT_EFFORT" "$ROSTER_NAMING" 2>/dev/null
 }
 
 echo "lost result: a review whose session left no result file"

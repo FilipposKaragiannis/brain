@@ -42,7 +42,7 @@ done
 # implies. A no-op without github.project.
 project_sync() {
   [ -n "$GH_PROJECT" ] || { cat >/dev/null; return 0; }
-  python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" sync "$(gh_repo)" "$GH_PROJECT"
+  cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" sync "$(gh_repo)" "$GH_PROJECT"
 }
 
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: as
@@ -54,7 +54,7 @@ project_sync() {
 # needs lists the READY_NEEDS fields an unstarted item still lacks, the same rule as the local
 # adapter's _item.py (change both); open_children counts its open native sub-issues.
 issue_to_item() {
-  python3 -I -c '
+  cached_python3 -I -c '
 import json, os, re, sys
 text = sys.stdin.read()
 if not text.strip():
@@ -118,7 +118,7 @@ print(json.dumps({
 # attempts, the PR and the touches.
 state_comment() {
   comments="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=100")" || return 1
-  printf '%s' "$comments" | python3 -I -c '
+  printf '%s' "$comments" | cached_python3 -I -c '
 import json, sys, re
 marker = sys.argv[1]
 for c in [c for page in json.load(sys.stdin) for c in page]:

@@ -20,4 +20,4 @@ command -v ready_rules >/dev/null 2>&1 || ready_rules() {
   READY_NEEDS="$(cfg ready.needs | paste -sd, -)"; READY_PRIORITY_ORDER="$(cfg ready.priority_order | paste -sd, -)"
   export READY_NEEDS READY_PRIORITY_ORDER
 }
-jira() { python3 -I "$FLOW_PLUGIN/adapters/jira/_jira.py" "$@"; }
+jira() { cached_python3 -I "$FLOW_PLUGIN/adapters/jira/_jira.py" "$@"; }

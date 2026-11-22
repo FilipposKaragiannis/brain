@@ -106,7 +106,8 @@ check "ClaimWhoseSetupFails_LeavesNoRecord: the next claim must try the setup ag
 
 echo "worktree setup: while a claim's setup runs"
 new_repo busy
-installing_setup "; touch $root/setup-started; while [ ! -f $root/setup-may-end ]; do sleep 1; done; echo setup-ended >> $root/order.log"
+setup_wait_seconds=120
+installing_setup "; touch '$root/setup-started'; remaining=$setup_wait_seconds; while [ ! -f '$root/setup-may-end' ]; do [ \$remaining -gt 0 ] || exit 1; sleep 1; remaining=\$((remaining - 1)); done; echo setup-ended >> '$root/order.log'"
 watching_lockfiles
 slow="$(new_task "Slow install")"
 "$steward" claim "$slow" > "$work/slow.out" 2>&1 & claim_pid=$!

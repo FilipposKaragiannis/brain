@@ -1,0 +1,8 @@
+alpha
+  ok   Alpha_One: the first check
+error: a stray line that is no section
+  ok   Alpha_Two: the second check
+  ok   a repeated check
+  ok   a repeated check
+beta (tests/beta.sh)
+  ok   beta: beta: ok

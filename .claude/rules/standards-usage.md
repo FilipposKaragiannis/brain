@@ -1,10 +1,11 @@
 ---
 paths:
   - "**/*.sh"
+  - "**/*.py"
 ---
 # 0. How these rules are used
 
-- **U-01 Scope.** Language-neutral rules first; language specifics live in appendices (C# today). *Why:* the marketplace serves more than one language, so the philosophy must not be tied to C# syntax.
+- **U-01 Scope.** Language-neutral rules first; language specifics live in appendices (C#, shell and Python today), one per language, each naming the file types it covers and loaded only for them. *Why:* the marketplace serves more than one language, so the philosophy must not be tied to C# syntax.
 - **U-02 Breaking a [judgement] rule must be declared in three places:** the commit message, the PR body, and the review. *Why:* each is read at a different time by a different reader (log, reviewer, merge gate); one silent breach anywhere starts a review-and-fix loop.
 - **U-03 A [hard] rule is a gate, not advice.** It is checked by a tool (analyzer, hook, CI) wherever one exists, and by the review otherwise. *Why:* rules that are only suggested are the ones agents skip.
 - **U-04 A [signal] rule is a smell detector.** Numbers like complexity, nesting and size are guides that say "this is growing the wrong way", mostly for production code. Crossing one means the agent splits the code or states why not. *Why:* a hard numeric limit invites complexity added only to dodge the limit.

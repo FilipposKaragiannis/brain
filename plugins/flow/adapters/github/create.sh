@@ -39,11 +39,11 @@ Blocked by $(printf '%s\n' "$blocked" | tr ',' '\n' | while read -r b; do [ -n "
 [ -n "$labels" ] && set -- --label "$labels" || set --
 url="$(printf '%s\n%s\n' "$body" "$tail" | gh_once issue create -R "$repo" --title "$title" --body-file - "$@")" || die "cannot create the issue"
 n="${url##*/}"
-[ -n "$type" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
-[ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }
+[ -n "$type" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
+[ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }
 area_field="$GH_AREA_FIELD"
-[ -n "$priority" ] && [ -n "$GH_PRIORITY_FIELD" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_PRIORITY_FIELD" "$priority" || echo "flow: could not set the priority of gh#$n" >&2; }
-[ -n "$area" ] && [ -n "$area_field" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$area_field" "$area" || echo "flow: could not set the area of gh#$n" >&2; }
+[ -n "$priority" ] && [ -n "$GH_PRIORITY_FIELD" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_PRIORITY_FIELD" "$priority" || echo "flow: could not set the priority of gh#$n" >&2; }
+[ -n "$area" ] && [ -n "$area_field" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$area_field" "$area" || echo "flow: could not set the area of gh#$n" >&2; }
 if [ -n "$parent" ]; then
   pid="$(gh issue view "$(issue_number "$parent")" -R "$repo" --json id -q .id)"
   cid="$(gh issue view "$n" -R "$repo" --json id -q .id)"
