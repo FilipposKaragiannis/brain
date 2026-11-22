@@ -132,30 +132,34 @@ sleep $child_seconds
 STUB
 cat > "$work/stepping-runner.py" <<'PY'
 import sys
+import time
 from pathlib import Path
 sys.path.append(sys.argv[1])
 import flow_suites
 
 
 class ClockThatStepsOnceTheSuiteIsReady:
-    def __init__(self, ready: Path) -> None:
+    def __init__(self, ready: Path, waits_for_real_from: float) -> None:
         self.seconds = 0.0
         self.ready = ready
+        self.waits_for_real_from = waits_for_real_from
 
     def now(self) -> float:
         return self.seconds
 
     def sleep(self, duration: flow_suites.Duration) -> None:
+        if self.seconds >= self.waits_for_real_from:
+            time.sleep(duration.seconds)
         if self.ready.exists():
             self.seconds += duration.seconds
 
 
-name, script, ready, logs = sys.argv[2:]
-settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready)))
+name, script, ready, logs, waits_for_real_from = sys.argv[2:]
+settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready), float(waits_for_real_from)))
 sys.exit(flow_suites.report_run(flow_suites.run_selected({name: ("sh", script)}, Path(logs), settings)))
 PY
-run_on_stepping_clock() { mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$@" "$work/stepping-logs" > "$work/output" 2>&1; }
-run_on_stepping_clock deaf "$work/deaf-suite.sh" "$work/deaf-suite-ready" &
+run_on_stepping_clock() { mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$1" "$2" "$3" "$work/stepping-logs" "$4" > "$work/output" 2>&1; }
+run_on_stepping_clock deaf "$work/deaf-suite.sh" "$work/deaf-suite-ready" inf &
 stepping_runner=$!
 expect 'SuitePastTheDefaultLimitOnTheClockItIsGiven_IsStoppedWithoutTheLimitPassingForReal because the runner times a suite by its injected clock' "$(process_state "$stepping_runner")" ended
 wait "$stepping_runner" || true
@@ -187,11 +191,64 @@ echo "  ok   Stub_LeavesAnExitedChild"
 python3 -I "$work/parent-of-an-exited-child.py" "$work/exited-child" "$work/parent" "$work/exited-child-suite-ready" $child_seconds &
 sleep $child_seconds
 STUB
-run_on_stepping_clock exited "$work/exited-child-suite.sh" "$work/exited-child-suite-ready" || true
+run_on_stepping_clock exited "$work/exited-child-suite.sh" "$work/exited-child-suite-ready" "$default_limit_seconds" || true
 expect 'SuiteWhoseGroupHoldsOnlyAnExitedChild_EndsBeforeTheGraceTimePasses because a child that has exited runs no check' "$(if [ "$(suite_seconds exited)" -lt "$((default_limit_seconds + grace_seconds))" ]; then echo before-grace; else echo after-grace; fi)" before-grace
 expect 'SuiteWhoseGroupHoldsOnlyAnExitedChild_LeavesNoCheckRunning because a child that has exited but is not yet reaped runs nothing' "$(process_state "$(cat "$work/exited-child")")" ended
 kill "$(cat "$work/parent")"
 rm -r "$work/exited-child" "$work/parent" "$work/parent-of-an-exited-child.py" "$work/exited-child-suite.sh" "$work/exited-child-suite-ready" "$work/stepping-logs" "$work/stepping-runner.py"
+cat > "$work/member-states.py" <<'PY'
+import sys
+from pathlib import Path
+sys.path.append(sys.argv[1])
+import flow_suites
+
+reader, group = sys.argv[2], int(sys.argv[3])
+states = flow_suites.states_in_process_table(group, Path(sys.argv[4])) if reader == "table" else flow_suites.states_in_process_listing(group)
+print(" ".join(states) or "none")
+PY
+member_group=77; other_group=88; fake_table="$work/fake-proc"; name_not_utf8="$(printf 'cut\303')"
+table_states() { python3 -I -B "$work/member-states.py" "$project/tools/lib" table "$member_group" "$1" 2>&1; }
+fake_stat() { mkdir -p "$fake_table/$1"; printf '%s\n' "$2" > "$fake_table/$1/stat"; }
+table_with_a_running_member() { rm -rf "$fake_table"; fake_stat 40 "40 (member) R 1 $member_group $member_group 0"; }
+table_with_a_running_member; fake_stat 41 "41 ($name_not_utf8) S 1 $other_group $other_group 0"
+expect 'ProcessTableHoldingAnUnrelatedNameThatIsNotUtf8_ReadsTheMembers because any process on the machine may take any name' "$(table_states "$fake_table")" R
+table_with_a_running_member; fake_stat 41 "41 ($name_not_utf8) S 1 $member_group $member_group 0"
+expect 'ProcessTableHoldingAMemberNameThatIsNotUtf8_ReadsItsState because only the fields after the name are read' "$(table_states "$fake_table" | tr ' ' '\n' | sort | tr '\n' ' ')" 'R S '
+table_with_a_running_member; mkdir -p "$fake_table/42"; ln -s "$work/vanished" "$fake_table/42/stat"
+expect 'ProcessTableWhoseProcessVanished_CountsItAsNoMember because a process may end between the listing and the read' "$(table_states "$fake_table")" R
+table_with_a_running_member; fake_stat 43 "43 (locked) D 1 $member_group $member_group 0"; chmod 000 "$fake_table/43/stat"
+if [ -r "$fake_table/43/stat" ]; then
+  echo 'skip ProcessTableWithAnUnreadableStatus_CountsItAsNoMember: this user reads a file with no permissions'
+else
+  expect 'ProcessTableWithAnUnreadableStatus_CountsItAsNoMember because the runner may not read every process' "$(table_states "$fake_table")" R
+fi
+chmod 600 "$fake_table/43/stat"
+table_with_a_running_member; fake_stat 44 "44 (short) S"
+expect 'ProcessTableWithAShortStatus_CountsItAsNoMember because a line without its group names no group' "$(table_states "$fake_table")" R
+table_with_a_running_member; fake_stat 45 "45 (odd) S 1 x$member_group x$member_group 0"; fake_stat 46 "46 no closing parenthesis S 1 $member_group $member_group"
+expect 'ProcessTableWithAStatusThatDoesNotParse_CountsItAsNoMember because only a whole number names a group' "$(table_states "$fake_table")" R
+expect 'MissingProcessTable_CountsNoMember because a machine may have no process table' "$(table_states "$work/no-process-table")" none
+mkdir "$work/stub-ps"
+cat > "$work/stub-ps/ps" <<STUB
+#!/bin/sh
+cat "$work/ps-output"
+exit "\$(cat "$work/ps-code")"
+STUB
+chmod +x "$work/stub-ps/ps"
+listing_states() { printf '%s' "$1" > "$work/ps-output"; echo "$2" > "$work/ps-code"; PATH="$work/stub-ps:$PATH" python3 -I -B "$work/member-states.py" "$project/tools/lib" listing "$member_group" 2>&1; }
+expect 'ProcessListingThatFails_CountsNoMember because a failed listing names no process' "$(listing_states " $member_group R
+" 1)" none
+expect 'ProcessListingThatPrintsNothing_CountsNoMember because an empty listing names no process' "$(listing_states '' 0)" none
+expect 'ProcessListingWithALineThatDoesNotParse_ReadsTheOtherLines because one odd line names no group' "$(listing_states "garbage
+$member_group
+x$member_group R
+$member_group R extra
+ $member_group S
+" 0)" S
+expect 'ProcessListingWithBytesThatAreNotUtf8_ReadsTheOtherLines because the listing is read as bytes' "$(listing_states "$name_not_utf8 $member_group R
+ $member_group S
+" 0)" S
+rm -r "$fake_table" "$work/stub-ps" "$work/ps-output" "$work/ps-code" "$work/member-states.py"
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
 touch plugins/flow/README.md

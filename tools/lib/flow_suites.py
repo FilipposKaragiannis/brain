@@ -38,7 +38,11 @@ STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 PRESENCE_PROBE_SIGNAL = 0
 ZOMBIE_STATE = "Z"
 PROCESS_TABLE = Path("/proc")
+STATE_FIELD = 0
 PROCESS_GROUP_FIELD = 2
+LISTING_GROUP_COLUMN = 0
+LISTING_STATE_COLUMN = 1
+LISTING_COLUMNS = 2
 
 
 @dataclass(frozen=True)
@@ -132,26 +136,38 @@ def signal_group(process: subprocess.Popen, number: signal.Signals) -> bool:
     return True
 
 
-def states_in_process_table(group: int) -> "list[str]":
-    states = []
-    for status in PROCESS_TABLE.glob("[0-9]*/stat"):
-        try:
-            fields = status.read_text().rpartition(")")[2].split()
-        except OSError:
-            continue
-        if int(fields[PROCESS_GROUP_FIELD]) == group:
-            states.append(fields[0])
-    return states
+def names_group(field: str, group: int) -> bool:
+    return field.isascii() and field.isdigit() and int(field) == group
+
+
+def fields_after_name(status: Path) -> "list[str]":
+    try:
+        line = status.read_bytes().decode(errors="replace")
+    except OSError:
+        return []
+    return line.rpartition(")")[2].split() if ")" in line else []
+
+
+def states_in_process_table(group: int, table: Path) -> "list[str]":
+    rows = (fields_after_name(status) for status in table.glob("[0-9]*/stat"))
+    return [fields[STATE_FIELD] for fields in rows if len(fields) > PROCESS_GROUP_FIELD and names_group(fields[PROCESS_GROUP_FIELD], group)]
+
+
+def process_listing_lines() -> "list[str]":
+    try:
+        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, timeout=PROCESS_LISTING_LIMIT.seconds, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return listing.stdout.decode(errors="replace").splitlines() if listing.returncode == 0 else []
 
 
 def states_in_process_listing(group: int) -> "list[str]":
-    listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True, timeout=PROCESS_LISTING_LIMIT.seconds, check=False)
-    rows = (line.split() for line in listing.stdout.splitlines())
-    return [state for member_group, state in rows if int(member_group) == group]
+    rows = (line.split() for line in process_listing_lines())
+    return [row[LISTING_STATE_COLUMN] for row in rows if len(row) == LISTING_COLUMNS and names_group(row[LISTING_GROUP_COLUMN], group)]
 
 
 def member_states(group: int) -> "list[str]":
-    return states_in_process_table(group) if PROCESS_TABLE.is_dir() else states_in_process_listing(group)
+    return states_in_process_table(group, PROCESS_TABLE) if PROCESS_TABLE.is_dir() else states_in_process_listing(group)
 
 
 def group_has_members(process: subprocess.Popen) -> bool:
