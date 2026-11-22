@@ -65,6 +65,7 @@ for part in $parts; do
     tools)
       clean tools/tests/run.sh || status=1
       clean sh tools/tests/flow-selection.sh || status=1
+      clean sh tools/tests/flow-runner.sh || status=1
       clean tools/tests/suite-parity.sh || status=1
       ;;
     console-app) console_app || status=1 ;;
