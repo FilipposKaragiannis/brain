@@ -44,7 +44,7 @@ echo "sweep"
 # The fake gh answers pr view with the PR in its state file, whatever the URL. One pool
 # worktree is free here, so each case claims it in turn.
 fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":sys.argv[4],"headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2" "${3:-}"; }
-. "$here/_worktree_helpers.sh"
+. "$here/_claimed_worktree_fixture.sh"
 sc="$("$P/adapters/local/create.sh" task "Closed, claimed")"; wc_="$("$P/scripts/steward.sh" claim "$sc")"
 "$P/adapters/local/close.sh" "$sc" >/dev/null
 check "sweep --dry-run: names the closed item's worktree and touches nothing" sh -c "'$P/scripts/steward.sh' sweep --dry-run | grep -q '$sc: would release' && [ -f '$wc_/.flow/claim.json' ]"

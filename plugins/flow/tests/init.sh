@@ -10,7 +10,7 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
-. "$here/_worktree_helpers.sh"
+. "$here/_claimed_worktree_fixture.sh"
 . "$here/_init_fixture.sh"
 FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
 echo "init: the Claude worktree hooks in this user's local settings"

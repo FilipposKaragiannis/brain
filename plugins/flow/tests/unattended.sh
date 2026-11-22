@@ -8,7 +8,7 @@ work="$(mktemp -d)"
 . "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
-. "$here/_worktree_helpers.sh"
+. "$here/_claimed_worktree_fixture.sh"
 echo "unattended steps: the model, the architect, the cache, the usage, a host stop (#65)"
 mkdir -p "$work/cost" && cd "$work/cost" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow

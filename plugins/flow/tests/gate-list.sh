@@ -10,7 +10,7 @@ trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
 . "$here/_github_fixture.sh"
 . "$here/_jobs_fixture.sh"
-. "$here/_worktree_helpers.sh"
+. "$here/_claimed_worktree_fixture.sh"
 python3 -I -c 'import json, sys; path = sys.argv[1]; store = json.load(open(path)); store["pr"] = {"number": 90, "state": "OPEN", "isDraft": False, "mergedAt": None, "url": "https://gh/pull/90", "headRefName": "flow/gh-11", "baseRefName": "main"}; json.dump(store, open(path, "w"))' "$FAKE_GH_DIR/issues.json"
 echo "gate list --json"
 mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init

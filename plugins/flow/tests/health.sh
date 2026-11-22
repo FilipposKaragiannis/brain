@@ -24,7 +24,7 @@ git clone -q "$hroot/origin.git" "$hroot/other" 2>/dev/null
 git -C "$hroot/other" config user.email t@t && git -C "$hroot/other" config user.name t
 hs() { "$P/scripts/steward.sh" health "$@"; }
 hitem() { "$P/adapters/local/create.sh" task "$1" --size S --body "x"; }
-. "$here/_worktree_helpers.sh"
+. "$here/_claimed_worktree_fixture.sh"
 rec() { printf '%s/.flow/runs/%s.json' "$hroot/app" "$(item_slug "$1")"; }
 age_run() { python3 -c '
 import json, sys, time
