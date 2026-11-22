@@ -22,7 +22,7 @@ import json
 import re
 import shlex
 import sys
-from itertools import takewhile
+from itertools import groupby, takewhile
 
 _TEST_SCRIPT = "tools/test.sh"
 _LINT_SCRIPT = "tools/lint.sh"
@@ -32,6 +32,10 @@ _INSTALL_COMMAND = "install"
 _REQUIREMENTS_OPTIONS = ("-r", "--requirement")
 _REQUIREMENTS_IN_ONE_WORD = ("-r" + _LINTER_REQUIREMENTS, "--requirement=" + _LINTER_REQUIREMENTS)
 _PART_NAME = re.compile(r"[a-z][a-z-]*")
+_COMMAND_SEPARATOR = re.compile(r"[;&|()]+")
+_LINE_CONTINUATION = "\\\n"
+_LINE_END = "\n"
+_SEPARATOR_FOR_A_LINE_END = " ; "
 _NEW_JOB = {"runs-on": "ubuntu-latest", "timeout-minutes": 5, "steps": [{"run": "true"}]}
 
 
@@ -43,8 +47,15 @@ def _parts_after(words: "list[str]") -> "list[str]":
     return list(takewhile(_PART_NAME.fullmatch, words))
 
 
+def _commands(run: str) -> "list[list[str]]":
+    lexer = shlex.shlex(run.replace(_LINE_CONTINUATION, " ").replace(_LINE_END, _SEPARATOR_FOR_A_LINE_END), posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    grouped = groupby(lexer, key=lambda word: _COMMAND_SEPARATOR.fullmatch(word) is None)
+    return [list(words) for is_command, words in grouped if is_command]
+
+
 def _part_lists(workflow: dict) -> "list[list[str]]":
-    commands = [shlex.split(run) for run in _runs(workflow)]
+    commands = [words for run in _runs(workflow) for words in _commands(run)]
     return [_parts_after(words[at + 1:]) for words in commands for at, word in enumerate(words) if word == _TEST_SCRIPT]
 
 
@@ -76,12 +87,13 @@ def skip_guard(workflow: dict) -> "list[str]":
     return [step["run"] for step in workflow["jobs"]["console"]["steps"] if "grep -i skip" in step.get("run", "")]
 
 
-def _words_in_order(job: dict) -> "list[str]":
-    return [word for step in job.get("steps", []) if "run" in step for word in shlex.split(step["run"])]
+def _commands_in_order(job: dict) -> "list[list[str]]":
+    return [words for step in job.get("steps", []) if "run" in step for words in _commands(step["run"])]
 
 
-def _starts_lint(words: "list[str]", at: int) -> bool:
-    return words[at] == _LINT_SCRIPT or (words[at] == _TEST_SCRIPT and _LINT_PART in _parts_after(words[at + 1:]))
+def _runs_lint(words: "list[str]") -> bool:
+    parts = [part for at, word in enumerate(words) if word == _TEST_SCRIPT for part in _parts_after(words[at + 1:])]
+    return _LINT_SCRIPT in words or _LINT_PART in parts
 
 
 def _names_linter_requirements(words: "list[str]", at: int) -> bool:
@@ -94,9 +106,8 @@ def _installs_linters(words: "list[str]") -> bool:
 
 
 def _lints_before_installing(job: dict) -> bool:
-    words = _words_in_order(job)
-    lint_starts = [at for at in range(len(words)) if _starts_lint(words, at)]
-    return bool(lint_starts) and not _installs_linters(words[:lint_starts[0]])
+    before_lint = list(takewhile(lambda words: not _runs_lint(words), _commands_in_order(job)))
+    return len(before_lint) < len(_commands_in_order(job)) and not any(_installs_linters(words) for words in before_lint)
 
 
 def lint_without_linters(workflow: dict) -> "list[str]":
@@ -195,3 +206,6 @@ installing_with TheShortOption '-r tools/requirements-lint.txt'
 installing_with TheShortOptionJoinedToTheFile '-rtools/requirements-lint.txt'
 installing_with TheLongOption '--requirement tools/requirements-lint.txt'
 installing_with TheLongOptionAndAnEqualsSign '--requirement=tools/requirements-lint.txt'
+expect 'JobThatInstallsThenLintsAfterASemicolon_PassesTheLinterCheck because a semicolon ends the install command' "$(job_running '{"run": "python -m pip install -r tools/requirements-lint.txt; tools/lint.sh"}')" ''
+expect 'JobThatInstallsThenLintsAfterAnAndOperator_PassesTheLinterCheck because the lint runs only after the install' "$(job_running '{"run": "python -m pip install -r tools/requirements-lint.txt && tools/test.sh lint"}')" ''
+expect 'JobThatLintsThenInstallsAfterASemicolon_FailsTheLinterCheck because lint ran before its linters were there' "$(job_running '{"run": "tools/lint.sh; python -m pip install -r tools/requirements-lint.txt"}')" release
