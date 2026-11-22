@@ -13,9 +13,15 @@ export FLOW_PLUGIN
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
 # ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one.
-if ! command git --version >/dev/null 2>&1 && [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/git ]; then
-  git() { /Applications/Xcode.app/Contents/Developer/usr/bin/git "$@"; }
-fi
+# FLOW_GIT_PROGRAM hands the answer to child scripts, which take only git or Xcode's git from it.
+_flow_xcode_git=/Applications/Xcode.app/Contents/Developer/usr/bin/git
+case "${FLOW_GIT_PROGRAM:-}" in
+  git|"$_flow_xcode_git") ;;
+  *) FLOW_GIT_PROGRAM=git
+     if ! command git --version >/dev/null 2>&1 && [ -x "$_flow_xcode_git" ]; then FLOW_GIT_PROGRAM="$_flow_xcode_git"; fi ;;
+esac
+export FLOW_GIT_PROGRAM
+[ "$FLOW_GIT_PROGRAM" = git ] || git() { "$_flow_xcode_git" "$@"; }
 
 die() { echo "flow: $1" >&2; exit "${2:-1}"; }
 
@@ -69,7 +75,21 @@ flow_install_set() {
 }
 flow_source_hash() { hash_files $(flow_install_set "$1"); }
 
-main_worktree() { git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'; }
+# main_worktree: the main worktree of the repository at the working folder, nothing outside one.
+main_worktree() {
+  if main_worktree_handed_down; then printf '%s\n' "$FLOW_MAIN_WORKTREE"; return; fi
+  git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'
+}
+# main_worktree_handed_down: FLOW_MAIN_WORKTREE was found for this folder, with no git override.
+main_worktree_handed_down() {
+  [ "${FLOW_MAIN_WORKTREE_FOLDER:-}" = "$PWD" ] && [ -n "${FLOW_MAIN_WORKTREE+set}" ] && ! git_repository_overridden
+}
+# git_repository_overridden: GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR points git at a repository.
+git_repository_overridden() { [ -n "${GIT_DIR:-}${GIT_WORK_TREE:-}${GIT_COMMON_DIR:-}" ]; }
+if ! main_worktree_handed_down && ! git_repository_overridden; then
+  FLOW_MAIN_WORKTREE="$(main_worktree)"; FLOW_MAIN_WORKTREE_FOLDER="$PWD"
+  export FLOW_MAIN_WORKTREE FLOW_MAIN_WORKTREE_FOLDER
+fi
 
 # The flow home holds the project config, the local items and the gate records. It is the main
 # worktree's .flow, found from any linked worktree. FLOW_HOME overrides it (tests).
