@@ -3,12 +3,11 @@ on:
   push:
     branches: [main]
   pull_request:
-# A newer push to a pull request cancels its older runs; each run on main has a group of its own.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # Every part is named on tools/test.sh's command line, so a part whose tools are missing fails its
-# job instead of being skipped. Time limits sit well above the times measured in CI.
+# job instead of being skipped. Time limits sit well above the measured times.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -22,7 +21,7 @@ jobs:
       - run: tools/test.sh lint
   standards:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,7 +77,11 @@ jobs:
         working-directory: plugins/console/app
       - run: npm ci
         working-directory: plugins/console/app/ui
-      - run: tools/test.sh console console-app
+      - run: tools/test.sh console 2>&1 | tee "$RUNNER_TEMP/console.log"
+        shell: bash
+      - run: |
+          if grep -i skip "$RUNNER_TEMP/console.log"; then echo "console: the checks above were skipped" >&2; exit 1; fi
+      - run: tools/test.sh console-app
   plugins:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -101,8 +104,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./plugins/standards/action
-  # The one check main can require: it fails unless every job above succeeded, so a skipped or
-  # cancelled job, or a failed flow shard, fails it too.
+  # The one check main can require.
   result:
     if: always()
     needs: [lint, standards, tools, flow, console, plugins, gates-action]

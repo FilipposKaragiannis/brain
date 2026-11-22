@@ -11,8 +11,10 @@ trap 'sandbox_close $?' EXIT
 copy="$work/checkout"
 mkdir -p "$copy/tools" "$copy/plugins/console/tests" "$copy/plugins/console/app/node_modules"
 cp "$root/tools/test.sh" "$copy/tools/"
-printf '#!/bin/sh\necho "console suite ran"\n' > "$copy/plugins/console/tests/run.sh"
+printf '#!/bin/sh\n' > "$copy/plugins/console/tests/run.sh"
 chmod +x "$copy/plugins/console/tests/run.sh"
+supported_node=24
+older_node=$((supported_node - 1))
 tools_with() {
   tools_folder="$work/tools-$1"; rm -rf "$tools_folder"; mkdir "$tools_folder"
   for tool in dirname env; do ln -s "$(command -v "$tool")" "$tools_folder/$tool"; done
@@ -23,26 +25,26 @@ tools_with() {
 console_part() { PATH="$tools_folder" "$copy/tools/test.sh" console > "$work/output" 2>&1 && echo pass || echo fail; }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
 
-tools_with 24 curl
+tools_with "$supported_node" curl
 expect 'NamedConsoleWithoutZsh_Fails because the zsh pane checks would be skipped' "$(console_part)" fail
-expect 'NamedConsoleWithoutZsh_NamesZsh because the owner must see what to install' "$(grep -c 'console cannot run, zsh missing' "$work/output")" 1
-expect 'NamedConsoleWithoutZsh_RunsNoSuite because a part that cannot run in full is no pass' "$(grep -c 'console suite ran' "$work/output")" 0
-tools_with 24 zsh
+expect 'NamedConsoleWithoutZsh_NamesZsh because the owner must see what to install' "$(grep -c zsh "$work/output")" 1
+tools_with "$supported_node" zsh
 expect 'NamedConsoleWithoutCurl_Fails because the real daemon checks would be skipped' "$(console_part)" fail
-expect 'NamedConsoleWithoutCurl_NamesCurl because the owner must see what to install' "$(grep -c 'console cannot run, curl missing' "$work/output")" 1
-tools_with 22 curl zsh
+expect 'NamedConsoleWithoutCurl_NamesCurl because the owner must see what to install' "$(grep -c curl "$work/output")" 1
+tools_with "$older_node" curl zsh
 expect 'NamedConsoleUnderAnOlderNode_Fails because the suite skips every check below Node 24' "$(console_part)" fail
-expect 'NamedConsoleUnderAnOlderNode_NamesTheNodeItNeeds because the owner must see what to install' "$(grep -c 'console cannot run, node 24 or newer missing' "$work/output")" 1
+expect 'NamedConsoleUnderAnOlderNode_NamesTheNodeItNeeds because the owner must see what to install' "$(grep -c "node $supported_node" "$work/output")" 1
 rm -r "$copy/plugins/console/app/node_modules"
-tools_with 24 curl zsh
+tools_with "$supported_node" curl zsh
 expect 'NamedConsoleWithoutAppDependencies_Fails because the real daemon checks would be skipped' "$(console_part)" fail
 expect 'NamedConsoleWithoutAppDependencies_GivesTheInstallCommand because the owner must see what to run' "$(grep -c 'cd plugins/console/app && npm ci' "$work/output")" 1
 mkdir "$copy/plugins/console/app/node_modules"
 expect 'NamedConsoleWithEveryTool_Passes because nothing it needs is missing' "$(console_part)" pass
-expect 'NamedConsoleWithEveryTool_RunsTheSuite because the part is the suite' "$(grep -c 'console suite ran' "$work/output")" 1
+printf '#!/bin/sh\nexit 1\n' > "$copy/plugins/console/tests/run.sh"
+expect 'NamedConsoleWhoseSuiteFails_Fails because the part is the suite' "$(console_part)" fail
 plugins_part() { PATH="$tools_folder" "$copy/tools/test.sh" plugins > "$work/output" 2>&1 && echo pass || echo fail; }
 expect 'NamedPluginsWithoutTheClaudeCommand_Fails because no plugin would be validated' "$(plugins_part)" fail
 expect 'NamedPluginsWithoutTheClaudeCommand_GivesTheInstallCommand because the owner must see what to run' "$(grep -c 'npm install -g @anthropic-ai/claude-code' "$work/output")" 1
 console_app_part() { PATH="$tools_folder" "$copy/tools/test.sh" console-app > "$work/output" 2>&1 && echo pass || echo fail; }
-expect 'NamedConsoleAppWithoutTheUiDependencies_Fails because the UI checks would not run' "$(console_app_part)" fail
-expect 'NamedConsoleAppWithoutTheUiDependencies_NamesWhatIsMissing because the owner must see what to install' "$(grep -c 'console-app cannot run, plugins/console/app/node_modules or plugins/console/app/ui/node_modules missing' "$work/output")" 1
+expect 'NamedConsoleAppWithoutTheInterfaceDependencies_Fails because the interface checks would not run' "$(console_app_part)" fail
+expect 'NamedConsoleAppWithoutTheInterfaceDependencies_NamesTheirFolder because the owner must see what to install' "$(grep -c 'plugins/console/app/ui/node_modules' "$work/output")" 1

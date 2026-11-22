@@ -77,7 +77,7 @@ for part in $parts; do
       clean sh tools/tests/flow-selection.sh || status=1
       clean sh tools/tests/flow-runner.sh || status=1
       clean sh tools/tests/named-parts.sh || status=1
-      clean sh tools/tests/ci-workflow.sh || status=1
+      clean sh tools/tests/build-workflow.sh || status=1
       clean tools/tests/suite-parity.sh || status=1
       ;;
     console-app) console_app || status=1 ;;
