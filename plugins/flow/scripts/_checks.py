@@ -12,13 +12,24 @@
       nothing when a file under them has an uncommitted change, or when there is no commit, so
       the check runs and its pass is not kept.
 
+  _checks.py names
+      Reads NUL-separated names from stdin and prints each distinct name that is not under
+      .flow/, in byte order, each followed by U+001F. Prints nothing and exits 3 when a name holds U+001F itself,
+      which cannot be told from the separator.
+  _checks.py existing <prefix> <extensions>
+      Reads names, each followed by U+001F, from stdin and prints those that start with the prefix,
+      end in one of the extensions (blank separated; none keeps no name) and are files now, in the
+      same form. A name that is a deleted file is left out.
+
 Globs match as lib/flow.sh glob_match does: * and ** both cross directories.
 """
 import fnmatch
 import hashlib
 import json
+import os
 import subprocess
 import sys
+from types import MappingProxyType
 
 BUILD_NAME = "build"
 TEST_NAME = "tests"
@@ -26,6 +37,8 @@ FLOW_FOLDER = ".flow/"
 RENAME_STATES = ("R", "C")
 STATUS_PATH_OFFSET = 3
 MALFORMED_EXIT = 2
+NAME_SEPARATOR = b"\x1f"
+SEPARATOR_EXIT = 3
 
 
 def shell_pattern(glob):
@@ -161,15 +174,53 @@ def input_key(command, globs):
     return digest.hexdigest()
 
 
+def distinct_names(raw):
+    return sorted({name for name in raw.split(b"\0") if name and not name.startswith(os.fsencode(FLOW_FOLDER))})
+
+
+def print_names():
+    names = distinct_names(sys.stdin.buffer.read())
+    if any(NAME_SEPARATOR in name for name in names):
+        return SEPARATOR_EXIT
+    sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in names))
+    return 0
+
+
+def is_existing_file_under(name, wanted_prefix, wanted_endings):
+    return name.startswith(wanted_prefix) and name.endswith(wanted_endings) and os.path.isfile(name)
+
+
+def print_existing(prefix, extensions):
+    wanted_prefix = os.fsencode(prefix)
+    wanted_endings = tuple(os.fsencode(extension) for extension in extensions.split())
+    names = sys.stdin.buffer.read().split(NAME_SEPARATOR)
+    kept = [name for name in names if is_existing_file_under(name, wanted_prefix, wanted_endings)]
+    sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in kept))
+    return 0
+
+
+def print_key(command):
+    globs = [line.strip() for line in sys.stdin if line.strip()]
+    print(input_key(command, globs), end="")
+    return 0
+
+
+SUBCOMMANDS = MappingProxyType(
+    {
+        ("plan", 1): print_plan,
+        ("key", 1): print_key,
+        ("names", 0): print_names,
+        ("existing", 2): print_existing,
+    }
+)
+
+
 def main(argv):
-    if len(argv) == 2 and argv[0] == "plan":
-        return print_plan(argv[1])
-    if len(argv) == 2 and argv[0] == "key":
-        globs = [line.strip() for line in sys.stdin if line.strip()]
-        print(input_key(argv[1], globs), end="")
-        return 0
-    print("usage: _checks.py plan <config.json> | key <command> (globs on stdin)", file=sys.stderr)
-    return 2
+    subcommand = SUBCOMMANDS.get((argv[0], len(argv) - 1)) if argv else None
+    if subcommand is None:
+        print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | names (names on stdin) | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
+        return 2
+    return subcommand(*argv[1:])
 
 
 if __name__ == "__main__":

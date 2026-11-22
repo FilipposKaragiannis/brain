@@ -42,6 +42,7 @@
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/checks.sh"
+. "$FLOW_PLUGIN/lib/files_placeholder.sh"
 usage="usage: verify.sh <item> [--base <ref>] [--fresh] [--start | --wait [seconds]]"
 [ $# -ge 1 ] || die "$usage" 2
 item="$1"; shift
@@ -216,8 +217,14 @@ esac
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
-changed="$(git diff --no-renames --name-only "$merge_base" HEAD 2>/dev/null; git diff --no-renames --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
-changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
+name_separator="$(printf '\037')"
+separator_exit=3; unreadable_names=""
+changed_units="$({ git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } 2>/dev/null | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names)"; names_exit=$?
+case "$names_exit" in
+  0) ;;
+  "$separator_exit") unreadable_names=1; changed_units="" ;;
+  *) die "cannot read the changed file names" ;;
+esac
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 [ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
@@ -250,15 +257,19 @@ skipped() {
   # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
   record "$1" skipped "" "$2" 0 ""
 }
+changed_unit_matches() {
+  unit_rest="$changed_units"
+  while [ -n "$unit_rest" ]; do
+    unit_name="${unit_rest%%"$name_separator"*}"; unit_rest="${unit_rest#*"$name_separator"}"
+    glob_match "$1" "$unit_name" && return 0
+  done
+  return 1
+}
 changed_matches() {
   # changed_matches <globs, one per line>: true when a changed file matches one of them.
-  while IFS= read -r g; do
-    [ -n "$g" ] || continue
-    while IFS= read -r f; do
-      [ -n "$f" ] && glob_match "$g" "$f" && return 0
-    done <<EOF_FILES
-$changed
-EOF_FILES
+  while IFS= read -r glob_line; do
+    [ -n "$glob_line" ] || continue
+    changed_unit_matches "$glob_line" && return 0
   done <<EOF_GLOBS
 $1
 EOF_GLOBS
@@ -272,20 +283,36 @@ command_with_verify_base() {
   esac
 }
 
+run_with_names() {
+  run_template="$1"; shift
+  [ -n "$run_template" ] || { echo "the command is empty" >&2; return 1; }
+  run_command="$(files_placeholder_expanded "$run_template")" || return 1
+  run_names_escaped=""
+  case "$run_command" in
+    *format_names_escaped*) run_names_escaped="$(names_backslash_escaped "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; return 1; } ;;
+  esac
+  format_names_escaped="$run_names_escaped" sh -c "$run_command" sh "$@"
+}
+
+log_check_files() {
+  [ "$#" -eq 0 ] || { printf '  files:\n'; printf '    %s\n' "$@"; } >> "$log"
+}
+
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
-  cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
-  printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
+  IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
+  printf '\n== %s: %s\n' "$name" "$command" >> "$log"
+  log_check_files "$@"
   check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
-  if sh -c "$cmd" >> "$log" 2>&1; then st="pass"; summary="ok"
+  if run_with_names "$command" "$@" >> "$log" 2>&1; then check_status="pass"; summary="ok"
   else
-    st="fail"; [ "$kind" = "signal" ] && st="signal"
+    check_status="fail"; [ "$kind" = "signal" ] && check_status="signal"
     summary="$(tail -c "+$log_start" "$log")"
   fi
-  [ "$st" = "fail" ] && failed "$name"
-  record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
-  [ "$st" = "pass" ]
+  [ "$check_status" = "fail" ] && failed "$name"
+  record "$name" "$check_status" "$command" "$summary" "$(( $(now_seconds) - check_started ))" ""
+  [ "$check_status" = "pass" ]
 }
 
 scoped_check() {
@@ -323,15 +350,21 @@ planned_checks() {
 if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
+[ -z "$unreadable_names" ] || {
+  record "changed files" fail "" "a changed file name holds the character U+001F, which verify cannot hand to a command" 0 ""; failed "changed files"
+}
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
-  exts="$(json_list "$lang" extensions | tr '\n' '|' | sed 's/|$//; s/\./\\./g')"
+  extensions="$(json_list "$lang" extensions)"
   nf="$(json_length "$lang" format)"; j=0
+  if [ "${nf:-0}" -gt 0 ] && [ -z "$extensions" ]; then
+    record format fail "" "the language $(json_get "$lang" name) has a format command and no extensions, so verify cannot tell which changed files it covers" 0 ""; failed format; ran_format=1
+  fi
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
-    files="$(printf '%s\n' "$changed" | grep -E "($exts)$" | { [ -n "$prefix" ] && grep "^$prefix" || cat; } | while read -r f; do [ -f "$f" ] && printf '%s ' "$f"; done)"
+    files="$(printf '%s' "$changed_units" | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" existing "$prefix" "$extensions")"
     if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
@@ -356,10 +389,9 @@ for name in $(yaml_keys "$(config_file)" gates); do
 done
 feel=false
 for g in $(cfg feel_test_paths); do
-  printf '%s\n' "$changed" | while read -r f; do glob_match "$g" "$f" && exit 3; done
-  [ $? -eq 3 ] && { feel=true; break; }
+  changed_unit_matches "$g" && { feel=true; break; }
 done
-printf '%s\n' "$changed" > "$changed_list"
+printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"
 
 report_failed() {

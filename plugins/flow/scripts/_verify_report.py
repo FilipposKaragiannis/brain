@@ -5,9 +5,9 @@
 
 <records> holds one check after another as four NUL-terminated fields: name, status, command and
 the summary source (the command's whole output for a failed check, a fixed sentence otherwise).
-<changed> holds the changed files, one per line. <timings> holds one line per check, in the same
-order: the whole seconds the check ran, a tab, and the run a reused pass came from (empty for a
-check that ran). Each check then carries `seconds`, a reused one `reused_from`, and the report
+<changed> holds the changed files, each followed by U+001F. <timings> holds one line per check,
+in the same order: the whole seconds the check ran, a tab, and the run a reused pass came from
+(empty for a check that ran). Each check then carries `seconds`, a reused one `reused_from`, and the report
 the run's total `seconds`; a line that is missing or no number counts as 0. Bytes that are not
 UTF-8 are replaced, never fatal. The summary is the last five non-empty lines of its source on one line, without control
 characters, terminal colours or terminal hyperlinks (OSC 8: the target goes and the link's text
@@ -25,6 +25,7 @@ MD_SUMMARY_MAX = 200
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 ARGUMENTS_WITHOUT_TIMINGS = 10
+NAME_SEPARATOR = "\x1f"
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -103,7 +104,7 @@ def main(argv):
         with open(argv[ARGUMENTS_WITHOUT_TIMINGS], "rb") as f:
             report_checks = timed(report_checks, text(f.read()))
     with open(changed, "rb") as f:
-        files = [l for l in text(f.read()).split("\n") if l.strip()]
+        files = [name for name in text(f.read()).split(NAME_SEPARATOR) if name]
     report = {
         "status": status,
         "checks": report_checks,
