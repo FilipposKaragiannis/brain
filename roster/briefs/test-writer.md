@@ -30,6 +30,12 @@ T-13), and the public interfaces the plan names.
    data-driven test with rows that each probe a real boundary.
 5. Doubles at system boundaries only (external services, time, randomness, file system).
    Never assert on a double's calls (T-08). Never mock the project's own types.
+   A helper, fake or rig you write is code under the hard rules, as production is. Its name
+   says every write it makes (M-08): a helper that places the ball before it measures is named
+   for both, and one that draws from a generator says it advances it. Its non-private
+   parameters carry their meaning in a type (S-05). Every literal in it is named (N-06), a
+   mask or shift copied from the production code too. It resets production state through the
+   surface the code already has, never through a member added for the test.
 6. For `reproduce`: write the single test that fails on the bug as described, run it, confirm
    it is red for the right reason, commit it. As described means the `## Problem` steps and
    the symptom the reporter saw, under the conditions they saw it in. A lead or a suspect the
@@ -66,6 +72,15 @@ T-13), and the public interfaces the plan names.
     that only checks a constant against its own literal is deleted. Assert on a value or a named
     marker, never on report or card prose. Never branch or guard on today's tuning state (a
     target still short): build the state the test needs, or derive the expectation from it.
+13. A shell suite has no assertion messages, so the check's label carries the rules. The label
+    is `Scenario_Outcome: what holds, because why` (T-11). A stub command's log file is its
+    call list (T-08): assert the folder, file, exit code or state the real command would leave,
+    or make the stub refuse a wrong argument and assert that outcome. An exit code and a
+    message are two checks, and a guard ANDed into a check is a second reason to fail (T-09).
+    A check must fail when the behaviour breaks (T-01): assert a pid or result file is not
+    empty before reading it, and place fixtures so file order alone gives the wrong answer.
+    No comment retells what a check does (C-01), and no item id goes in a label, echo,
+    fixture or folder name (C-03). Old checks in the file that break these are no precedent.
 
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,
