@@ -30,6 +30,18 @@ data.setdefault("gate", "none")
 print(json.dumps(data))' "$@")"
 add_labels=""; remove_labels=""; line_break='
 '
+# stale_labels <prefix> <value>: the labels of the issue that start with the prefix and are not
+# prefix+value, one per line. gh reads a comma as a list separator, so a label with one is left alone.
+stale_labels() {
+  while IFS= read -r old; do
+    case "$old" in "$1"*) ;; *) continue ;; esac
+    [ "$old" != "$1$2" ] || continue
+    case "$old" in *,*) echo "flow: left the label '$old' on gh#$n: a comma in it would make gh remove two" >&2; continue ;; esac
+    printf '%s\n' "$old"
+  done <<LABELS
+$labels
+LABELS
+}
 label_keys="step gate worktree profile size"
 [ -n "$GH_SIZE_FIELD" ] && label_keys="step gate worktree profile"
 for key in $label_keys; do
@@ -37,12 +49,8 @@ for key in $label_keys; do
   for kv in "$@"; do
     [ "${kv%%=*}" = "$key" ] || continue
     value="${kv#*=}"
-    case "$value" in *"$line_break"*) die "the $key of gh#$n has a line break, so it cannot be a label" 2 ;; esac
-    while IFS= read -r old; do
-      case "$old" in "$prefix"*) [ "$old" = "$prefix$value" ] || remove_labels="$remove_labels$line_break$old" ;; esac
-    done <<LABELS
-$labels
-LABELS
+    case "$value" in *"$line_break"*|*,*) die "the $key of gh#$n has a line break or a comma, so it cannot be a label" 2 ;; esac
+    remove_labels="$remove_labels$line_break$(stale_labels "$prefix" "$value")"
     if [ -n "$value" ] && [ "$value" != "none" ]; then ensure_label "$prefix$value"; add_labels="$add_labels$line_break$prefix$value"; fi
   done
 done

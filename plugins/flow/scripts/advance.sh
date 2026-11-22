@@ -68,8 +68,10 @@ finish_run() { rm -f "$run_file"; }
 asked_file="$home/asked/$(item_slug "$item")"
 
 # raise_asked <gate> <message>: raise the gate the step asked for, with the options and condition
-# its result names; an empty options list is no options.
+# its result names; an empty options list is no options. A gate profiles.json does not have is
+# refused before anything is raised.
 raise_asked() {
+  gate_known "$1" || die "the result of step $step names a gate profiles.json does not have; nothing raised, fix $reports/$step.json or pass --gate" 2
   set -- "$item" "$1" "$2"
   case "$options" in ""|"[]") ;; *) set -- "$@" --options "$options" ;; esac
   [ -z "$condition" ] || set -- "$@" --condition "$condition"
@@ -221,7 +223,6 @@ fi
 case "$status" in
   gate)
     [ -n "$gate" ] || gate="ambiguity"
-    gate_known "$gate" || die "the result of step $step names a gate profiles.json does not have; nothing raised, fix $reports/$step.json or pass --gate" 2
     raise_asked "$gate" "${message:-$summary}"
     step_write "$item" "step=$step" >/dev/null
     mkdir -p "$home/asked" && printf '%s %s\n' "$step" "$gate" > "$asked_file"

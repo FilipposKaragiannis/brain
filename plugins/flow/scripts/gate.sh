@@ -77,6 +77,7 @@ gates_json() {
   done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
+refused_gate_name_limit=60
 RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
 OPTION_AND_BACK="gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step"
 CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <condition>"
@@ -139,7 +140,7 @@ case "${1:-}" in
     item="$2"; gate="$3"; message="$4"; from=""; shift 4
     case "${1:-}" in --*) ;; *) [ $# -eq 0 ] || { from="$1"; shift; } ;; esac
     parse_raise_flags "$@"
-    gate_known "$gate" || die "unknown gate '$(printf '%s' "$gate" | tr -cd '[:print:]' | head -c 60)': nothing raised; the gates are $(python3 -I -c 'import json, sys; print(", ".join(json.load(open(sys.argv[1]))["gates"]))' "$FLOW_PLUGIN/profiles.json")" 2
+    gate_known "$gate" || die "unknown gate '$(printf '%s' "$gate" | tr -cd '[:print:]' | head -c "$refused_gate_name_limit")': nothing raised; the gates are $(python3 -I -c 'import json, sys; print(", ".join(json.load(open(sys.argv[1]))["gates"]))' "$FLOW_PLUGIN/profiles.json")" 2
     data="$(adapter read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
     [ -n "$from" ] || from="$step"
     options="$(raise_options "$item" "$options_given")"

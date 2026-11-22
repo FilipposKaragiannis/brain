@@ -13,6 +13,7 @@
 # id and title and Slack links it to the tracker. The Slack message is a list (scripts/_slack.py): numbered questions
 # stay numbered, long prose breaks into one bullet per sentence, ids and code names read as code.
 . "$(dirname "$0")/../lib/flow.sh"
+notification_body_limit=200
 home="$(flow_home)"
 if [ "${1:-}" = "--event" ]; then
   # notify.sh --event <name> [--no-log] <message>: the same channels for something that is not a
@@ -45,9 +46,9 @@ fi
 if [ "$(cfg notify.desktop)" != "false" ]; then
   if command -v osascript >/dev/null 2>&1; then
     osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)' -e 'end run' \
-      -- "$(printf '%s' "$body" | head -c 200)" "$title" "$subtitle" >/dev/null 2>&1 || true
+      -- "$(printf '%s' "$body" | head -c "$notification_body_limit")" "$title" "$subtitle" >/dev/null 2>&1 || true
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send -- "$title" "$(printf '%s' "$body" | head -c 200)" >/dev/null 2>&1 || true
+    notify-send -- "$title" "$(printf '%s' "$body" | head -c "$notification_body_limit")" >/dev/null 2>&1 || true
   fi
 fi
 hook="${FLOW_SLACK_WEBHOOK:-$(cfg notify.slack_webhook)}"
