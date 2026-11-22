@@ -45,9 +45,12 @@ base_here() { git -C "$worktree" branch -f scenario-base HEAD; }
 commit_all() { git -C "$worktree" add -A plugins && git -C "$worktree" commit -qm "$1"; }
 flow_status() { python3 -c 'import json,sys; print([check["status"] for check in json.load(open(sys.argv[1]))["checks"] if check["name"]=="tests flow"][0])' "$reports/verify.json"; }
 flow_summary() { python3 -c 'import json,sys; print([check["summary"] for check in json.load(open(sys.argv[1]))["checks"] if check["name"]=="tests flow"][0])' "$reports/verify.json"; }
-# every_suite_ran: the flow check ran, and the log shows the inline section and the jira contract,
-# which only a run of every suite starts.
-every_suite_ran() { [ "$(flow_status)" = pass ] && grep -q '^flow: inline pass' "$reports/verify.log" && grep -q '^flow: contract-jira pass' "$reports/verify.log"; }
+# suites_passed: the suites the log shows as passed, sorted on one line.
+suites_passed() { sed -n 's/^flow: \(.*\) pass ([0-9.]*s)$/\1/p' "$reports/verify.log" | sort | tr '\n' ' '; }
+# every_suite_ran: the flow check passed and the log shows exactly the suites in expected_suites,
+# the whole set for the stub marketplace's files at that point.
+every_suite_ran() { [ "$(flow_status)" = pass ] && [ "$(suites_passed)" = "$expected_suites " ]; }
+expected_suites="base-claim base-readers contract-github contract-jira contract-local holds inline sessions"
 
 base_here
 printf 'echo "  ok   Stub_StillHolds"\n' >> "$stub_suites/sessions.sh"
@@ -57,6 +60,9 @@ check "OneChangedSuite_RunsAloneThroughVerify because the runner narrows a chang
   '[ "$one_suite_result" -eq 0 ] && grep -qx "flow: selected sessions" "$reports/verify.log"'
 check "PassingSuite_HasItsLinesInTheLogUnderItsName because a pass needs its evidence" \
   'grep -qx "\[sessions\]   ok   Stub_StillHolds" "$reports/verify.log"'
+
+verify --base no-such-base >/dev/null 2>&1
+check "UnresolvedBaseAfterANarrowPass_RunsEverySuite because the narrow pass proved only the suite it ran" 'every_suite_ran'
 
 base_here
 mkdir -p "$worktree/plugins/flow/new-runtime" && echo 'exit 0' > "$worktree/plugins/flow/new-runtime/check.sh"
@@ -71,12 +77,14 @@ check "UnresolvedBase_RunsEverySuite because the change set is unknown" \
 base_here
 git -C "$worktree" mv plugins/flow/tests/sessions.sh plugins/flow/tests/renamed-sessions.sh
 commit_all "rename"
+expected_suites="base-claim base-readers contract-github contract-jira contract-local holds inline renamed-sessions"
 verify --base scenario-base >/dev/null 2>&1
 check "RenamedSuite_RunsEverySuite because the old path names no suite" 'every_suite_ran'
 
 base_here
 git -C "$worktree" rm -q plugins/flow/tests/holds.sh
 commit_all "delete"
+expected_suites="base-claim base-readers contract-github contract-jira contract-local inline renamed-sessions"
 verify --base scenario-base >/dev/null 2>&1
 check "DeletedSuite_RunsEverySuite because what it covered is unknown" 'every_suite_ran'
 

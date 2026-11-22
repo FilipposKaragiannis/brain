@@ -40,6 +40,17 @@ expect 'FailingSuite_PrintsItsLinesWithItsName because the failure must name its
 git restore plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'NothingSelected_SaysSo because a verifier must see that no suite ran' "$(head -1 "$work/output")" 'flow: no Flow test inputs changed'
+touch plugins/flow/README.md
+expect 'OnlyAReadmeChanged_SelectsNothing because plain docs are no test input' "$(result)" pass
+expect 'ReadmeOnly_SaysNothingRan because a verifier must see that no suite ran' "$(head -1 "$work/output")" 'flow: no Flow test inputs changed'
+rm plugins/flow/README.md
+for outside in shared/helper.sh tools/lib/helper.sh; do
+  mkdir -p "$(dirname "$outside")"
+  touch "$outside"
+  expect "FileIn_$(dirname "$outside" | tr / -)_RunsFullCoverage because the runner knows no suite that reads it" "$(result)" fail
+  expect "FullCoverageForFileIn_$(dirname "$outside" | tr / -)_IncludesJiraContract because every suite runs" "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
+  rm "$outside"
+done
 mkdir -p plugins/flow/new-runtime
 touch plugins/flow/new-runtime/check.sh
 expect 'FileInANewFolder_RunsFullCoverage because the runner cannot know which suites read it' "$(result)" fail
@@ -49,6 +60,26 @@ mkdir -p plugins/flow/scripts
 touch plugins/flow/scripts/verify.sh
 expect 'VerifyImplementationChanges_RunItsIntegrationChecks because the shared inline fixture contains unrelated scenarios' "$(result)" pass
 expect 'VerifyImplementationChanges_IncludeTheReportScenarios because standalone checks cover only part of verify' "$(grep -c '^flow: verify pass' "$work/output")" 1
+rm plugins/flow/scripts/verify.sh
+cat > "$suite/sessions.sh" <<'STUB'
+echo first
+echo
+printf '%s\n' 'literal %s and backslash \n'
+echo 'to the error stream' >&2
+printf unterminated
+STUB
+expect 'SuiteWithAwkwardOutput_Passes because only its exit code decides' "$(result)" pass
+expect 'BlankLine_KeepsItsPrefix because every line must name its suite' "$(grep -cFx '[sessions] ' "$work/output")" 1
+expect 'ErrorStreamLine_KeepsItsPrefix because a failure often prints only there' "$(grep -cFx '[sessions] to the error stream' "$work/output")" 1
+expect 'FormatCharactersAndBackslashes_PrintVerbatim because output is data' "$(grep -cFx '[sessions] literal %s and backslash \n' "$work/output")" 1
+expect 'LastLineWithoutNewline_IsPrefixedAndEnded because its text must not run into the next line' "$(grep -cFx '[sessions] unterminated' "$work/output")" 1
+expect 'EveryOutputLine_CarriesAPrefix because a bare line would hide which suite wrote it' "$(grep -v -e '^\[sessions\] ' -e '^flow: ' "$work/output" | wc -l | tr -d ' ')" 0
+git restore plugins/flow/tests/sessions.sh
+git rm -q plugins/flow/tests/base-readers.sh
+expect 'DeletedSuite_RunsFullCoverage because what it covered is unknown' "$(result)" fail
+expect 'DeletedSuite_IncludesJiraContract because every suite still runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
+expect 'DeletedSuite_IsNotRun because its file is gone' "$(grep -c '^flow: base-readers ' "$work/output")" 0
+git restore --staged --worktree plugins/flow/tests/base-readers.sh
 git mv plugins/flow/tests/sessions.sh plugins/flow/tests/renamed.sh
 expect 'RemovedSuite_RunsFullCoverage because its old path has no runnable suite' "$(result)" fail
 expect 'FullCoverage_IncludesJiraContract because each backend has its own contract run' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
@@ -68,4 +99,12 @@ expect 'ThreeLanes_RunSuitesSideBySide because the lanes exist to overlap suites
 FLOW_SUITE_LANES=0
 expect 'ZeroLanes_Fails because no suite could ever run' "$(result)" fail
 expect 'ZeroLanes_SaysWhy because the owner must see the bad value' "$(tail -1 "$work/output")" "flow: FLOW_SUITE_LANES takes a whole number from 1, not '0'"
+for bad in abc -1 ''; do
+  FLOW_SUITE_LANES="$bad"
+  expect "LaneCount${bad:-Empty}_Fails because only a whole number from 1 is a lane count" "$(result)" fail
+  expect "LaneCount${bad:-Empty}_SaysWhy because the owner must see the bad value" "$(tail -1 "$work/output")" "flow: FLOW_SUITE_LANES takes a whole number from 1, not '$bad'"
+done
 unset FLOW_SUITE_LANES
+rm -f "$work/overlaps"
+expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
+expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(overlapped)" overlapped
