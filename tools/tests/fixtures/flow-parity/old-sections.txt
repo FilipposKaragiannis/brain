@@ -1,0 +1,77 @@
+config
+local adapter
+steward
+next and advance
+re-size and gates
+overlap
+verify runner
+verify: the report is never empty
+verify: gate paths and the mutation switch
+parent and create
+board
+board graphs (local)
+worktree hooks
+github adapter (fake gh)
+adapter contract (adapters/README.md)
+holds and the merge before verify (tests/holds.sh)
+a claimed item waits while a native blocker is open (tests/blockers.sh)
+an item's recorded base is read everywhere (tests/base-readers.sh)
+an item's base is resolved once at claim (tests/base-claim.sh)
+a claim sets a pool worktree up again when a worktree_setup_paths file changed (tests/worktree-setup.sh)
+a task branch is named from the branch template at claim and recorded (tests/branch-name.sh)
+a verify run started detached is waited on in short calls (tests/verify-detached.sh)
+stop and release end only the item's own verify run, and stop says when one outlives its wait (tests/verify-ends.sh)
+verify runs the build and test commands a change can affect, once per input (tests/verify-scope.sh)
+children wait on the parent's decomposition gate, and a gate is asked once (tests/epic-gates.sh)
+an epic's closeout opens its pull request, and the merge closes the epic (tests/epic-closeout.sh)
+a pr step that opens no pull request leaves nothing to merge (tests/pr-without-pull-request.sh)
+an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)
+the graph report says what each step cost and which got slower (tests/graph-report.sh)
+a GitHub item reads its priority from a priority: label where no field is set (tests/github-priority.sh)
+the health job says when a step got slower (tests/health-slow-steps.sh)
+jira adapter (fake curl)
+jira tracker scope (fake curl)
+github blips (fake gh)
+github fields, types and project (fake gh)
+github tracker scope (fake gh)
+trackers and readiness on every tracker (fake gh)
+comments plumbing (fake gh)
+review requests and chases (fake gh)
+jobs (fake hosts)
+flow jobs: the run ledger, pause and the schedule (fake launchctl)
+intake (fake hosts)
+new item and pool growth
+worktree_create
+temporary worktrees
+auto_gates
+a full pool: next skips what needs a new worktree
+a pick passes over an item with nothing to run
+holds: an item a plan put behind another waits while that one is open
+a full pool: one pass with no tracker read per unclaimed item
+parallel runs: the pick lock and --workers
+pick filters: next --pick
+tracker scope: every read of the local tracker
+help
+prune
+sweep
+health
+health: planned holds
+init: the Claude worktree hooks in this user's local settings
+session-start: the pool worktrees' plugin pins
+init: a long pool, and the Slack webhook from the environment
+init: nothing of flow is tracked
+init: Codex in the repository or the user home
+init: a repo that committed flow before
+init: from a linked worktree, and the pool it proposes
+worktree_name
+decomposition: a split parent and its children
+gate list --json
+quiz: parse, grade, record and mark the draft ready (fake gh)
+digits stay strings, numbers stay numbers
+unattended steps: the model, the architect, the cache, the usage, a host stop (#65)
+a session cut by a time-window limit
+unattended loop: a pick works on after a gate
+reserve: the owner's own worktree
+a cleared gate whose answer no step owns (gh#157)
+gate options, roles and conditions
+a step with no result file (gh#169)

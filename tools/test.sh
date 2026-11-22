@@ -54,7 +54,7 @@ for part in $parts; do
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
     console) clean plugins/console/tests/run.sh || status=1 ;;
-    tools) clean tools/tests/run.sh || status=1 ;;
+    tools) clean tools/tests/run.sh || status=1; clean tools/tests/suite-parity.sh || status=1 ;;
     console-app) console_app || status=1 ;;
     plugins) plugins_valid || status=1 ;;
     *) echo "test: no part named $part; the parts are $every_part" >&2; exit 2 ;;
