@@ -79,6 +79,7 @@ class Settings:
     lanes: LaneCount
     time_limit: Duration
     clock: Clock
+    process_table: Path
 
 
 class RunningSuites:
@@ -140,6 +141,17 @@ def names_group(field: str, group: int) -> bool:
     return field.isascii() and field.isdigit() and int(field) == group
 
 
+class Membership(Enum):
+    MEMBERS_REMAIN = "members remain"
+    NO_MEMBER_REMAINS = "no member remains"
+    UNKNOWN = "unknown"
+
+
+def membership_of(states: "list[str]") -> Membership:
+    live = any(not state.startswith(ZOMBIE_STATE) for state in states)
+    return Membership.MEMBERS_REMAIN if live else Membership.NO_MEMBER_REMAINS
+
+
 def fields_after_name(status: Path) -> "list[str]":
     try:
         line = status.read_bytes().decode(errors="replace")
@@ -148,38 +160,55 @@ def fields_after_name(status: Path) -> "list[str]":
     return line.rpartition(")")[2].split() if ")" in line else []
 
 
-def states_in_process_table(group: int, table: Path) -> "list[str]":
-    rows = (fields_after_name(status) for status in table.glob("[0-9]*/stat"))
+def states_in_process_table(group: int, statuses: "list[Path]") -> "list[str]":
+    rows = (fields_after_name(status) for status in statuses)
     return [fields[STATE_FIELD] for fields in rows if len(fields) > PROCESS_GROUP_FIELD and names_group(fields[PROCESS_GROUP_FIELD], group)]
 
 
-def process_listing_lines() -> "list[str]":
+def table_membership(group: int, table: Path) -> Membership:
     try:
-        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, timeout=PROCESS_LISTING_LIMIT.seconds, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    return listing.stdout.decode(errors="replace").splitlines() if listing.returncode == 0 else []
+        with os.scandir(table) as entries:
+            statuses = [Path(entry.path, "stat") for entry in entries if entry.name.isascii() and entry.name.isdigit()]
+    except OSError:
+        return Membership.UNKNOWN
+    return membership_of(states_in_process_table(group, statuses))
 
 
-def states_in_process_listing(group: int) -> "list[str]":
-    rows = (line.split() for line in process_listing_lines())
+def states_in_process_listing(group: int, lines: "list[str]") -> "list[str]":
+    rows = (line.split() for line in lines)
     return [row[LISTING_STATE_COLUMN] for row in rows if len(row) == LISTING_COLUMNS and names_group(row[LISTING_GROUP_COLUMN], group)]
 
 
-def member_states(group: int) -> "list[str]":
-    return states_in_process_table(group, PROCESS_TABLE) if PROCESS_TABLE.is_dir() else states_in_process_listing(group)
+def listing_membership(group: int) -> Membership:
+    try:
+        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, timeout=PROCESS_LISTING_LIMIT.seconds, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return Membership.UNKNOWN
+    if listing.returncode != 0:
+        return Membership.UNKNOWN
+    return membership_of(states_in_process_listing(group, listing.stdout.decode(errors="replace").splitlines()))
 
 
-def group_has_members(process: subprocess.Popen) -> bool:
+def scanned_membership(group: int, table: Path) -> Membership:
+    return table_membership(group, table) if table.is_dir() else listing_membership(group)
+
+
+def group_answers_probe(process: subprocess.Popen) -> bool:
     try:
         os.killpg(process.pid, PRESENCE_PROBE_SIGNAL)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return False
-    return any(not state.startswith(ZOMBIE_STATE) for state in member_states(process.pid))
+    except PermissionError:
+        return True
+    return True
 
 
-def group_ended(process: subprocess.Popen) -> bool:
-    return process.poll() is not None and not group_has_members(process)
+def group_membership(process: subprocess.Popen, table: Path) -> Membership:
+    return scanned_membership(process.pid, table) if group_answers_probe(process) else Membership.NO_MEMBER_REMAINS
+
+
+def group_ended(process: subprocess.Popen, table: Path) -> bool:
+    return process.poll() is not None and group_membership(process, table) is Membership.NO_MEMBER_REMAINS
 
 
 def ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> Ending:
@@ -191,16 +220,16 @@ def ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> E
     return Ending.EXITED
 
 
-def stop_group(process: subprocess.Popen, clock: Clock) -> None:
+def stop_group(process: subprocess.Popen, settings: Settings) -> None:
     signal_group(process, signal.SIGTERM)
-    if ending_within(lambda: group_ended(process), STOP_GRACE, clock) is Ending.TIMED_OUT:
+    if ending_within(lambda: group_ended(process, settings.process_table), STOP_GRACE, settings.clock) is Ending.TIMED_OUT:
         signal_group(process, signal.SIGKILL)
 
 
-def wait_or_stop_at(process: subprocess.Popen, limit: Duration, clock: Clock) -> Ending:
-    ending = ending_within(lambda: process.poll() is not None, limit, clock)
+def wait_or_stop_at(process: subprocess.Popen, settings: Settings) -> Ending:
+    ending = ending_within(lambda: process.poll() is not None, settings.time_limit, settings.clock)
     if ending is Ending.TIMED_OUT:
-        stop_group(process, clock)
+        stop_group(process, settings)
     return ending
 
 
@@ -210,7 +239,7 @@ def run_suite(name: str, command: tuple, settings: Settings, lanes: Lanes) -> Su
     announce(lanes, f"flow: {name} started")
     with (lanes.directory / name).open("wb") as output:
         with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(process):
-            ending = wait_or_stop_at(process, settings.time_limit, settings.clock)
+            ending = wait_or_stop_at(process, settings)
             code = process.wait()
     return SuiteOutcome(code, Duration(settings.clock.now() - started), ending)
 
@@ -274,8 +303,8 @@ def time_limit_from(environment: Mapping[str, str]) -> Duration:
     return Duration(_whole_number_from_one(environment, TIME_LIMIT_VARIABLE, DEFAULT_TIME_LIMIT_SECONDS, "a whole number of seconds"))
 
 
-def settings_from(environment: Mapping[str, str], clock: Clock) -> Settings:
-    return Settings(lane_count_from(environment), time_limit_from(environment), clock)
+def settings_from(environment: Mapping[str, str], clock: Clock, process_table: Path) -> Settings:
+    return Settings(lane_count_from(environment), time_limit_from(environment), clock, process_table)
 
 
 def report_run(failed: "list[str]") -> int:
@@ -302,9 +331,9 @@ def run(root: Path, base: "str | None", settings: Settings) -> int:
 
 def main(arguments: "list[str]") -> int:
     if arguments == ["all"]:
-        return run(ROOT, None, settings_from(os.environ, SystemClock()))
+        return run(ROOT, None, settings_from(os.environ, SystemClock(), PROCESS_TABLE))
     if len(arguments) == 2 and arguments[0] == "since":
-        return run(ROOT, arguments[1], settings_from(os.environ, SystemClock()))
+        return run(ROOT, arguments[1], settings_from(os.environ, SystemClock(), PROCESS_TABLE))
     sys.exit("usage: flow_suites.py all | since <base commit>")
 
 
