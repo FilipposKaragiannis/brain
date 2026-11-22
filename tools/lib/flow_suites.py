@@ -18,14 +18,13 @@ from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Protocol
 
 sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
-from flow_process_groups import PROCESS_TABLE, ProcessGroupId, ProcessTable, group_ended, signal_group  # noqa: E402
+from flow_clock import Clock, Duration, Ending, Instant, ending_within  # noqa: E402
+from flow_process_groups import PROCESS_TABLE, LedGroup, ProcessGroupId, ProcessTable, signal_group, stop_groups  # noqa: E402
 from flow_selection import Checkout, ComparisonBase, SuiteCommand, SuiteName, commands, selection  # noqa: E402
 from flow_shards import WHOLE_RUN, Shard, shard_from, suites_in  # noqa: E402
 
@@ -44,16 +43,6 @@ _USAGE = f"usage: flow_suites.py all [{' '.join(_SHARD_OPTION)}] | {' '.join(_SI
 
 
 @dataclass(frozen=True)
-class Duration:
-    seconds: float
-
-
-@dataclass(frozen=True)
-class Instant:
-    seconds: float
-
-
-@dataclass(frozen=True)
 class LaneCount:
     count: int
 
@@ -64,13 +53,6 @@ class SuiteLogs:
 
 
 _STOP_GRACE = Duration(10)
-_POLL_INTERVAL = Duration(0.1)
-
-
-class Clock(Protocol):
-    def now(self) -> Instant: ...
-
-    def sleep(self, duration: Duration) -> None: ...
 
 
 class _SystemClock:
@@ -91,22 +73,22 @@ class Settings:
 
 class _RunningSuites:
     def __init__(self) -> None:
-        self._groups: "set[ProcessGroupId]" = set()
+        self._suites: "set[LedGroup]" = set()
         self._lock = threading.RLock()
 
     @contextmanager
-    def track(self, group: ProcessGroupId) -> Iterator[ProcessGroupId]:
+    def track(self, suite: LedGroup) -> Iterator[LedGroup]:
         with self._lock:
-            self._groups.add(group)
+            self._suites.add(suite)
         try:
-            yield group
+            yield suite
         finally:
             with self._lock:
-                self._groups.discard(group)
+                self._suites.discard(suite)
 
-    def still_running(self) -> "tuple[ProcessGroupId, ...]":
+    def still_running(self) -> "frozenset[LedGroup]":
         with self._lock:
-            return tuple(self._groups)
+            return frozenset(self._suites)
 
 
 @dataclass(frozen=True)
@@ -116,19 +98,14 @@ class _Lanes:
     output: threading.Lock
 
 
-class _Ending(Enum):
-    EXITED = "exited"
-    TIMED_OUT = "timed out"
-
-
 @dataclass(frozen=True)
 class _SuiteOutcome:
     code: int
     elapsed: Duration
-    ending: _Ending
+    ending: Ending
 
     def failed(self) -> bool:
-        return self.code != 0 or self.ending is _Ending.TIMED_OUT
+        return self.code != 0 or self.ending is Ending.TIMED_OUT
 
 
 def _announce(lanes: _Lanes, line: str) -> None:
@@ -136,25 +113,10 @@ def _announce(lanes: _Lanes, line: str) -> None:
         print(line, flush=True)
 
 
-def _ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> _Ending:
-    deadline = clock.now().seconds + limit.seconds
-    while not ended():
-        if clock.now().seconds >= deadline:
-            return _Ending.TIMED_OUT
-        clock.sleep(_POLL_INTERVAL)
-    return _Ending.EXITED
-
-
-def _stop_group(leader: subprocess.Popen, group: ProcessGroupId, settings: Settings) -> None:
-    signal_group(group, signal.SIGTERM)
-    if _ending_within(lambda: group_ended(leader, group, settings.process_table), _STOP_GRACE, settings.clock) is _Ending.TIMED_OUT:
-        signal_group(group, signal.SIGKILL)
-
-
-def _wait_or_stop_at(leader: subprocess.Popen, group: ProcessGroupId, settings: Settings) -> _Ending:
-    ending = _ending_within(lambda: leader.poll() is not None, settings.time_limit, settings.clock)
-    if ending is _Ending.TIMED_OUT:
-        _stop_group(leader, group, settings)
+def _wait_or_stop_at(suite: LedGroup, settings: Settings) -> Ending:
+    ending = ending_within(lambda: suite.leader.poll() is not None, settings.time_limit, settings.clock)
+    if ending is Ending.TIMED_OUT:
+        stop_groups(frozenset({suite}), _STOP_GRACE, settings.clock, settings.process_table)
     return ending
 
 
@@ -168,8 +130,8 @@ def _run_suite(name: SuiteName, command: SuiteCommand, settings: Settings, lanes
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     _announce(lanes, f"flow: {name.text} started")
     with (lanes.directory / name.text).open("wb") as output:
-        with subprocess.Popen(_arguments(command), env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(ProcessGroupId(process.pid)) as group:
-            ending = _wait_or_stop_at(process, group, settings)
+        with subprocess.Popen(_arguments(command), env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(LedGroup(process, ProcessGroupId(process.pid))) as suite:
+            ending = _wait_or_stop_at(suite, settings)
             code = process.wait()
     return _SuiteOutcome(code, Duration(settings.clock.now().seconds - started.seconds), ending)
 
@@ -185,15 +147,15 @@ def _print_output(name: SuiteName, log: Path) -> None:
 def _report_suite(name: SuiteName, outcome: _SuiteOutcome, lanes: _Lanes, limit: Duration) -> None:
     with lanes.output:
         _print_output(name, lanes.directory / name.text)
-        if outcome.ending is _Ending.TIMED_OUT:
+        if outcome.ending is Ending.TIMED_OUT:
             print(f"flow: {name.text} stopped at the time limit of {limit.seconds:g}s", flush=True)
         print(f"flow: {name.text} {'FAIL' if outcome.failed() else 'pass'} ({outcome.elapsed.seconds:.1f}s)", flush=True)
 
 
 def _report_stopped(number: int, workers: ThreadPoolExecutor, unfinished: "set[SuiteName]", lanes: _Lanes) -> None:
     workers.shutdown(wait=False, cancel_futures=True)
-    for group in lanes.running.still_running():
-        signal_group(group, signal.SIGTERM)
+    for suite in lanes.running.still_running():
+        signal_group(suite.group, signal.SIGTERM)
     for name in sorted(name for name in unfinished if (lanes.directory / name.text).exists()):
         _print_output(name, lanes.directory / name.text)
         print(f"flow: {name.text} stopped", flush=True)

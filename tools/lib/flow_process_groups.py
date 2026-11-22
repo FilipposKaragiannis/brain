@@ -1,10 +1,13 @@
-"""Signal a Flow suite's process group and tell whether any member of it is still running."""
+"""Signal a Flow suite's process group, tell whether any member of it is still running, and stop
+groups: TERM, one grace time shared by all, then KILL for each group not yet ended."""
 import os
 import signal
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from flow_clock import Clock, Duration, ending_within
 
 
 _PRESENCE_PROBE_SIGNAL = 0
@@ -20,6 +23,12 @@ _PROCESS_LISTING_LIMIT_SECONDS = 10
 @dataclass(frozen=True)
 class ProcessGroupId:
     number: int
+
+
+@dataclass(frozen=True)
+class LedGroup:
+    leader: subprocess.Popen
+    group: ProcessGroupId
 
 
 @dataclass(frozen=True)
@@ -108,5 +117,14 @@ def _group_membership(group: ProcessGroupId, table: ProcessTable) -> Membership:
     return _scanned_membership(group, table) if _group_answers_probe(group) else Membership.NO_MEMBER_REMAINS
 
 
-def group_ended(leader: subprocess.Popen, group: ProcessGroupId, table: ProcessTable) -> bool:
-    return leader.poll() is not None and _group_membership(group, table) is Membership.NO_MEMBER_REMAINS
+def _group_ended(led: LedGroup, table: ProcessTable) -> bool:
+    return led.leader.poll() is not None and _group_membership(led.group, table) is Membership.NO_MEMBER_REMAINS
+
+
+def stop_groups(groups: "frozenset[LedGroup]", grace: Duration, clock: Clock, table: ProcessTable) -> None:
+    for led in groups:
+        signal_group(led.group, signal.SIGTERM)
+    ending_within(lambda: all(_group_ended(led, table) for led in groups), grace, clock)
+    for led in groups:
+        if not _group_ended(led, table):
+            signal_group(led.group, signal.SIGKILL)

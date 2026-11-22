@@ -1,0 +1,38 @@
+"""The time a Flow suite run reads and waits on, always through a clock its caller gives it."""
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
+from typing import Protocol
+
+
+@dataclass(frozen=True)
+class Duration:
+    seconds: float
+
+
+@dataclass(frozen=True)
+class Instant:
+    seconds: float
+
+
+class Clock(Protocol):
+    def now(self) -> Instant: ...
+
+    def sleep(self, duration: Duration) -> None: ...
+
+
+class Ending(Enum):
+    EXITED = "exited"
+    TIMED_OUT = "timed out"
+
+
+_POLL_INTERVAL = Duration(0.1)
+
+
+def ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> Ending:
+    deadline = clock.now().seconds + limit.seconds
+    while not ended():
+        if clock.now().seconds >= deadline:
+            return Ending.TIMED_OUT
+        clock.sleep(_POLL_INTERVAL)
+    return Ending.EXITED
