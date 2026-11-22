@@ -301,7 +301,7 @@ changed_files() {
 }
 
 changed_files_null_byte_separated() {
-  # shellcheck disable=SC2046
+  # shellcheck disable=SC2046 # commit_diff_args prints a list of arguments
   git diff $(commit_diff_args "$1") -z --name-only --diff-filter=ACMR 2>/dev/null || true
 }
 

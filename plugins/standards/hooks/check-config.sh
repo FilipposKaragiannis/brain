@@ -11,8 +11,8 @@ cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
 commit_has_marker "$seg" "[config]" && exit 0
-hooks_dir="$(cd "$(dirname "$0")" && pwd)"
+hooks_folder="$(cd "$(dirname "$0")" && pwd)"
 patterns="$(json_list "$config" "protected" | sed 's|\*\*|*|g')"
-hits="$(changed_files_null_byte_separated "$seg" | xargs -0 sh "$hooks_dir/protected-files.sh" "$patterns")"
+hits="$(changed_files_null_byte_separated "$seg" | xargs -0 sh "$hooks_folder/files-matching-patterns.sh" "$patterns")"
 [ -n "$hits" ] || exit 0
 block "protected configuration files in this commit. They are owner-only. Add [config] to the commit message when the owner approved the change." "$hits"

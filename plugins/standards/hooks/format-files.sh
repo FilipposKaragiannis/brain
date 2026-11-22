@@ -1,17 +1,14 @@
 #!/bin/sh
-# Run one formatter command over the names that sit under a prefix and end in one of the
-# extensions. check-format.sh starts it through xargs -0, so every name arrives as its own argument.
+# Run one formatter command from .standards/config.json over the names that sit under a prefix and
+# end in one of the extensions, each name its own argument, quoted {files} included. Exit 0 when no
+# name is kept; on failure, list the kept names. check-format.sh starts it through xargs -0.
 #   format-files.sh <prefix> <extensions, one per line> <command> <name>...
-# The command is the project's own text from .standards/config.json; it runs as
-# `sh -c <command> sh <kept names>`. {files} outside quotes becomes "$@". {files} inside quotes,
-# as in `sh -c 'for f in {files}; ...'`, becomes the names with every character that is not a
-# letter, digit or one of _ . / - backslash-escaped, so the nested shell reads each name as one
-# word and runs none of them. Exit 0 when no name is kept. On failure it lists the kept names.
 set -u
 
-name_ends_in_one_of_extensions() {
+name_is_under_prefix_with_one_of_extensions() {
+  case "$3" in "$1"*) ;; *) return 1 ;; esac
   for matched_extension in $2; do
-    case "$1" in *"$matched_extension") return 0 ;; esac
+    case "$3" in *"$matched_extension") return 0 ;; esac
   done
   return 1
 }
@@ -36,6 +33,12 @@ backslash_escape_names_space_separated() {
     escape_all_one="$(backslash_escape_name_failing_on_newline "$escape_all_name")" || return 1
     printf ' %s' "$escape_all_one"
   done
+}
+
+escaped_names_when_command_quotes_files() {
+  case "$1" in *format_names_escaped*) ;; *) return 0 ;; esac
+  shift
+  backslash_escape_names_space_separated "$@"
 }
 
 quote_state_after() {
@@ -80,21 +83,18 @@ expand_files_placeholder_for_its_quote() {
   printf '%s' "$expand_result"
 }
 
-prefix="$1"; extensions="$2"; command="$3"
-shift 3
+prefix="$1"; shift
+extensions="$1"; shift
+command="$1"; shift
 remaining=$#
 while [ "$remaining" -gt 0 ]; do
   name="$1"; shift; remaining=$((remaining - 1))
-  case "$name" in "$prefix"*) ;; *) continue ;; esac
-  name_ends_in_one_of_extensions "$name" "$extensions" && set -- "$@" "$name"
+  name_is_under_prefix_with_one_of_extensions "$prefix" "$extensions" "$name" && set -- "$@" "$name"
 done
 [ "$#" -gt 0 ] || exit 0
 run="$(expand_files_placeholder_for_its_quote "$command")"
-names_escaped=""
-case "$run" in
-  *format_names_escaped*)
-    names_escaped="$(backslash_escape_names_space_separated "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; exit 1; } ;;
-esac
+names_escaped="$(escaped_names_when_command_quotes_files "$run" "$@")" \
+  || { echo "a file name with a newline cannot go into a quoted {files}" >&2; exit 1; }
 format_names_escaped="$names_escaped" sh -c "$run" sh "$@" && exit 0
 status=$?
 printf '  files:\n'

@@ -45,7 +45,7 @@ stage=""
 if [ "${STANDARDS_STAGE:-}" = ci ]; then stage=ci
 elif [ -n "$commit_seg" ]; then stage=commit
 elif [ -n "$push_seg" ]; then stage=push; fi
-hooks_dir="$(cd "$(dirname "$0")" && pwd)"
+hooks_folder="$(cd "$(dirname "$0")" && pwd)"
 names="$(mktemp)" || exit 0
 trap 'rm -f "$names"' EXIT
 [ -n "$commit_seg" ] && changed_files_null_byte_separated "$commit_seg" > "$names"
@@ -96,7 +96,7 @@ FORBID_RUN
     [ "$gate_mode" = marked ] && continue
   fi
   if [ -n "$paths" ] && [ "$stage" != push ]; then
-    matches="$(xargs -0 sh "$hooks_dir/protected-files.sh" "$(printf '%s\n' "$paths" | sed 's|\*\*|*|g')" < "$names")"
+    matches="$(xargs -0 sh "$hooks_folder/files-matching-patterns.sh" "$(printf '%s\n' "$paths" | sed 's|\*\*|*|g')" < "$names")"
     [ -n "$matches" ] || continue
   fi
   # shellcheck disable=SC2046

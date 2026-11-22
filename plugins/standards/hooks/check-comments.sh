@@ -22,9 +22,9 @@ commit_has_marker "$seg" "[why-comment]" && allow_line=1
 commit_has_marker "$seg" "[allow-docs]" && allow_doc=1
 [ "$allow_line" -eq 1 ] && [ "$allow_doc" -eq 1 ] && exit 0
 diff_args="$(commit_diff_args "$seg")"
-work_dir="$(mktemp -d)" || exit 0
-trap 'rm -rf "$work_dir"' EXIT
-mkdir "$work_dir/content"
+work_folder="$(mktemp -d)" || exit 0
+trap 'rm -rf "$work_folder"' EXIT
+mkdir "$work_folder/content"
 set -f
 hits=""
 count="$(json_length "$config" "languages")"
@@ -44,18 +44,18 @@ while [ "$i" -lt "$count" ]; do
   # shellcheck disable=SC2086
   diff="$(git diff $diff_args --diff-filter=ACMRT -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
-  # shellcheck disable=SC2086
-  git diff $diff_args -z --name-only --diff-filter=ACMRT -- $globs > "$work_dir/names-nul" 2>/dev/null || true
-  LC_ALL=C xargs -0 sh -c 'for name; do printf "%s\n%s\n" "${#name}" "$name"; done' sh < "$work_dir/names-nul" > "$work_dir/names"
+  # shellcheck disable=SC2086 # diff_args and globs are lists of arguments
+  git diff $diff_args -z --name-only --diff-filter=ACMRT -- $globs > "$work_folder/names-null-separated" 2>/dev/null || true
+  LC_ALL=C xargs -0 sh -c 'for name; do printf "%s\n%s\n" "${#name}" "$name"; done' sh < "$work_folder/names-null-separated" > "$work_folder/names-with-lengths"
   committed_content_root="./"
   if [ "$diff_args" = "--cached" ]; then
-    git -c core.symlinks=false checkout-index -f -z --stdin --prefix="$work_dir/content/" < "$work_dir/names-nul" \
+    git -c core.symlinks=false checkout-index -f -z --stdin --prefix="$work_folder/content/" < "$work_folder/names-null-separated" \
       || block "the staged content could not be read" "  git checkout-index failed on the staged files."
-    committed_content_root="$work_dir/content/"
+    committed_content_root="$work_folder/content/"
   fi
   found="$(printf '%s\n' "$diff" | LC_ALL=C awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
-      -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_dir/names" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
-    BEGIN { nk = split(kinds, karr, " "); for (k = 1; k <= nk; k++) if (karr[k] != "") okkind[karr[k]] = 1 }
+      -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_folder/names-with-lengths" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
+    BEGIN { kind_count = split(kinds, kind_list, " "); for (k = 1; k <= kind_count; k++) if (kind_list[k] != "") allowed_kind[kind_list[k]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
     function kind_of(l,   m) {
       if (match(l, /(^|[^A-Za-z0-9_])(interface|enum|class|struct|record)[ \t]+[A-Za-z_]/)) {
@@ -69,23 +69,29 @@ while [ "$i" -lt "$count" ]; do
       while (length(name) < byte_count) { getline continuation < names_path; name = name "\n" continuation }
       return name
     }
-    function doc_allowed(file, line,   path, l, i, k, indentation, line_indent, kind, lines) {
-      # True when the declaration at line, or the nearest enclosing type declaration (the first
-      # type keyword above it at a smaller indentation), is one of the allowed kinds.
-      if (nk == 0) return 0
+    function read_committed_lines(file,   path, text, count) {
+      split("", committed_lines)
       path = committed_content_root file
-      i = 0; while ((getline l < path) > 0) lines[++i] = l
+      count = 0; while ((getline text < path) > 0) committed_lines[++count] = text
       close(path)
-      if (line > i) return 0
-      kind = kind_of(lines[line]); if (kind != "") return (kind in okkind)
-      match(lines[line], /^[ \t]*/); indentation = RLENGTH
-      for (k = line - 1; k >= 1; k--) {
-        l = lines[k]; if (l ~ /^[ \t]*$/) continue
-        match(l, /^[ \t]*/); line_indent = RLENGTH
-        if (line_indent >= indentation) continue
-        kind = kind_of(l); if (kind != "") return (kind in okkind)
+      return count
+    }
+    function indentation_of(text) { match(text, /^[ \t]*/); return RLENGTH }
+    function outer_kind(above, indentation,   kind) {
+      for (; above >= 1; above--) {
+        if (committed_lines[above] ~ /^[ \t]*$/ || indentation_of(committed_lines[above]) >= indentation) continue
+        kind = kind_of(committed_lines[above]); if (kind != "") return kind
       }
-      return 0
+      return ""
+    }
+    function declaration_or_enclosing_kind(line,   kind) {
+      kind = kind_of(committed_lines[line]); if (kind != "") return kind
+      return outer_kind(line - 1, indentation_of(committed_lines[line]))
+    }
+    function doc_allowed(file, line,   kind) {
+      if (kind_count == 0 || line > read_committed_lines(file)) return 0
+      kind = declaration_or_enclosing_kind(line)
+      return kind != "" && (kind in allowed_kind)
     }
     function settle(body) {
       # The line after a doc block decides it: an attribute keeps it pending, a public or
