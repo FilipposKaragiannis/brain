@@ -22,9 +22,10 @@
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
 # else the config base (scripts/_change_list.py). A moved file is changed at its old path and its
-# new one. When the base is unresolved or a git listing fails, a failed `changed files` check names
-# why, every check with paths runs, no kept pass is reused and feel_test is true when
-# feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is no valid branch name.
+# new one. When the base is unresolved, a git listing fails or a name holds U+001F, a failed
+# `changed files` check names why, every check with paths runs, no kept pass is reused and
+# feel_test is true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is no
+# valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -236,13 +237,12 @@ records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a t
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 change_list_causes_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
-
-unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=""
+unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
 changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" "$log" "$change_list_causes_file" "$base" "$base_commit")"
 case "$?" in
-  0) change_list=complete ;;
+  0) change_list=complete; listed_files_only="" ;;
   "$unreadable_names_exit") change_list=unreadable_names ;;
-  "$incomplete_list_exit") change_list=incomplete; listed_files_only=" among the files verify could list" ;;
+  "$incomplete_list_exit") change_list=incomplete ;;
   *) die "cannot read the changed file names" ;;
 esac
 change_list_causes="$(cat "$change_list_causes_file")" || die "cannot read why the changed file list is short"
@@ -281,7 +281,7 @@ $1
 EOF_GLOBS
   return 1
 }
-in_scope() { [ "$change_list" = incomplete ] || changed_matches "$1"; }
+in_scope() { [ "$change_list" != complete ] || changed_matches "$1"; }
 command_with_verify_base() {
   case "$1" in
     *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
@@ -330,7 +330,7 @@ scoped_check() {
   if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
   set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
-  if [ -z "$fresh" ] && [ "$change_list" != incomplete ] && reused_from="$(check_passed "$inputs_key")"; then
+  if [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
@@ -395,7 +395,7 @@ for name in $(yaml_keys "$(config_file)" gates); do
   run_check "gate $name" "$command" gate
 done
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
-if [ -n "$feel_test_paths" ] && [ "$change_list" = incomplete ]; then feel=not_ruled_out
+if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
 elif changed_matches "$feel_test_paths"; then feel=true; fi
 printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"

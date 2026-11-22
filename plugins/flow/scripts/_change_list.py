@@ -5,21 +5,25 @@
       changed and not committed, and the untracked files, one git call each, with git's errors
       appended to the log. Prints each distinct name that is not under .flow/, in byte order, each
       followed by U+001F, and writes the cause of each failed listing, joined by "; ", to the
-      causes file. Exits 0 for a complete list, 4 when a listing failed or the base is
+      causes file through a temp file and a rename. A failed listing gives only the names its
+      output ended with a NUL. Exits 0 for a complete list, 4 when a listing failed or the base is
       unavailable, and 3, printing no name, when a name holds U+001F itself, which cannot be told
       from the separator.
 """
 from __future__ import annotations
 
 import enum
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from typing import BinaryIO, Union
 
 GIT = "git"
 GIT_TIMEOUT_SECONDS = 300
 HEAD = "HEAD"
+END_OF_REVISIONS = "--"
 NAME_DIFF_ARGUMENTS = ("diff", "--no-renames", "--name-only", "-z")
 UNTRACKED_ARGUMENTS = ("ls-files", "--others", "--exclude-standard", "-z")
 UNAVAILABLE_COMMIT = "unavailable"
@@ -59,9 +63,13 @@ class ChangedFiles:
 
 
 WORKING_TREE_LISTINGS = (
-    Listing("the diff of uncommitted changes", NAME_DIFF_ARGUMENTS + (HEAD,)),
+    Listing("the diff of uncommitted changes", NAME_DIFF_ARGUMENTS + (HEAD, END_OF_REVISIONS)),
     Listing("the listing of untracked files", UNTRACKED_ARGUMENTS),
 )
+
+
+def whole_names(output: bytes) -> bytes:
+    return output[: output.rfind(NAME_TERMINATOR) + 1]
 
 
 def listed_by(listing: Listing, log: BinaryIO) -> Listed:
@@ -77,7 +85,7 @@ def listed_by(listing: Listing, log: BinaryIO) -> Listed:
         return Listed(b"", ("%s failed (%s)" % (listing.operation, error),))
     if completed.returncode != 0:
         cause = "%s failed (git exit %d, its error is in the log)" % (listing.operation, completed.returncode)
-        return Listed(completed.stdout, (cause,))
+        return Listed(whole_names(completed.stdout), (cause,))
     return Listed(completed.stdout, ())
 
 
@@ -88,7 +96,7 @@ class ResolvedBase:
 
     def listed(self, log: BinaryIO) -> Listed:
         operation = "the diff from the base %s" % self.name
-        return listed_by(Listing(operation, NAME_DIFF_ARGUMENTS + (self.commit, HEAD)), log)
+        return listed_by(Listing(operation, NAME_DIFF_ARGUMENTS + (self.commit, HEAD, END_OF_REVISIONS)), log)
 
 
 @dataclass(frozen=True)
@@ -126,6 +134,18 @@ def changed_files(listed: Listed) -> ChangedFiles:
     return ChangedFiles(state_of(listed.causes, ChangeList.COMPLETE), names, listed.causes)
 
 
+def replaced_atomically(path: str, content: str) -> None:
+    folder, name = os.path.split(path)
+    descriptor, temporary = tempfile.mkstemp(prefix=".%s." % name, dir=folder or os.curdir)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
+            temporary_file.write(content)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
 def main(arguments: list[str]) -> int:
     if len(arguments) != ARGUMENT_COUNT:
         print(USAGE, file=sys.stderr)
@@ -133,8 +153,7 @@ def main(arguments: list[str]) -> int:
     log, causes_file, base_name, base_commit = arguments
     with open(log, "ab") as log_file:
         changed = changed_files(all_listed(comparison_base(base_name, base_commit), log_file))
-    with open(causes_file, "w", encoding="utf-8") as causes:
-        causes.write(CAUSE_SEPARATOR.join(changed.causes))
+    replaced_atomically(causes_file, CAUSE_SEPARATOR.join(changed.causes))
     sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in changed.names))
     return changed.state.value
 
