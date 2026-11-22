@@ -239,25 +239,21 @@ timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a t
 
 change_list=complete; change_list_causes=""
 unreadable_names_cause="a changed file name holds the character U+001F, which verify cannot hand to a command"
-mark_change_list_incomplete() {
-  change_list=incomplete; change_list_causes="${change_list_causes:+$change_list_causes; }$1"
-}
-mark_names_unreadable() {
-  case "$change_list" in
-    complete) change_list=unreadable_names ;;
-    *) mark_change_list_incomplete "$unreadable_names_cause" ;;
-  esac
-}
+causes_with() { printf '%s' "${change_list_causes:+$change_list_causes; }$1"; }
 append_changed_names() { git "$@" >> "$changed_list" 2>> "$log"; }
-if [ "$base_commit" = unavailable ]; then mark_change_list_incomplete "the comparison base $base cannot be resolved"
-else append_changed_names diff --no-renames --name-only -z "$merge_base" HEAD || mark_change_list_incomplete "the diff from the base $base failed (git exit $?, its error is in the log)"; fi
-append_changed_names diff --no-renames --name-only -z HEAD || mark_change_list_incomplete "the diff of uncommitted changes failed (git exit $?, its error is in the log)"
-append_changed_names ls-files --others --exclude-standard -z || mark_change_list_incomplete "the listing of untracked files failed (git exit $?, its error is in the log)"
+if [ "$base_commit" = unavailable ]; then change_list_causes="$(causes_with "the comparison base $base cannot be resolved")"; change_list=incomplete
+else append_changed_names diff --no-renames --name-only -z "$merge_base" HEAD || { change_list_causes="$(causes_with "the diff from the base $base failed (git exit $?, its error is in the log)")"; change_list=incomplete; }; fi
+append_changed_names diff --no-renames --name-only -z HEAD || { change_list_causes="$(causes_with "the diff of uncommitted changes failed (git exit $?, its error is in the log)")"; change_list=incomplete; }
+append_changed_names ls-files --others --exclude-standard -z || { change_list_causes="$(causes_with "the listing of untracked files failed (git exit $?, its error is in the log)")"; change_list=incomplete; }
 separator_exit=3
 changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names < "$changed_list")"; names_exit=$?
 case "$names_exit" in
   0) ;;
-  "$separator_exit") mark_names_unreadable; changed_units="" ;;
+  "$separator_exit") changed_units=""
+    case "$change_list" in
+      complete) change_list=unreadable_names ;;
+      *) change_list_causes="$(causes_with "$unreadable_names_cause")" ;;
+    esac ;;
   *) die "cannot read the changed file names" ;;
 esac
 case "$change_list" in
