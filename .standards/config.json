@@ -10,7 +10,7 @@
       "format": [
         {
           "prefix": "",
-          "command": "for f in {files}; do sh -n $f || exit 1; done"
+          "command": "for f in {files}; do sh -n -- \"$f\" || exit 1; done"
         }
       ]
     }
