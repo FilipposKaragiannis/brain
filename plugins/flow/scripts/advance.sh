@@ -51,6 +51,7 @@ if [ "$step" = "verify" ] && [ -z "$summary" ] && [ -n "$result" ]; then
   summary="$(json_list "$result" checks | while read -r c; do printf '%s %s; ' "$(json_get "$c" name)" "$(json_get "$c" status)"; done)"
 fi
 [ -n "$status" ] || die "no result for step $step: write $reports/$step.json or pass --status" 2
+[ "$status" != gate ] || gate_known "${gate:-ambiguity}" || die "the result of step $step names a gate profiles.json does not have; nothing written, fix $reports/$step.json or pass --gate" 2
 
 data="$(adapter read "$item")" || die "cannot read $item"
 attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; 0*) attempts="${attempts#"${attempts%%[!0]*}"}"; attempts="${attempts:-0}" ;; esac
