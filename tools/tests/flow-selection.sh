@@ -6,31 +6,30 @@ work="$(mktemp -d)"
 . "$root/tools/lib/sandbox.sh"; sandbox_enter "$work" "$root/tools"
 trap 'sandbox_close $?' EXIT
 
-project="$work/marketplace"
-suite="$project/plugins/flow/tests"
-mkdir -p "$project/tools/lib" "$project/.standards" "$suite"
-cp "$tools/lib/flow_suites.py" "$project/tools/lib/"
-cp "$tools/test.sh" "$project/tools/"
-cp "$tools/../.standards/config.json" "$project/.standards/"
-cd "$project"
-git init -q -b main
-git config user.email tests@example.test
-git config user.name Tests
-printf 'echo "  ok   StubCheck_Holds"\n' > "$suite/sessions.sh"
-printf 'exit 1\n' > "$suite/run.sh"
-for name in base-claim base-readers verify-scope verify-report; do printf 'exit 0\n' > "$suite/$name.sh"; done
-printf 'test "$1" != jira\n' > "$suite/adapter-contract.sh"
-git add .
-git commit -qm baseline
-base="$(git rev-parse HEAD)"
-
-result() { if "$project/tools/test.sh" flow-since "$base" > "$work/output" 2>&1; then echo pass; else echo fail; fi; }
-expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; cat "$work/output"; exit 1; }; echo "ok $1"; }
-suites_reported() { grep -cE '^flow: [^ ]+ (pass|FAIL) \(' "$work/output"; }
+. "$here/_flow_project_fixture.sh"
 suite_outcomes() { grep -E '^flow: [^ ]+ (pass|FAIL) \(' "$work/output" | cut -d ' ' -f 2,3 | sort | tr '\n' ' ' | sed 's/ $//'; }
-lane_hold_seconds=1; poll_seconds=0.1; wait_ticks=50; hang_ticks=300; child_seconds=120
 
 echo 'exit 0' >> "$suite/sessions.sh"
+writes_bytecode() {
+  writes_probe="$(mktemp -d "$work/probe.XXXXXX")"; printf 'probed = 1\n' > "$writes_probe/probe.py"
+  "$1" -I -c 'import sys; sys.path.append(sys.argv[1]); import probe' "$writes_probe" 2>/dev/null || true
+  if [ -d "$writes_probe/__pycache__" ]; then rm -r "$writes_probe"; return 0; fi
+  rm -r "$writes_probe"; return 1
+}
+bytecode_writer=""
+for candidate in "$(command -v python3)" /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$candidate" ] && writes_bytecode "$candidate"; then bytecode_writer="$candidate"; break; fi
+done
+if [ -n "$bytecode_writer" ]; then
+  mkdir "$work/bytecode-writer"; ln -s "$bytecode_writer" "$work/bytecode-writer/python3"
+  writer_result="$(PATH="$work/bytecode-writer:$PATH" && result)"
+  expect "OneChangedSuiteUnderAPythonThatWritesBytecode_Passes because $bytecode_writer runs the runner like any python3" "$writer_result" pass
+  expect "OneChangedSuiteUnderAPythonThatWritesBytecode_RunsAlone because the runner's own modules are no change" "$(head -1 "$work/output")" 'flow: selected sessions'
+  expect 'RunUnderAPythonThatWritesBytecode_LeavesNoUntrackedFile because the runner never writes into the project it tests' "$(git status --porcelain --untracked-files=all | grep -c '^??' || true)" 0
+  rm -r "$work/bytecode-writer"
+else
+  echo 'skip OneChangedSuiteUnderAPythonThatWritesBytecode: no python3 here writes bytecode under -I'
+fi
 mkdir -p plugins/flow/changelog.d
 echo release > plugins/flow/changelog.d/release.md
 expect 'OneChangedSuite_RunsAlone because an unrelated failing adapter cannot affect it' "$(result)" pass
@@ -40,28 +39,6 @@ expect 'PassingSuite_KeepsItsSummaryLine because the verifier reads the outcome 
 printf 'echo "  FAIL StubCheck_Holds"\nexit 1\n' > "$suite/sessions.sh"
 expect 'SelectedSuiteFails_FailsVerification because a partial run must propagate failure' "$(result)" fail
 expect 'FailingSuite_PrintsItsLinesWithItsName because the failure must name its suite' "$(grep -c '^\[sessions\]   FAIL StubCheck_Holds$' "$work/output")" 1
-cat > "$suite/sessions.sh" <<STUB
-echo "  ok   Stub_FirstCheckHolds"
-sleep $child_seconds &
-echo \$! > "$work/child"
-ticks=0
-while [ "\$ticks" -lt $hang_ticks ]; do echo tick >> "$work/ticks"; sleep $poll_seconds; ticks=\$((ticks + 1)); done
-STUB
-python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 &
-runner=$!
-ticks=0; until [ -f "$work/ticks" ] || [ "$ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
-kill -TERM "$runner"
-ticks=0; while kill -0 "$runner" 2>/dev/null && [ "$ticks" -lt "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
-if kill -0 "$runner" 2>/dev/null; then runner_state=running; else runner_state=ended; fi
-ticks_at_stop="$(wc -l < "$work/ticks")"; sleep "$lane_hold_seconds"
-wait "$runner" || true
-suite_child="$(cat "$work/child")"
-if kill -0 "$suite_child" 2>/dev/null; then child_state=running; kill "$suite_child"; else child_state=ended; fi
-expect 'RunnerGivenTerm_EndsWhileItsSuiteHangs because a hung suite must not block cancellation' "$runner_state" ended
-expect 'RunnerGivenTerm_StopsItsRunningSuite because a stopped run leaves no suite behind' "$(wc -l < "$work/ticks")" "$ticks_at_stop"
-expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run leaves no check behind' "$child_state" ended
-expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
-rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'OnlyTheChangelogChanged_RunsNoSuite because release notes are no test input' "$(suites_reported)" 0
@@ -123,37 +100,3 @@ git mv plugins/flow/tests/renamed.sh plugins/flow/tests/sessions.sh
 git tag unavailable HEAD
 expect 'MissingBaseWithARefOfThatName_RunsFullCoverage because a ref can take any name' "$(result)" fail
 expect 'MissingBaseWithARefOfThatName_IncludesJiraContract because every suite runs' "$(grep -c '^flow: contract-jira FAIL' "$work/output")" 1
-mkdir "$work/holders"
-for stub in "$suite"/*.sh; do
-  cat > "$stub" <<STUB
-: > "$work/holders/\$\$"
-ls "$work/holders" | wc -l | tr -d ' ' >> "$work/holder-counts"
-sleep $lane_hold_seconds
-rm "$work/holders/\$\$"
-STUB
-done
-most_suites_at_once() { sort -n "$work/holder-counts" | tail -1; rm "$work/holder-counts"; }
-export FLOW_SUITE_LANES=1
-expect 'OneLane_Passes because one lane is a valid count' "$(result)" pass
-expect 'OneLane_RunsOneSuiteAtATime because a single lane never starts a second suite' "$(most_suites_at_once)" 1
-FLOW_SUITE_LANES=3
-expect 'ThreeLanes_Pass because the default count must work when named' "$(result)" pass
-expect 'ThreeLanes_RunThreeSuitesAtOnce because each lane holds one suite' "$(most_suites_at_once)" 3
-FLOW_SUITE_LANES=0
-expect 'ZeroLanes_Fails because no suite could ever run' "$(result)" fail
-expect 'ZeroLanes_NamesTheVariableAndTheValue because the owner must see what to fix' "$(tail -1 "$work/output" | grep -c "FLOW_SUITE_LANES.*'0'")" 1
-for bad in abc -1 ''; do
-  FLOW_SUITE_LANES="$bad"
-  expect "LaneCount${bad:-Empty}_Fails because only a whole number from 1 is a lane count" "$(result)" fail
-  expect "LaneCount${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_LANES.*'$bad'")" 1
-done
-unset FLOW_SUITE_LANES
-rm -f "$work/holder-counts"
-expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
-expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(most_suites_at_once)" 3
-cp -p "$root/plugins/flow/tests/run.sh" "$suite/run.sh"
-if "$project/tools/test.sh" flow > "$work/output" 2>&1; then whole_part=pass; else whole_part=fail; fi
-expect 'FlowPart_Passes because CI runs the whole Flow part through it' "$whole_part" pass
-expect 'FlowPart_RunsEverySuite because a full run leaves none out' "$(suites_reported)" 8
-if sh "$suite/run.sh" inline > "$work/output" 2>&1; then dispatcher_code=0; else dispatcher_code=$?; fi
-expect 'FlowDispatcherGivenAnArgument_IsAUsageError because run.sh only hands the whole run to the runner' "$dispatcher_code" 2
