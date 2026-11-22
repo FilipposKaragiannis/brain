@@ -183,6 +183,10 @@ for common_rule_file in "$plugin"/rules/common/*.md; do install_rule_text "$comm
 
 # 3. The marked block in AGENTS.md, and in CLAUDE.md when that is a different file.
 block_source="$(scope_copy block "$plugin/rules/block.md")" || die "could not render the block"
+language_block="$(tmpfile language-block)"
+if ! python3 -I "$plugin/skills/init/scripts/appendices.py" "$plugin/rules/appendices.json" .standards/config.json "$scope" "$block_source" > "$language_block" \
+  || [ ! -s "$language_block" ]; then die "could not name the installed language appendices in the block (see above)"; fi
+block_source="$language_block"
 install_block() {
   target="$1"
   tmp="$(tmpfile block)"
