@@ -3,10 +3,10 @@
 
     python3 -I appendices.py <plugin>/rules/appendices.json .standards/config.json <project|machine>
 
-Prints one line per appendix of the plugin, in the plugin's order: "<file>\\t<glob>" once per glob
-it installs with, or "<file>\\t" alone when it is left out. At project scope an appendix installs
-when a configured language shares a file extension with it, and loads for the extensions of those
-languages. At machine scope, shared by every project, each appendix installs and loads for its own
+Prints one line per appendix of the plugin, in the plugin's order: "<file>\\t<globs>", the globs it
+installs with separated by spaces, and no globs when it is left out. At project scope an appendix
+installs when a configured language shares a file extension with it, and loads for the extensions
+of those languages. At machine scope, shared by every project, each appendix installs and loads for its own
 extensions. A missing config configures no language. Exit 1 with the reason on stderr when a file
 does not parse or names an extension that is not a dot and a name.
 """
@@ -20,6 +20,9 @@ SCOPES = ("project", "machine")
 MACHINE_SCOPE = "machine"
 EXTENSION = re.compile(r"^\.[A-Za-z0-9_+-]+$")
 GLOB_PREFIX = "**/*"
+GLOB_SEPARATOR = " "
+ARGUMENT_COUNT = 4
+USAGE_EXIT = 2
 USAGE = "usage: appendices.py <appendices.json> <config.json> <project|machine>"
 
 
@@ -66,10 +69,8 @@ def configured_languages(data: object) -> list:
     return languages if isinstance(languages, list) else []
 
 
-def language_extensions(language: object) -> object:
+def language_extensions(language: dict) -> list:
     """A configured language's extensions; one that names none has an empty list."""
-    if not isinstance(language, dict):
-        return None
     extensions = language.get("extensions")
     return [] if extensions is None else extensions
 
@@ -78,8 +79,10 @@ def languages_problem(data: object, path: str) -> str:
     if isinstance(data, dict) and "languages" in data and not isinstance(data["languages"], list):
         return "%s: languages is not a list" % path
     for position, language in enumerate(configured_languages(data)):
-        extensions = language_extensions(language)
-        problem = extensions_problem(extensions, "%s: languages[%d]" % (path, position))
+        where = "%s: languages[%d]" % (path, position)
+        if not isinstance(language, dict):
+            return "%s: a language must be an object, not %s" % (where, json.dumps(language))
+        problem = extensions_problem(language_extensions(language), where)
         if problem:
             return problem
     return ""
@@ -120,22 +123,19 @@ def globs_for(appendix: Appendix, configured: Tuple[Tuple[str, ...], ...], scope
 
 def table(selection: Selection, scope: str) -> Iterator[str]:
     for appendix in selection.appendices:
-        globs = globs_for(appendix, selection.configured, scope)
-        if not globs:
-            yield "%s\t" % appendix.file
-        for glob in globs:
-            yield "%s\t%s" % (appendix.file, glob)
+        yield "%s\t%s" % (appendix.file, GLOB_SEPARATOR.join(globs_for(appendix, selection.configured, scope)))
 
 
 def main() -> int:
-    if len(sys.argv) != 4 or sys.argv[3] not in SCOPES:
+    if len(sys.argv) != ARGUMENT_COUNT or sys.argv[-1] not in SCOPES:
         print(USAGE, file=sys.stderr)
-        return 2
-    selection = load(sys.argv[1], sys.argv[2])
+        return USAGE_EXIT
+    _, appendices_path, config_path, scope = sys.argv
+    selection = load(appendices_path, config_path)
     if selection.problem:
         print("appendices: %s" % selection.problem, file=sys.stderr)
         return 1
-    for line in table(selection, sys.argv[3]):
+    for line in table(selection, scope):
         print(line)
     return 0
 

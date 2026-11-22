@@ -153,8 +153,10 @@ def render_all(root):
         out.update(render_plugin(plugin, roster, root))
     out.update(render_marketplaces(plugins))
     standards = [p for p in plugins if p["name"] == "standards"]
+    rendered_rules = rules.Rendered(files={}, problem="")
     if standards:
-        out.update(rules.render(root, standards[0]["version"]))
+        rendered_rules = rules.render(root, standards[0]["version"])
+        out.update(rendered_rules.files)
     for source in sorted(glob.glob(os.path.join(root, "shared", "sh", "*.sh"))):
         for target_dir in SHARED_SH_DIRS:
             out[os.path.join(target_dir, os.path.basename(source))] = read_text(source)
@@ -165,7 +167,7 @@ def render_all(root):
         "model_map": roster["model_map"],
         "tiers": roster["tiers"],
     })
-    return out
+    return rules.Rendered(files=out, problem=rendered_rules.problem)
 
 
 def generated_on_disk(root):
@@ -201,7 +203,11 @@ def main():
     parser.add_argument("--root", default=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     args = parser.parse_args()
     root = args.root
-    rendered = render_all(root)
+    generated = render_all(root)
+    if generated.problem:
+        print("generate: %s" % generated.problem, file=sys.stderr)
+        return 1
+    rendered = dict(generated.files)
     rendered["docs/map.html"] = render_map(root)
     # The meta plugin ships the same page, so its map skill can add a project's roster anywhere.
     rendered["plugins/meta/skills/map/assets/map.html"] = rendered["docs/map.html"]
