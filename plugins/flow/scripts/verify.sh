@@ -286,7 +286,7 @@ command_with_verify_base() {
 run_with_names() {
   run_template="$1"; shift
   [ -n "$run_template" ] || { echo "the command is empty" >&2; return 1; }
-  run_command="$(files_placeholder_expanded "$run_template")" || { echo "{files} sits inside nested quotes, where a file name cannot stay data; pass the names on as arguments, sh -c '... \"\$@\"' sh {files}" >&2; return 1; }
+  run_command="$(files_placeholder_expanded "$run_template")" || return 1
   run_names_escaped=""
   case "$run_command" in
     *format_names_escaped*) run_names_escaped="$(names_backslash_escaped "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; return 1; } ;;

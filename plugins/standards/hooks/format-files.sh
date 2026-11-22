@@ -29,8 +29,7 @@ while [ "$remaining" -gt 0 ]; do
   name_is_under_prefix_with_one_of_extensions "$prefix" "$extensions" "$name" && set -- "$@" "$name"
 done
 [ "$#" -gt 0 ] || exit 0
-run="$(files_placeholder_expanded "$command")" \
-  || { echo "{files} sits inside nested quotes, where a file name cannot stay data; pass the names on as arguments, sh -c '... \"\$@\"' sh {files}" >&2; exit 1; }
+run="$(files_placeholder_expanded "$command")" || exit 1
 names_escaped="$(escaped_names_when_command_quotes_files "$run" "$@")" \
   || { echo "a file name with a newline cannot go into a quoted {files}" >&2; exit 1; }
 format_names_escaped="$names_escaped" sh -c "$run" sh "$@" && exit 0

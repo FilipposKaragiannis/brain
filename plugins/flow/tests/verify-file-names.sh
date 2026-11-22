@@ -118,7 +118,7 @@ check "MutationWithFiles_RunsNothingAndCreatesNoFile: no name may become a comma
   '[ -s "$received" ] && [ "$(untracked_names)" = "$(hostile_names_sorted)" ]'
 
 new_item mutationfailing ""
-configure 'true' 'echo "mutants survived" >&2; exit 1; # {files}'
+configure 'true' 'true {files}; echo "mutants survived" >&2; exit 1'
 add_names 'm n.name'
 verify >/dev/null
 check "MutationFailing_IsASignal: a failing mutation run is never a silent pass" \
