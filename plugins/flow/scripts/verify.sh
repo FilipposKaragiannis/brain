@@ -21,11 +21,10 @@
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base. A moved file is changed at its old path and its new one. When the base
-# cannot be resolved or a git listing of changes fails (its error in the log), the list may be
-# short: a failed `changed files` check names the cause, every check with paths runs, no kept pass
-# is reused and feel_test is true when feel_test_paths is set. Exit 0 on pass,
-# 1 on fail; 2 when --base is no valid branch name.
+# else the config base (scripts/_change_list.py). A moved file is changed at its old path and its
+# new one. When the base is unresolved or a git listing fails, a failed `changed files` check names
+# why, every check with paths runs, no kept pass is reused and feel_test is true when
+# feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is no valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -227,39 +226,26 @@ rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the v
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
-records=""; changed_list=""; timings=""
+records=""; changed_list=""; timings=""; change_list_causes_file=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+change_list_causes_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 
-change_list=complete; change_list_causes=""
-unreadable_names_cause="a changed file name holds the character U+001F, which verify cannot hand to a command"
-causes_with() { printf '%s' "${change_list_causes:+$change_list_causes; }$1"; }
-append_changed_names() { git "$@" >> "$changed_list" 2>> "$log"; }
-if [ "$base_commit" = unavailable ]; then change_list_causes="$(causes_with "the comparison base $base cannot be resolved")"; change_list=incomplete
-else append_changed_names diff --no-renames --name-only -z "$merge_base" HEAD || { change_list_causes="$(causes_with "the diff from the base $base failed (git exit $?, its error is in the log)")"; change_list=incomplete; }; fi
-append_changed_names diff --no-renames --name-only -z HEAD || { change_list_causes="$(causes_with "the diff of uncommitted changes failed (git exit $?, its error is in the log)")"; change_list=incomplete; }
-append_changed_names ls-files --others --exclude-standard -z || { change_list_causes="$(causes_with "the listing of untracked files failed (git exit $?, its error is in the log)")"; change_list=incomplete; }
-separator_exit=3
-changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names < "$changed_list")"; names_exit=$?
-case "$names_exit" in
-  0) ;;
-  "$separator_exit") changed_units=""
-    case "$change_list" in
-      complete) change_list=unreadable_names ;;
-      *) change_list_causes="$(causes_with "$unreadable_names_cause")" ;;
-    esac ;;
+unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=""
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" "$log" "$change_list_causes_file" "$base" "$base_commit")"
+case "$?" in
+  0) change_list=complete ;;
+  "$unreadable_names_exit") change_list=unreadable_names ;;
+  "$incomplete_list_exit") change_list=incomplete; listed_files_only=" among the files verify could list" ;;
   *) die "cannot read the changed file names" ;;
 esac
-case "$change_list" in
-  incomplete) listed_files_only=" among the files verify could list" ;;
-  *) listed_files_only="" ;;
-esac
+change_list_causes="$(cat "$change_list_causes_file")" || die "cannot read why the changed file list is short"
 
 record() {
   # record <name> <status> <command> <summary source> <seconds> <reused from>: one check, four
@@ -371,7 +357,7 @@ if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standa
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
 case "$change_list" in
-  unreadable_names) record "changed files" fail "" "$unreadable_names_cause" 0 ""; failed "changed files" ;;
+  unreadable_names) record "changed files" fail "" "$change_list_causes" 0 ""; failed "changed files" ;;
   incomplete) record "changed files" fail "" "verify cannot list every changed file, so it cannot pass: $change_list_causes. Every check with paths runs." 0 ""; failed "changed files" ;;
 esac
 planned_checks build build

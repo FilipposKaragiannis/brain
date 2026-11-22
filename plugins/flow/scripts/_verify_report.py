@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+from types import MappingProxyType
 
 SUMMARY_MAX = 400
 MD_SUMMARY_MAX = 200
@@ -26,10 +27,10 @@ SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 ARGUMENTS_WITHOUT_TIMINGS = 10
 NAME_SEPARATOR = "\x1f"
-FEEL_TEST_REASONS = {
+FEEL_TEST_REASONS = MappingProxyType({
     "true": "a changed file matches `feel_test_paths`",
     "not_ruled_out": "verify could not list every changed file, so a change under `feel_test_paths` cannot be ruled out",
-}
+})
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
