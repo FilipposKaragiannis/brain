@@ -3,7 +3,7 @@
 # by tools/generate.sh; edit shared/sh/files_placeholder.sh. A command is the project's own text; the
 # names are data. files_placeholder_expanded rewrites a {files} that is an argument word of its own
 # outside quotes to "$@", and one that is an unquoted argument word in the quoted script of a
-# sh -c that starts a command to $format_names_escaped, so the caller runs the result as
+# sh -c or bash -c that starts a command to $format_names_escaped, so the caller runs the result as
 #   format_names_escaped="$(names_backslash_escaped "$@")" sh -c "$expanded" sh "$@"
 # and the names reach the command as separate arguments, or, in the script, as words with every
 # character that is not a letter, digit or one of _ . / - backslash-escaped. A name with a newline
@@ -34,7 +34,7 @@ names_backslash_escaped() {
 }
 
 files_placeholder_refused() {
-  echo "{files} must be an argument word of its own, outside quotes or unquoted in the quoted script of a sh -c that starts a command, with no \$( \${ \$' \$\" backtick, # or << before it and no quote left open; here it sits in nested quotes, joins other text or is not certain to be data. Pass the names on as arguments: sh -c '... \"\$@\"' sh {files}" >&2
+  echo "{files} must be an argument word of its own, outside quotes or unquoted in the quoted script of a sh -c or bash -c that starts a command, with no \$( \${ \$' \$\" backtick, # or << before it and no quote left open; here it sits in nested quotes, joins other text or is not certain to be data. Pass the names on as arguments: sh -c '... \"\$@\"' sh {files}" >&2
   return 1
 }
 
@@ -61,7 +61,15 @@ files_placeholder_unquoted_after() {
 
 files_placeholder_opened() {
   case "$1" in \'*) printf single ;; *) printf double ;; esac
-  case "$2" in "sh -c "|*[';|&(']"sh -c "|*[';|&(']" sh -c ") printf ' none' ;; *) printf ' -' ;; esac
+  if files_placeholder_ends_with_a_script_shell "$2"; then printf ' none'; else printf ' -'; fi
+}
+
+files_placeholder_ends_with_a_script_shell() {
+  case "$1" in
+    "sh -c "|*[';|&(']"sh -c "|*[';|&(']" sh -c ") return 0 ;;
+    "bash -c "|*[';|&(']"bash -c "|*[';|&(']" bash -c ") return 0 ;;
+  esac
+  return 1
 }
 
 files_placeholder_after_outside_quotes() {
