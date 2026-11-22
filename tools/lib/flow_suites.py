@@ -42,6 +42,7 @@ _LEAST_WHOLE_NUMBER = 1
 _SIGNAL_EXIT_BASE = 128
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 _STOP_CHECK_INTERVAL = Duration(0.1)
+_FIRST = 0
 _SHARD_OPTION = ("--shard", "<number>/<count>")
 _SINCE = ("since", "<base commit>")
 _USAGE = f"usage: flow_suites.py all [{' '.join(_SHARD_OPTION)}] | {' '.join(_SINCE)}"
@@ -145,33 +146,45 @@ def _report_stopped(unfinished: "set[SuiteName]", lanes: _Lanes) -> None:
             print(f"flow: {name.text} stopped", flush=True)
 
 
-def _note_stop_signals(noted: "list[int]") -> None:
+class _StopSignals:
+    def __init__(self) -> None:
+        self._numbers: "list[int]" = []
+
+    def note(self, number: int, frame: object) -> None:
+        self._numbers.append(number)
+
+    def noted(self) -> "tuple[int, ...]":
+        return tuple(self._numbers)
+
+
+def _noting_stop_signals() -> _StopSignals:
+    stop_signals = _StopSignals()
     for stop_signal in _STOP_SIGNALS:
-        signal.signal(stop_signal, lambda number, frame: noted.append(number))
+        signal.signal(stop_signal, stop_signals.note)
+    return stop_signals
 
 
-def _finished_until_a_stop(submitted: "Mapping[Future, SuiteName]", stop_signals: "list[int]") -> "Iterator[Future]":
+def _finished_until_a_stop(submitted: "Mapping[Future, SuiteName]", stop_signals: _StopSignals) -> "Iterator[Future]":
     unfinished = set(submitted)
-    while unfinished and not stop_signals:
+    while unfinished and not stop_signals.noted():
         finished, unfinished = wait(unfinished, timeout=_STOP_CHECK_INTERVAL.seconds, return_when=FIRST_COMPLETED)
         yield from finished
 
 
 def run_selected(suites: "Mapping[SuiteName, SuiteCommand]", logs: SuiteLogs, settings: Settings) -> "frozenset[SuiteName]":
     outcomes = {}
-    stop_signals: "list[int]" = []
     lanes = _Lanes(logs.folder, RunningSuites(), threading.Lock())
-    _note_stop_signals(stop_signals)
+    stop_signals = _noting_stop_signals()
     with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers:
         submitted = {workers.submit(_run_suite, name, command, settings, lanes): name for name, command in suites.items()}
         for finished in _finished_until_a_stop(submitted, stop_signals):
             name = submitted[finished]
             outcomes[name] = finished.result()
             _report_suite(name, outcomes[name], lanes, settings.time_limit)
-        if stop_signals:
+        if stop_signals.noted():
             _stop_running(submitted, lanes, settings)
             _report_stopped(suites.keys() - outcomes.keys(), lanes)
-            sys.exit(_SIGNAL_EXIT_BASE + stop_signals[0])
+            sys.exit(_SIGNAL_EXIT_BASE + stop_signals.noted()[_FIRST])
     return frozenset(name for name, outcome in outcomes.items() if outcome.failed())
 
 
