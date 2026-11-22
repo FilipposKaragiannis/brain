@@ -30,12 +30,14 @@ _LINT_PART = "lint"
 _LINTER_REQUIREMENTS = "tools/requirements-lint.txt"
 _INSTALL_COMMAND = "install"
 _REQUIREMENTS_OPTIONS = ("-r", "--requirement")
-_REQUIREMENTS_IN_ONE_WORD = ("-r" + _LINTER_REQUIREMENTS, "--requirement=" + _LINTER_REQUIREMENTS)
+_REQUIREMENTS_OPTIONS_JOINED_TO_THE_FILE = ("-r", "--requirement=")
 _PART_NAME = re.compile(r"[a-z][a-z-]*")
 _COMMAND_SEPARATOR = re.compile(r"[;&|()]+")
 _LINE_CONTINUATION = "\\\n"
 _LINE_END = "\n"
-_SEPARATOR_FOR_A_LINE_END = " ; "
+_SEPARATOR_AFTER_A_LINE_END = "\n;\n"
+_HASH_INSIDE_A_WORD = re.compile(r"(?<=[^\s;&|()])#")
+_ESCAPED_HASH = r"\#"
 _NEW_JOB = {"runs-on": "ubuntu-latest", "timeout-minutes": 5, "steps": [{"run": "true"}]}
 
 
@@ -43,12 +45,17 @@ def _runs(workflow: dict) -> "list[str]":
     return [step["run"] for job in workflow["jobs"].values() for step in job.get("steps", []) if "run" in step]
 
 
+def _names(word: str, path: str) -> bool:
+    return word == path or word.endswith("/" + path)
+
+
 def _parts_after(words: "list[str]") -> "list[str]":
     return list(takewhile(_PART_NAME.fullmatch, words))
 
 
 def _commands(run: str) -> "list[list[str]]":
-    lexer = shlex.shlex(run.replace(_LINE_CONTINUATION, " ").replace(_LINE_END, _SEPARATOR_FOR_A_LINE_END), posix=True, punctuation_chars=True)
+    joined = _HASH_INSIDE_A_WORD.sub(_ESCAPED_HASH, run.replace(_LINE_CONTINUATION, " "))
+    lexer = shlex.shlex(joined.replace(_LINE_END, _SEPARATOR_AFTER_A_LINE_END), posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     grouped = groupby(lexer, key=lambda word: _COMMAND_SEPARATOR.fullmatch(word) is None)
     return [list(words) for is_command, words in grouped if is_command]
@@ -56,7 +63,7 @@ def _commands(run: str) -> "list[list[str]]":
 
 def _part_lists(workflow: dict) -> "list[list[str]]":
     commands = [words for run in _runs(workflow) for words in _commands(run)]
-    return [_parts_after(words[at + 1:]) for words in commands for at, word in enumerate(words) if word == _TEST_SCRIPT]
+    return [_parts_after(words[at + 1:]) for words in commands for at, word in enumerate(words) if _names(word, _TEST_SCRIPT)]
 
 
 def _listed(needs: "str | list[str]") -> "set[str]":
@@ -92,12 +99,16 @@ def _commands_in_order(job: dict) -> "list[list[str]]":
 
 
 def _runs_lint(words: "list[str]") -> bool:
-    parts = [part for at, word in enumerate(words) if word == _TEST_SCRIPT for part in _parts_after(words[at + 1:])]
-    return _LINT_SCRIPT in words or _LINT_PART in parts
+    parts = [part for at, word in enumerate(words) if _names(word, _TEST_SCRIPT) for part in _parts_after(words[at + 1:])]
+    return any(_names(word, _LINT_SCRIPT) for word in words) or _LINT_PART in parts
+
+
+def _joined_requirements(word: str) -> bool:
+    return any(word.startswith(option) and _names(word[len(option):], _LINTER_REQUIREMENTS) for option in _REQUIREMENTS_OPTIONS_JOINED_TO_THE_FILE)
 
 
 def _names_linter_requirements(words: "list[str]", at: int) -> bool:
-    return words[at] in _REQUIREMENTS_IN_ONE_WORD or (words[at] in _REQUIREMENTS_OPTIONS and words[at + 1:at + 2] == [_LINTER_REQUIREMENTS])
+    return _joined_requirements(words[at]) or (words[at] in _REQUIREMENTS_OPTIONS and any(_names(word, _LINTER_REQUIREMENTS) for word in words[at + 1:at + 2]))
 
 
 def _installs_linters(words: "list[str]") -> bool:
@@ -209,3 +220,12 @@ installing_with TheLongOptionAndAnEqualsSign '--requirement=tools/requirements-l
 expect 'JobThatInstallsThenLintsAfterASemicolon_PassesTheLinterCheck because a semicolon ends the install command' "$(job_running '{"run": "python -m pip install -r tools/requirements-lint.txt; tools/lint.sh"}')" ''
 expect 'JobThatInstallsThenLintsAfterAnAndOperator_PassesTheLinterCheck because the lint runs only after the install' "$(job_running '{"run": "python -m pip install -r tools/requirements-lint.txt && tools/test.sh lint"}')" ''
 expect 'JobThatLintsThenInstallsAfterASemicolon_FailsTheLinterCheck because lint ran before its linters were there' "$(job_running '{"run": "tools/lint.sh; python -m pip install -r tools/requirements-lint.txt"}')" release
+expect 'JobWithACommentAboveItsInstall_PassesTheLinterCheck because a comment ends at its line' "$(job_running '{"run": "# Install the linters\npython -m pip install -r tools/requirements-lint.txt"}, {"run": "tools/lint.sh"}')" ''
+expect 'JobWithACommentAfterItsInstall_PassesTheLinterCheck because a comment ends at its line' "$(job_running '{"run": "python -m pip install -r tools/requirements-lint.txt # the pinned linters\ntools/lint.sh"}')" ''
+expect 'JobWithACommentAboveALintWithNoInstall_FailsTheLinterCheck because a comment hides no command below it' "$(job_running '{"run": "# lint this job\ntools/lint.sh"}')" release
+expect 'JobWithAHashInsideAWordBeforeALint_FailsTheLinterCheck because only a hash that starts a word starts a comment' "$(job_running '{"run": "[ $# -eq 0 ] && tools/lint.sh"}')" release
+expect 'JobWhoseInstallIsOnlyInAComment_FailsTheLinterCheck because a comment installs nothing' "$(job_running '{"run": "# python -m pip install -r tools/requirements-lint.txt\ntools/lint.sh"}')" release
+expect 'JobThatLintsByAPathFromTheFolder_FailsTheLinterCheck because ./tools/lint.sh is the same script' "$(job_running '{"run": "./tools/lint.sh"}')" release
+expect 'JobThatInstallsByAPathFromTheFolder_PassesTheLinterCheck because ./tools/requirements-lint.txt is the same file' "$(job_running '{"run": "python -m pip install -r ./tools/requirements-lint.txt\nsh ./tools/lint.sh"}')" ''
+expect 'JobThatLintsInsideAnIfWithNoInstall_FailsTheLinterCheck because a keyword before the script hides no lint' "$(job_running '{"run": "if true; then tools/lint.sh; fi"}')" release
+expect 'JobThatOnlyPrintsTheNameOfTheLintScriptInASentence_PassesTheLinterCheck because a quoted sentence runs nothing' "$(job_running '{"run": "echo \"run tools/lint.sh later\""}')" ''
