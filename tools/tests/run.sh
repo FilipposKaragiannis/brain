@@ -269,6 +269,55 @@ printf 'touch "$HOME/setup-outside-the-sandbox"\n' >> "$flow_dispatcher"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "FlowDispatcherWithALineBesideTheDispatch_FailsLint: lint exits 1 and names the flow run.sh once it runs anything but the dispatch" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'flow dispatcher holds more than the dispatch.*plugins/flow/tests/run.sh'" "$out"
 
+echo "lint holds ShellCheck and Ruff to the baseline"
+python="$(command -v python3)"; linted="$work/linted"
+fresh_linted() {
+  rm -rf "$linted"; mkdir -p "$linted/plugins/demo" "$linted/tools"
+  cp "$root/ruff.toml" "$root/.shellcheckrc" "$linted/"
+  printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted/plugins/demo/clean.sh"
+  printf 'import os\n\nprint(os.name)\n' > "$linted/plugins/demo/clean.py"
+  "$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
+}
+baseline_check() { out="$(env -u CI "$@" "$python" -I "$root/tools/lib/lint_baseline.py" check "$linted" 2>&1)"; code=$?; }
+unquoted_substitution() { printf 'echo $(date)\n' >> "$linted/plugins/demo/clean.sh"; }
+fresh_linted
+baseline_check
+check "CleanTree_Passes: no finding and exit 0, because the baseline of a clean tree is empty" [ "$code-$out" = "0-" ]
+unquoted_substitution
+baseline_check
+check "NewShellcheckFinding_FailsAndNamesFileAndRule: exit 1 and the file and rule of the unquoted substitution, because the baseline records none" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new shellcheck finding SC2046 in plugins/demo/clean.sh"' sh "$code" "$out"
+fresh_linted
+printf 'import sys\n' >> "$linted/plugins/demo/clean.py"
+baseline_check
+check "NewRuffFinding_FailsAndNamesFileAndRule: exit 1 and the file and rule of the unused import, because the baseline records none" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "new ruff finding F401 in plugins/demo/clean.py"' sh "$code" "$out"
+fresh_linted
+unquoted_substitution
+"$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
+printf '#!/bin/sh\n\n\nset -u\nprintf "%%s\\n" "$1"\necho $(date)\n' > "$linted/plugins/demo/clean.sh"
+baseline_check
+check "RecordedFindingOnAnotherLine_Passes: exit 0, because the baseline counts a rule per file and not its line" [ "$code-$out" = "0-" ]
+unquoted_substitution
+baseline_check
+check "AnotherFindingOfARecordedRule_Fails: exit 1 and the count named, because a count above the baseline is new" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "SC2046 in plugins/demo/clean.sh (baseline 1, now 2)"' sh "$code" "$out"
+fresh_linted
+unquoted_substitution
+"$python" -I "$root/tools/lib/lint_baseline.py" update "$linted" >/dev/null
+printf '#!/bin/sh\nset -u\nprintf "%%s\\n" "$1"\n' > "$linted/plugins/demo/clean.sh"
+baseline_check
+check "FixedFinding_Passes: exit 0 and a line saying how to lower the baseline, because fixing a finding must not fail lint" \
+  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -q "1 fewer findings than its baseline"' sh "$code" "$out"
+fresh_linted
+mkdir -p "$work/no-tools"
+baseline_check "PATH=$work/no-tools"
+check "MissingToolsLocally_ReportAndPass: exit 0 and a line per tool naming how to install it, because a developer without the tools is not blocked" \
+  sh -c '[ "$1" -eq 0 ] && printf "%s" "$2" | grep -q "shellcheck is not installed.*brew install shellcheck" && printf "%s" "$2" | grep -q "ruff is not installed.*pip install -r tools/requirements-lint.txt"' sh "$code" "$out"
+baseline_check "PATH=$work/no-tools" CI=1
+check "MissingToolsInCi_Fail: exit 1 and each tool named, because CI must run the checks it promises" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -q "shellcheck is not installed" && printf "%s" "$2" | grep -q "ruff is not installed"' sh "$code" "$out"
+
 echo "test.sh fails a part named on the command line that cannot run"
 # The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.
 mkdir -p "$work/node-bin"; printf '#!/bin/sh\nexit 0\n' > "$work/node-bin/node"; chmod +x "$work/node-bin/node"
