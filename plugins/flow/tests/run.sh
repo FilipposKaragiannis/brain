@@ -541,6 +541,10 @@ echo "a pr step that opens no pull request leaves nothing to merge (tests/pr-wit
 sh "$here/pr-without-pull-request.sh" > "$work/pr-without-pull-request.out" 2>&1; code=$?
 check "pr-without-pull-request: $(tail -n 1 "$work/pr-without-pull-request.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/pr-without-pull-request.out"
+echo "a step that left no result file runs again (tests/lost-result.sh)"
+sh "$here/lost-result.sh" > "$work/lost-result.out" 2>&1; code=$?
+check "lost-result: $(tail -n 1 "$work/lost-result.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/lost-result.out"
 
 echo "an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)"
 sh "$here/sessions.sh" > "$work/sessions.out" 2>&1; code=$?

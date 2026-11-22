@@ -13,6 +13,8 @@
 # against the claim's base) the item closes and its worktree is released, no merge gate raised;
 # with none and changes to merge it raises an escalation gate. A lookup gh cannot answer leaves
 # changes at the merge gate, where the sweep looks again.
+# A failed step goes to its fix step (profiles.json fix_step), except one whose result is marked
+# `lost`: that step runs again.
 # Exit codes: 0 next step ready · 4 waiting at a gate, or split and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
@@ -247,6 +249,10 @@ case "$status" in
       report 4 "" escalation
     fi
     fix="$(json_get "$profiles" "fix_step.$step")"; [ -n "$fix" ] || fix="$step"
+    # A session that left no result file (the runner marks it `lost`) found nothing to fix, so
+    # the same step runs again and its attempts count on to the gate. Its fix step would change
+    # nothing, and the steps after it would reset the count each time round.
+    [ -z "$(json_get "$result" lost)" ] || fix="$step"
     step_write "$item" "step=$fix" "attempts=$attempts" "last_event=$(now_iso) $step failed (attempt $attempts): ${summary:-no summary}" >/dev/null
     adapter comment "$item" --body "Step $step failed (attempt $attempts of ${max:-3}): ${summary:-no summary}. Back to $fix." >/dev/null
     finish_run

@@ -11,6 +11,10 @@
 # Claude's sessions write the 5-minute prompt cache (CLAUDE_CODE_PROMPT_CACHE_TTL, and its
 # subagent twin): a session that ends in minutes never uses the hour a subscription would buy at
 # twice the write price. A TTL the owner exported wins.
+# Claude waits up to an hour (CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS) for the background subagents a
+# session left running after its last turn: at the host's own 10 minutes a review's Unity or
+# physics reviewer was stopped mid-run, and the step ended with no result file. A ceiling the
+# owner exported wins.
 # Both hosts print JSON (claude --output-format json, codex --json), which scripts/_host.py turns
 # back into the text they would have printed; stderr streams as it comes. After the run,
 # host_usage holds the usage the host reported as JSON (with cost_usd and the models that ran),
@@ -19,6 +23,7 @@
 # stops the host (host_stop): every later host_run on it refuses, exit 75, until the owner clears
 # it (gate.sh clear).
 command -v flow_home >/dev/null 2>&1 || . "$FLOW_PLUGIN/lib/flow.sh"
+HOST_BACKGROUND_WAIT_MILLISECONDS=3600000
 host_check() {
   case "${1:-}" in claude|codex) command -v "$1" >/dev/null 2>&1 || { echo "flow: $1 is not installed" >&2; return 1; } ;;
     *) echo "flow: host must be claude or codex" >&2; return 2 ;; esac
@@ -52,6 +57,7 @@ host_run() {
       claude)
         (cd "$dir" && CLAUDE_CODE_PROMPT_CACHE_TTL="${CLAUDE_CODE_PROMPT_CACHE_TTL:-5m}" \
           CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="${CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL:-5m}" \
+          CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-$HOST_BACKGROUND_WAIT_MILLISECONDS}" \
           claude -p "$prompt" --output-format json --permission-mode "$mode" ${model:+--model "$model"} ${effort:+--effort "$effort"} < /dev/null) ;;
       codex)
         cmodel="$model"; [ "$names" = as-is ] || cmodel="$(host_codex_model "$model")"
