@@ -11,6 +11,7 @@ trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
 . "$here/_github_fixture.sh"
 . "$here/_review_fixture.sh"
+. "$here/_comments_job_fixture.sh"
 echo "jobs (fake hosts)"
 . "$here/_jobs_fixture.sh"
 "$P/adapters/github/write-state.sh" 'gh#21' step=pr && "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/90
