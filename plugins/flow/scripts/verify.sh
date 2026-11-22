@@ -238,27 +238,31 @@ changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot mak
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 
 change_list=complete; change_list_causes=""
-change_list_incomplete() {
+unreadable_names_cause="a changed file name holds the character U+001F, which verify cannot hand to a command"
+mark_change_list_incomplete() {
   change_list=incomplete; change_list_causes="${change_list_causes:+$change_list_causes; }$1"
 }
-changed_names_from() {
-  listing="$1"; shift
-  git "$@" >> "$changed_list" 2>> "$log" || change_list_incomplete "$listing failed (git exit $?, its error is in the log)"
+mark_names_unreadable() {
+  case "$change_list" in
+    complete) change_list=unreadable_names ;;
+    *) mark_change_list_incomplete "$unreadable_names_cause" ;;
+  esac
 }
-if [ "$base_commit" = unavailable ]; then change_list_incomplete "the comparison base $base cannot be resolved"
-else changed_names_from "the diff from the base $base" diff --no-renames --name-only -z "$merge_base" HEAD; fi
-changed_names_from "the diff of uncommitted changes" diff --no-renames --name-only -z HEAD
-changed_names_from "the listing of untracked files" ls-files --others --exclude-standard -z
-separator_exit=3; unreadable_names=""
+append_changed_names() { git "$@" >> "$changed_list" 2>> "$log"; }
+if [ "$base_commit" = unavailable ]; then mark_change_list_incomplete "the comparison base $base cannot be resolved"
+else append_changed_names diff --no-renames --name-only -z "$merge_base" HEAD || mark_change_list_incomplete "the diff from the base $base failed (git exit $?, its error is in the log)"; fi
+append_changed_names diff --no-renames --name-only -z HEAD || mark_change_list_incomplete "the diff of uncommitted changes failed (git exit $?, its error is in the log)"
+append_changed_names ls-files --others --exclude-standard -z || mark_change_list_incomplete "the listing of untracked files failed (git exit $?, its error is in the log)"
+separator_exit=3
 changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names < "$changed_list")"; names_exit=$?
 case "$names_exit" in
   0) ;;
-  "$separator_exit") unreadable_names=1; changed_units="" ;;
+  "$separator_exit") mark_names_unreadable; changed_units="" ;;
   *) die "cannot read the changed file names" ;;
 esac
 case "$change_list" in
-  complete) listed_files_only="" ;;
-  *) listed_files_only=" among the files verify could list" ;;
+  incomplete) listed_files_only=" among the files verify could list" ;;
+  *) listed_files_only="" ;;
 esac
 
 record() {
@@ -295,7 +299,7 @@ $1
 EOF_GLOBS
   return 1
 }
-in_scope() { [ "$change_list" != complete ] || changed_matches "$1"; }
+in_scope() { [ "$change_list" = incomplete ] || changed_matches "$1"; }
 command_with_verify_base() {
   case "$1" in
     *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
@@ -344,7 +348,7 @@ scoped_check() {
   if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
   set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
-  if [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
+  if [ -z "$fresh" ] && [ "$change_list" != incomplete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
@@ -370,12 +374,10 @@ planned_checks() {
 if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
-[ -z "$unreadable_names" ] || {
-  record "changed files" fail "" "a changed file name holds the character U+001F, which verify cannot hand to a command" 0 ""; failed "changed files"
-}
-[ "$change_list" = complete ] || {
-  record "changed files" fail "" "verify cannot list every changed file, so it cannot pass: $change_list_causes. Every check with paths runs." 0 ""; failed "changed files"
-}
+case "$change_list" in
+  unreadable_names) record "changed files" fail "" "$unreadable_names_cause" 0 ""; failed "changed files" ;;
+  incomplete) record "changed files" fail "" "verify cannot list every changed file, so it cannot pass: $change_list_causes. Every check with paths runs." 0 ""; failed "changed files" ;;
+esac
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
@@ -410,10 +412,9 @@ for name in $(yaml_keys "$(config_file)" gates); do
   if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
 done
-feel=false
-for g in $(cfg feel_test_paths); do
-  { [ "$change_list" != complete ] || changed_unit_matches "$g"; } && { feel=true; break; }
-done
+feel_test_paths="$(cfg feel_test_paths)"; feel=false
+if [ -n "$feel_test_paths" ] && [ "$change_list" = incomplete ]; then feel=not_ruled_out
+elif changed_matches "$feel_test_paths"; then feel=true; fi
 printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"
 

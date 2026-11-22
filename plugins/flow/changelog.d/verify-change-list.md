@@ -5,5 +5,9 @@ bump: patch
   uncommitted changes or the listing of untracked files), is a failed `changed files` check that
   names the cause, and git's error reaches the verify log. In that state every build, test and
   gate command with paths runs, no kept test pass is reused, and `feel_test` is true when
-  `feel_test_paths` is set. A format or mutation command with `{files}` that finds no file says
-  it looked only among the files verify could list.
+  `feel_test_paths` is set, with verify.md saying a change there cannot be ruled out. A format or
+  mutation command with `{files}` that finds no file says it looked only among the files verify
+  could list.
+- `feel_test` is true for a changed file under a `feel_test_paths` glob such as
+  `ui/src/**/*.tsx` even when the glob also names an unchanged file in the worktree; the shell
+  no longer expands the glob against the folder first.

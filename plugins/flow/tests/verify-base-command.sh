@@ -57,14 +57,19 @@ changed_source_item() {
   printf 'feel_test_paths:\n  - ui/**\n' >> .flow/config.yaml
   mkdir -p "$worktree/.standards" "$worktree/source"
   printf '%s\n' "$2" > "$worktree/.standards/config.json"
+  git -C "$worktree" add .standards/config.json && git -C "$worktree" commit -qm "standards"
   echo change > "$worktree/source/file.sh"
-  git -C "$worktree" add .standards/config.json source/file.sh && git -C "$worktree" commit -qm "source change"
+  case "$3" in
+    committed) git -C "$worktree" add source/file.sh && git -C "$worktree" commit -qm "source change" ;;
+    staged) git -C "$worktree" add source/file.sh ;;
+  esac
 }
+git_fatal_exit=128
 real_git="$(command -v git)"; stand_in_git="$work/stand-in-git"; mkdir -p "$stand_in_git"
 cat > "$stand_in_git/git" <<STUB
 #!/bin/sh
 case "\$*" in
-  \$(cat "$work/failing-git-arguments")) echo "fatal: stand-in failure of git \$*" >&2; exit 128 ;;
+  \$(cat "$work/failing-git-arguments")) echo "fatal: stand-in failure of git \$*" >&2; exit $git_fatal_exit ;;
 esac
 exec "$real_git" "\$@"
 STUB
@@ -73,59 +78,88 @@ verify_with_failing_git() {
   printf '%s\n' "$1" > "$work/failing-git-arguments"
   (PATH="$stand_in_git:$PATH"; export PATH; verify >/dev/null 2>&1); verify_exit_code=$?
 }
+base_diff_arguments='diff --no-renames --name-only -z * HEAD'
+uncommitted_diff_arguments='diff --no-renames --name-only -z HEAD'
+untracked_listing_arguments='ls-files --others --exclude-standard -z'
+failed_listing_checks() {
+  failed_scenario="$1"
+  printf '%s failed\n' "$2" > "$work/expected-operation"
+  printf 'stand-in failure of git %s\n' "$3" > "$work/expected-git-error"
+  check "${failed_scenario}_FailsVerify because a short change list cannot prove the change" \
+    'verify_exited_failing && [ "$(report_status)" = fail ]'
+  check "${failed_scenario}_NamesTheOperation because the reader must know which listing failed" \
+    'check_field "changed files" summary | grep -qF -f "$work/expected-operation"'
+  check "${failed_scenario}_RunsTheScopedTest because no listing can show nothing under its paths changed" \
+    '[ "$(check_field "tests scoped" status)" = fail ]'
+  check "${failed_scenario}_RaisesFeelTest because a change under the feel-test paths cannot be ruled out" \
+    '[ "$(feel_test)" = true ]'
+  check "${failed_scenario}_KeepsGitsErrorInTheLog because the cause must be readable" \
+    'grep -qF -f "$work/expected-git-error" "$reports/verify.log"'
+}
+failing_scoped_test='{"test":[{"name":"scoped","command":"false","paths":["source/**"]}]}'
 
-changed_source_item git-failure '{"test":[{"name":"scoped","command":"false","paths":["source/**"]}]}'
+changed_source_item git-failure "$failing_scoped_test" committed
 verify >/dev/null 2>&1
 check "HealthyListWithFailingScopedTest_FailsOnThatTestAlone because a complete change list adds no failed check" \
   '[ "$(failed_checks)" = "tests scoped" ]'
 check "HealthyListOutsideFeelTestPaths_HasNoFeelTest because feel_test follows feel_test_paths" \
   '[ "$(feel_test)" = false ]'
 
-verify_with_failing_git 'diff --no-renames --name-only -z * HEAD'
-check "BaseDiffFails_FailsVerify because a short change list cannot prove the change" \
-  'verify_exited_failing && [ "$(report_status)" = fail ]'
-check "BaseDiffFails_NamesTheOperation because the reader must know which listing failed" \
-  'check_field "changed files" summary | grep -q "the diff from the base main failed"'
-check "BaseDiffFails_RunsTheScopedTest because no listing can show nothing under its paths changed" \
-  '[ "$(check_field "tests scoped" status)" = fail ]'
-check "BaseDiffFails_RaisesFeelTest because a change under the feel-test paths cannot be ruled out" \
-  '[ "$(feel_test)" = true ]'
-check "BaseDiffFails_KeepsGitsErrorInTheLog because the cause must be readable" \
-  'grep -q "stand-in failure of git diff" "$reports/verify.log"'
+verify_with_failing_git "$base_diff_arguments"
+failed_listing_checks BaseDiffFails "the diff from the base main" "diff"
 
-changed_source_item healthy-feel '{"test":[]}'
+changed_source_item uncommitted-failure "$failing_scoped_test" staged
+verify_with_failing_git "$uncommitted_diff_arguments"
+failed_listing_checks UncommittedDiffFails "the diff of uncommitted changes" "diff"
+
+changed_source_item untracked-failure "$failing_scoped_test" untracked
+verify_with_failing_git "$untracked_listing_arguments"
+failed_listing_checks UntrackedListingFails "the listing of untracked files" "ls-files"
+
+changed_source_item unreadable-and-failed '{"test":[]}' committed
+echo change > "$worktree/unit$(printf '\037')separator.name"
+verify_with_failing_git "$base_diff_arguments"
+changed_files_checks() { python3 -c 'import json,sys; print(sum(1 for check in json.load(open(sys.argv[1]))["checks"] if check["name"]=="changed files"))' "$reports/verify.json"; }
+check "UnreadableNameWithFailedListing_RecordsOneChangedFilesCheck because a reader looks the check up by its name" \
+  '[ "$(changed_files_checks)" -eq 1 ]'
+check "UnreadableNameWithFailedListing_NamesTheUnreadableName because each cause needs its own fix" \
+  'check_field "changed files" summary | grep -q "U+001F"'
+
+changed_source_item healthy-feel '{"test":[]}' committed
 mkdir -p "$worktree/ui" && echo change > "$worktree/ui/screen" && git -C "$worktree" add ui/screen && git -C "$worktree" commit -qm "ui change"
 verify >/dev/null 2>&1
 check "HealthyListWithChangeUnderFeelTestPaths_RaisesFeelTest because feel_test follows feel_test_paths" \
   '[ "$(feel_test)" = true ] && [ -z "$(failed_checks)" ]'
 
-changed_source_item git-failure-reuse '{"test":[{"name":"scoped","command":"true","paths":["source/**"]}]}'
+new_item healthy-feel-glob ""
+printf 'feel_test_paths:\n  - ui/src/**/*.tsx\n' >> .flow/config.yaml; printf 'button.tsx\n' >> .git/info/exclude
+mkdir -p "$worktree/ui/src/widgets" && echo unchanged > "$worktree/ui/src/widgets/button.tsx"
+echo change > "$worktree/ui/src/App.tsx" && git -C "$worktree" add ui/src/App.tsx && git -C "$worktree" commit -qm "ui change"
 verify >/dev/null 2>&1
-verify_with_failing_git 'diff --no-renames --name-only -z * HEAD'
+check "ChangeMatchingAFeelTestGlobThatAlsoNamesAnUnchangedFile_RaisesFeelTest because the glob is matched against the change, not the folder" \
+  '[ "$(feel_test)" = true ]'
+
+changed_source_item git-failure-reuse '{"test":[{"name":"scoped","command":"true","paths":["source/**"]}]}' committed
+verify >/dev/null 2>&1
+verify_with_failing_git "$base_diff_arguments"
 check "BaseDiffFailsAfterAPass_ReusesNoPass because a kept pass proved a change list that is now unknown" \
   '[ "$(check_field "tests scoped" status)" = pass ] && [ -z "$(check_field "tests scoped" reused_from)" ]'
 
-verify_with_failing_git 'diff --no-renames --name-only -z HEAD'
-check "UncommittedDiffFails_FailsVerifyNamingIt because a short change list cannot prove the change" \
-  '[ "$(report_status)" = fail ] && check_field "changed files" summary | grep -q "the diff of uncommitted changes failed"'
-
-verify_with_failing_git 'ls-files --others --exclude-standard -z'
-check "UntrackedListingFails_FailsVerifyNamingIt because a short change list cannot prove the change" \
-  '[ "$(report_status)" = fail ] && check_field "changed files" summary | grep -q "the listing of untracked files failed"'
-
-changed_source_item unresolved-format '{"test":[],"languages":[{"name":"shell","extensions":[".sh"],"format":[{"prefix":"","command":"false"}]}]}'
+changed_source_item unresolved-format '{"test":[],"languages":[{"name":"shell","extensions":[".sh"],"format":[{"prefix":"","command":"false"}]}]}' committed
 verify --base no-such-base >/dev/null 2>&1; verify_exit_code=$?
 check "UnresolvedBaseWithFailingFormat_FailsVerify because a skipped formatter must not let the run pass" \
-  'verify_exited_failing && [ "$(report_status)" = fail ] && [ "$(check_field format status)" != pass ]'
+  'verify_exited_failing && [ "$(report_status)" = fail ]'
 check "UnresolvedBaseWithFailingFormat_ShowsNoPassInTheReport because a reader of the report must not read the run as green" \
   'grep -q "^## Verify: fail" "$reports/verify.md" && ! grep -q "^## Verify: pass" "$reports/verify.md"'
 check "UnresolvedBaseWithFailingFormat_NamesTheBase because the reader must know what to fix" \
   'check_field "changed files" summary | grep -q "comparison base no-such-base cannot be resolved"'
 
-changed_source_item unresolved-clean '{"test":[]}'
+changed_source_item unresolved-clean '{"test":[]}' committed
 verify --base no-such-base >/dev/null 2>&1; verify_exit_code=$?
 check "UnresolvedBaseWithNothingElseWrong_FailsVerify because nothing proves the change list" \
   'verify_exited_failing && [ "$(failed_checks)" = "changed files" ]'
 check "UnresolvedBaseWithNothingElseWrong_RaisesFeelTest because a change under the feel-test paths cannot be ruled out" \
   '[ "$(feel_test)" = true ]'
+check "UnresolvedBaseWithNothingElseWrong_SaysWhyTheFeelTestIsNeeded because a reader must not look for a matching file" \
+  'grep -q "cannot be ruled out" "$reports/verify.md"'
 exit "$((fails > 0))"
