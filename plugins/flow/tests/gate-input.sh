@@ -1,32 +1,26 @@
 #!/bin/sh
 # gate-input.sh: text that comes from an agent's result file never reaches a shell or an argument
-# list as code, on the local adapter in throwaway repos with stub notifiers that record each
-# argument and the fake gh. gate.sh raise refuses a gate profiles.json does not have, before it
-# writes anything; notify.sh hands the notifier its title, subtitle and body as arguments; the
-# GitHub adapter hands gh each label as one argument. No model runs.
+# list as code, on the local adapter in throwaway repos with a fake notification centre that shows
+# what the owner would see, and the fake gh. gate.sh raise refuses a gate profiles.json does not
+# have, before it writes anything; notify.sh shows its title, subtitle and body as the text they
+# are; the GitHub adapter hands gh each label as one argument. No model runs.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-NOTIFIER_ARGUMENTS="$work/notifier-arguments.jsonl"
-NOTIFY_SEND_ARGUMENTS="$work/notify-send-arguments.jsonl"
+SHOWN_NOTIFICATIONS="$work/shown-notifications.jsonl"
 HOSTILE_TEXT='say "no" \ $(touch '"$work"'/pwned) `touch '"$work"'/pwned`'
-export FAKE_GH_DIR="$work/gh"
+export FAKE_GH_DIR="$work/gh" FAKE_NOTIFICATIONS="$SHOWN_NOTIFICATIONS"
 mkdir -p "$FAKE_GH_DIR" "$work/stubs" && cp "$plugin/tests/_fake_gh.py" "$FAKE_GH_DIR/"
-printf '#!/bin/sh\npython3 -c '"'"'import json, sys; print(json.dumps(sys.argv[1:]))'"'"' "$@" >> "%s"\n' "$NOTIFIER_ARGUMENTS" > "$work/stubs/osascript"
-printf '#!/bin/sh\npython3 -c '"'"'import json, sys; print(json.dumps(sys.argv[1:]))'"'"' "$@" >> "%s"\n' "$NOTIFY_SEND_ARGUMENTS" > "$work/stubs/notify-send"
+printf '#!/bin/sh\nexec python3 -I "%s" osascript "$@"\n' "$plugin/tests/_fake_notifier.py" > "$work/stubs/osascript"
+printf '#!/bin/sh\nexec python3 -I "%s" notify-send "$@"\n' "$plugin/tests/_fake_notifier.py" > "$work/stubs/notify-send"
 ln -s "$plugin/tests/fake-gh.sh" "$work/stubs/gh"
 chmod +x "$work/stubs/osascript" "$work/stubs/notify-send"
 PATH="$work/stubs:$PATH"; export PATH
 
-# notifier_argument <n>: the nth argument from the end of the last osascript call.
-notifier_argument() { tail -n 1 "$NOTIFIER_ARGUMENTS" | python3 -c 'import json, sys; print(json.load(sys.stdin)[-int(sys.argv[1])])' "$1"; }
-# notify_send_argument <n>: the nth argument from the end of the last notify-send call.
-notify_send_argument() { tail -n 1 "$NOTIFY_SEND_ARGUMENTS" | python3 -c 'import json, sys; print(json.load(sys.stdin)[-int(sys.argv[1])])' "$1"; }
-# issue_labels <number>: the labels the fake gh holds on the issue, one per line.
+shown_field() { tail -n 1 "$SHOWN_NOTIFICATIONS" | python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 issue_labels() { gh issue view "$1" -R acme/widgets --json labels -q '.labels[].name'; }
-# without_osascript: a PATH of the current one's tools with no osascript, so notify.sh takes its notify-send branch.
 without_osascript() {
   mkdir -p "$work/linux" && ln -s "$work/stubs/notify-send" "$work/linux/notify-send"
   old_path="$PATH"; IFS=:
@@ -58,28 +52,28 @@ check "UnknownGate_LeavesTheItemsGateAlone: the tracker holds no gate" \
 check "UnknownGate_WritesNoCommentOrState: the item reads as it did before" \
   '[ "$("$local_adapter/read.sh" "$unknown_item")" = "$item_before" ]'
 check "UnknownGate_NotifiesNobody: no desktop notification went out" \
-  '[ ! -e "$NOTIFIER_ARGUMENTS" ]'
+  '[ ! -e "$SHOWN_NOTIFICATIONS" ]'
 check "UnknownGate_RunsNoShellText: the name's command substitution did not run" \
   '[ ! -e pwned ]'
 
 echo "gate input: text with a quote, a backslash and a command substitution"
 "$plugin/scripts/gate.sh" raise "$unknown_item" escalation "$HOSTILE_TEXT" > /dev/null 2>&1
-check "GateMessage_ReachesTheNotifierBodyLiterally: the notifier receives it unchanged" \
-  '[ "$(notifier_argument 3 | head -n 1)" = "$HOSTILE_TEXT" ]'
+check "GateMessage_ShowsInTheNotificationBodyLiterally: the notification shows it unchanged" \
+  '[ "$(shown_field body | head -n 1)" = "$HOSTILE_TEXT" ]'
 check "GateMessage_RunsNoShellText: no command in it ran" \
   '[ ! -e "$work/pwned" ]'
 hostile_title="$(new_task "$HOSTILE_TEXT")"
 "$plugin/scripts/gate.sh" raise "$hostile_title" ambiguity "Which one?" > /dev/null 2>&1
-check "ItemTitle_ReachesTheNotifierSubtitleLiterally: the quote swap is gone" \
-  '[ "$(notifier_argument 1)" = "$HOSTILE_TEXT" ]'
+check "ItemTitle_ShowsInTheNotificationSubtitleLiterally: the quote swap is gone" \
+  '[ "$(shown_field subtitle)" = "$HOSTILE_TEXT" ]'
 "$plugin/scripts/notify.sh" --event "$HOSTILE_TEXT" "Nothing ready." > /dev/null 2>&1
-check "EventName_ReachesTheNotifierTitleLiterally: the title is no more code than the body" \
-  '[ "$(notifier_argument 2)" = "flow: $HOSTILE_TEXT" ]'
+check "EventName_ShowsInTheNotificationTitleLiterally: the title is no more code than the body" \
+  '[ "$(shown_field title)" = "flow: $HOSTILE_TEXT" ]'
 PATH="$(without_osascript)" "$plugin/scripts/notify.sh" --event "$HOSTILE_TEXT" "$HOSTILE_TEXT" > /dev/null 2>&1
-check "EventName_ReachesNotifySendTitleLiterally: the title is one argument after the end of options" \
-  '[ "$(notify_send_argument 2)" = "flow: $HOSTILE_TEXT" ]'
-check "EventMessage_ReachesNotifySendBodyLiterally: the body is one argument" \
-  '[ "$(notify_send_argument 1)" = "$HOSTILE_TEXT" ]'
+check "EventName_ShowsInTheNotifySendTitleLiterally: the title is shown whole, not read as an option" \
+  '[ "$(shown_field tool)" = notify-send ] && [ "$(shown_field title)" = "flow: $HOSTILE_TEXT" ]'
+check "EventMessage_ShowsInTheNotifySendBodyLiterally: the body is shown whole" \
+  '[ "$(shown_field body)" = "$HOSTILE_TEXT" ]'
 check "EventText_RunsNoShellText: no command in it ran on the notify-send branch" \
   '[ ! -e "$work/pwned" ]'
 

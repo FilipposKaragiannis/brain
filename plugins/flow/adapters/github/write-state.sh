@@ -54,8 +54,6 @@ for key in $label_keys; do
     if [ -n "$value" ] && [ "$value" != "none" ]; then ensure_label "$prefix$value"; add_labels="$add_labels$line_break$prefix$value"; fi
   done
 done
-# edit_labels: one gh issue edit with each label of add_labels and remove_labels, one per line, as
-# exactly one argument.
 edit_labels() {
   set --
   while IFS= read -r label; do [ -z "$label" ] || set -- "$@" --add-label "$label"; done <<ADD
