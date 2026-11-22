@@ -127,5 +127,17 @@ check "CompareOfTheFlowBaselineWithItself_MapsTheNineteenWrapperLines: one for e
   grep -qF " 19 wrapper lines mapped and not counted" "$work/baseline.out"
 check "CompareOfTheFlowBaselineWithItself_StatesTheTotals: 1489 inline and 1043 child checks in 60 sections and 19 child suites" \
   grep -qF "parity: ok, 2532 checks in 79 suites" "$work/baseline.out"
+check "CompareOfTheFlowBaselineWithItself_CountsOnlyRealInlineChecks: 1508 inline result lines less 19 wrapper lines leave 1489" \
+  python3 -I -c 'import json, sys; e = json.load(open(sys.argv[1]))["entries"]; sys.exit(0 if sum(x["count"] for x in e if x["kind"] == "section") - 19 == 1489 else 1)' "$baseline"
+check "CompareOfTheFlowBaselineWithItself_CountsTheChildChecks: the 19 child runs hold 1043 results" \
+  python3 -I -c 'import json, sys; e = json.load(open(sys.argv[1]))["entries"]; sys.exit(0 if sum(x["count"] for x in e if x["kind"] == "child") == 1043 else 1)' "$baseline"
+python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); d["entries"] = [x for x in d["entries"] if x["unit"] != "adapter-contract-local"]; json.dump(d, open(sys.argv[2], "w"))' "$baseline" "$work/baseline-less-child.json"
+parity_tool compare --baseline "$baseline" --candidate "$work/baseline-less-child.json" --mapping "$flow_parity/mapping-unmoved.json" > "$work/baseline-less-child.out" 2>&1
+check "CompareOfTheFlowBaselineWithoutAChildRun_FailsAndNamesTheLoss: the checks a wrapper line hides are still checks" \
+  grep -qF "loss: adapter-contract-local" "$work/baseline-less-child.out"
+check "BaselineDefects_RecordsTheWorktreeRemoveLine: the known defect at run.sh line 3881 is written down, not fixed" \
+  grep -qF "run.sh line 3881" "$flow_parity/baseline-defects.txt"
+check "Help_ListsEveryNormalisation: a reader sees which variable text the tool removes before comparing" \
+  sh -c 'python3 -I "$1" --help | grep -qF "Normalisation"' sh "$parity"
 
 if [ "$fails" -eq 0 ]; then echo "suite-parity: ok"; else echo "suite-parity: $fails failed"; exit 1; fi
