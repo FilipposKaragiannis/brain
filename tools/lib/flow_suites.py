@@ -25,21 +25,26 @@ from typing import Protocol
 sys.dont_write_bytecode = True
 sys.path.append(str(Path(__file__).resolve().parent))
 from flow_process_groups import PROCESS_TABLE, ProcessGroupId, ProcessTable, group_ended, signal_group  # noqa: E402
-from flow_selection import Checkout, ComparisonBase, SuiteName, commands, selection  # noqa: E402
+from flow_selection import Checkout, ComparisonBase, SuiteCommand, SuiteName, commands, selection  # noqa: E402
 
 
-ROOT = Checkout(Path(__file__).resolve().parents[2])
-LANES_VARIABLE = "FLOW_SUITE_LANES"
-DEFAULT_LANES = 3
-TIME_LIMIT_VARIABLE = "FLOW_SUITE_TIME_LIMIT_SECONDS"
-DEFAULT_TIME_LIMIT_SECONDS = 1800
-LEAST_WHOLE_NUMBER = 1
-SIGNAL_EXIT_BASE = 128
-STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+_ROOT = Checkout(Path(__file__).resolve().parents[2])
+_LANES_VARIABLE = "FLOW_SUITE_LANES"
+_DEFAULT_LANES = 3
+_TIME_LIMIT_VARIABLE = "FLOW_SUITE_TIME_LIMIT_SECONDS"
+_DEFAULT_TIME_LIMIT_SECONDS = 1800
+_LEAST_WHOLE_NUMBER = 1
+_SIGNAL_EXIT_BASE = 128
+_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
 
 @dataclass(frozen=True)
 class Duration:
+    seconds: float
+
+
+@dataclass(frozen=True)
+class Instant:
     seconds: float
 
 
@@ -53,19 +58,19 @@ class SuiteLogs:
     folder: Path
 
 
-STOP_GRACE = Duration(10)
-POLL_INTERVAL = Duration(0.1)
+_STOP_GRACE = Duration(10)
+_POLL_INTERVAL = Duration(0.1)
 
 
 class Clock(Protocol):
-    def now(self) -> float: ...
+    def now(self) -> Instant: ...
 
     def sleep(self, duration: Duration) -> None: ...
 
 
 class _SystemClock:
-    def now(self) -> float:
-        return time.monotonic()
+    def now(self) -> Instant:
+        return Instant(time.monotonic())
 
     def sleep(self, duration: Duration) -> None:
         time.sleep(duration.seconds)
@@ -127,17 +132,17 @@ def _announce(lanes: _Lanes, line: str) -> None:
 
 
 def _ending_within(ended: Callable[[], bool], limit: Duration, clock: Clock) -> _Ending:
-    deadline = clock.now() + limit.seconds
+    deadline = clock.now().seconds + limit.seconds
     while not ended():
-        if clock.now() >= deadline:
+        if clock.now().seconds >= deadline:
             return _Ending.TIMED_OUT
-        clock.sleep(POLL_INTERVAL)
+        clock.sleep(_POLL_INTERVAL)
     return _Ending.EXITED
 
 
 def _stop_group(leader: subprocess.Popen, group: ProcessGroupId, settings: Settings) -> None:
     signal_group(group, signal.SIGTERM)
-    if _ending_within(lambda: group_ended(leader, group, settings.process_table), STOP_GRACE, settings.clock) is _Ending.TIMED_OUT:
+    if _ending_within(lambda: group_ended(leader, group, settings.process_table), _STOP_GRACE, settings.clock) is _Ending.TIMED_OUT:
         signal_group(group, signal.SIGKILL)
 
 
@@ -148,15 +153,20 @@ def _wait_or_stop_at(leader: subprocess.Popen, group: ProcessGroupId, settings: 
     return ending
 
 
-def _run_suite(name: SuiteName, command: tuple, settings: Settings, lanes: _Lanes) -> _SuiteOutcome:
+def _arguments(command: SuiteCommand) -> "list[str]":
+    adapter = [] if command.adapter is None else [command.adapter.text]
+    return ["sh", str(command.file), *adapter]
+
+
+def _run_suite(name: SuiteName, command: SuiteCommand, settings: Settings, lanes: _Lanes) -> _SuiteOutcome:
     started = settings.clock.now()
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     _announce(lanes, f"flow: {name.text} started")
     with (lanes.directory / name.text).open("wb") as output:
-        with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(ProcessGroupId(process.pid)) as group:
+        with subprocess.Popen(_arguments(command), env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(ProcessGroupId(process.pid)) as group:
             ending = _wait_or_stop_at(process, group, settings)
             code = process.wait()
-    return _SuiteOutcome(code, Duration(settings.clock.now() - started), ending)
+    return _SuiteOutcome(code, Duration(settings.clock.now().seconds - started.seconds), ending)
 
 
 def _print_output(name: SuiteName, log: Path) -> None:
@@ -182,15 +192,15 @@ def _report_stopped(number: int, workers: ThreadPoolExecutor, unfinished: "set[S
     for name in sorted(name for name in unfinished if (lanes.directory / name.text).exists()):
         _print_output(name, lanes.directory / name.text)
         print(f"flow: {name.text} stopped", flush=True)
-    sys.exit(SIGNAL_EXIT_BASE + number)
+    sys.exit(_SIGNAL_EXIT_BASE + number)
 
 
 def _stop_on_signals(workers: ThreadPoolExecutor, unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes) -> None:
-    for stop_signal in STOP_SIGNALS:
+    for stop_signal in _STOP_SIGNALS:
         signal.signal(stop_signal, lambda number, frame: _report_stopped(number, workers, unfinished(), lanes))
 
 
-def run_selected(suites: "Mapping[SuiteName, tuple]", logs: SuiteLogs, settings: Settings) -> "list[SuiteName]":
+def run_selected(suites: "Mapping[SuiteName, SuiteCommand]", logs: SuiteLogs, settings: Settings) -> "frozenset[SuiteName]":
     outcomes = {}
     lanes = _Lanes(logs.folder, _RunningSuites(), threading.Lock())
     with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers:
@@ -200,38 +210,38 @@ def run_selected(suites: "Mapping[SuiteName, tuple]", logs: SuiteLogs, settings:
             name = running[finished]
             outcomes[name] = finished.result()
             _report_suite(name, outcomes[name], lanes, settings.time_limit)
-    return sorted(name for name, outcome in outcomes.items() if outcome.failed())
+    return frozenset(name for name, outcome in outcomes.items() if outcome.failed())
 
 
 def _whole_number_from_one(environment: Mapping[str, str], variable: str, default: int, meaning: str) -> int:
     value = environment.get(variable, str(default))
-    if not (value.isascii() and value.isdigit() and int(value) >= LEAST_WHOLE_NUMBER):
-        sys.exit(f"flow: {variable} takes {meaning} from {LEAST_WHOLE_NUMBER}, not '{value}'")
+    if not (value.isascii() and value.isdigit() and int(value) >= _LEAST_WHOLE_NUMBER):
+        sys.exit(f"flow: {variable} takes {meaning} from {_LEAST_WHOLE_NUMBER}, not '{value}'")
     return int(value)
 
 
 def _lane_count_from(environment: Mapping[str, str]) -> LaneCount:
-    return LaneCount(_whole_number_from_one(environment, LANES_VARIABLE, DEFAULT_LANES, "a whole number"))
+    return LaneCount(_whole_number_from_one(environment, _LANES_VARIABLE, _DEFAULT_LANES, "a whole number"))
 
 
 def _time_limit_from(environment: Mapping[str, str]) -> Duration:
-    return Duration(_whole_number_from_one(environment, TIME_LIMIT_VARIABLE, DEFAULT_TIME_LIMIT_SECONDS, "a whole number of seconds"))
+    return Duration(_whole_number_from_one(environment, _TIME_LIMIT_VARIABLE, _DEFAULT_TIME_LIMIT_SECONDS, "a whole number of seconds"))
 
 
 def settings_from(environment: Mapping[str, str], clock: Clock, process_table: ProcessTable) -> Settings:
     return Settings(_lane_count_from(environment), _time_limit_from(environment), clock, process_table)
 
 
-def report_run(failed: "list[SuiteName]") -> int:
-    print("flow: failed in " + ", ".join(name.text for name in failed) if failed else "flow: ok")
+def report_run(failed: "frozenset[SuiteName]") -> int:
+    print("flow: failed in " + ", ".join(name.text for name in sorted(failed)) if failed else "flow: ok")
     return 1 if failed else 0
 
 
 def _run(checkout: Checkout, base: "ComparisonBase | None", settings: Settings) -> int:
     suites = commands(checkout)
     chosen = selection(checkout, base, suites)
-    for notice in chosen.notices:
-        print(notice, flush=True)
+    if chosen.notice is not None:
+        print(chosen.notice.text, flush=True)
     if not chosen.suites:
         print("flow: no Flow test inputs changed", flush=True)
         return 0
@@ -246,9 +256,9 @@ def _run(checkout: Checkout, base: "ComparisonBase | None", settings: Settings) 
 
 def main(arguments: "list[str]") -> int:
     if arguments == ["all"]:
-        return _run(ROOT, None, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+        return _run(_ROOT, None, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
     if len(arguments) == 2 and arguments[0] == "since":
-        return _run(ROOT, ComparisonBase(arguments[1]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+        return _run(_ROOT, ComparisonBase(arguments[1]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
     sys.exit("usage: flow_suites.py all | since <base commit>")
 
 

@@ -7,14 +7,14 @@ from enum import Enum
 from pathlib import Path
 
 
-PRESENCE_PROBE_SIGNAL = 0
-ZOMBIE_STATE = "Z"
-STATE_FIELD = 0
-PROCESS_GROUP_FIELD = 2
-LISTING_GROUP_COLUMN = 0
-LISTING_STATE_COLUMN = 1
-LISTING_COLUMNS = 2
-PROCESS_LISTING_LIMIT_SECONDS = 10
+_PRESENCE_PROBE_SIGNAL = 0
+_ZOMBIE_STATE = "Z"
+_STATE_FIELD = 0
+_PROCESS_GROUP_FIELD = 2
+_LISTING_GROUP_COLUMN = 0
+_LISTING_STATE_COLUMN = 1
+_LISTING_COLUMNS = 2
+_PROCESS_LISTING_LIMIT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ def _names_group(field: str, group: ProcessGroupId) -> bool:
 
 
 def _membership_of(states: "list[str]") -> Membership:
-    live = any(not state.startswith(ZOMBIE_STATE) for state in states)
+    live = any(not state.startswith(_ZOMBIE_STATE) for state in states)
     return Membership.MEMBERS_REMAIN if live else Membership.NO_MEMBER_REMAINS
 
 
@@ -63,7 +63,7 @@ def _fields_after_name(status: Path) -> "list[str]":
 
 def _states_in_process_table(group: ProcessGroupId, statuses: "list[Path]") -> "list[str]":
     rows = (_fields_after_name(status) for status in statuses)
-    return [fields[STATE_FIELD] for fields in rows if len(fields) > PROCESS_GROUP_FIELD and _names_group(fields[PROCESS_GROUP_FIELD], group)]
+    return [fields[_STATE_FIELD] for fields in rows if len(fields) > _PROCESS_GROUP_FIELD and _names_group(fields[_PROCESS_GROUP_FIELD], group)]
 
 
 def table_membership(group: ProcessGroupId, table: ProcessTable) -> Membership:
@@ -77,12 +77,12 @@ def table_membership(group: ProcessGroupId, table: ProcessTable) -> Membership:
 
 def _states_in_process_listing(group: ProcessGroupId, lines: "list[str]") -> "list[str]":
     rows = (line.split() for line in lines)
-    return [row[LISTING_STATE_COLUMN] for row in rows if len(row) == LISTING_COLUMNS and _names_group(row[LISTING_GROUP_COLUMN], group)]
+    return [row[_LISTING_STATE_COLUMN] for row in rows if len(row) == _LISTING_COLUMNS and _names_group(row[_LISTING_GROUP_COLUMN], group)]
 
 
 def listing_membership(group: ProcessGroupId) -> Membership:
     try:
-        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, timeout=PROCESS_LISTING_LIMIT_SECONDS, check=False)
+        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, timeout=_PROCESS_LISTING_LIMIT_SECONDS, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return Membership.UNKNOWN
     if listing.returncode != 0:
@@ -96,7 +96,7 @@ def _scanned_membership(group: ProcessGroupId, table: ProcessTable) -> Membershi
 
 def _group_answers_probe(group: ProcessGroupId) -> bool:
     try:
-        os.killpg(group.number, PRESENCE_PROBE_SIGNAL)
+        os.killpg(group.number, _PRESENCE_PROBE_SIGNAL)
     except ProcessLookupError:
         return False
     except PermissionError:

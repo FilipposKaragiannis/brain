@@ -105,8 +105,8 @@ class ClockThatStepsOnceTheSuiteIsReady:
         self.awaited = awaited
         self.probe = probe
 
-    def now(self) -> float:
-        return self.seconds
+    def now(self) -> flow_suites.Instant:
+        return flow_suites.Instant(self.seconds)
 
     def sleep(self, duration: flow_suites.Duration) -> None:
         if self.seconds >= self.awaits_from:
@@ -118,7 +118,7 @@ class ClockThatStepsOnceTheSuiteIsReady:
 
 name, script, ready, logs, awaits_from, awaited, process_table, probe = sys.argv[2:]
 settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready), float(awaits_from), Path(awaited), Path(probe)), flow_process_groups.ProcessTable(Path(process_table)))
-suites = {flow_selection.SuiteName(name): ("sh", script)}
+suites = {flow_selection.SuiteName(name): flow_selection.SuiteCommand(Path(script), None)}
 sys.exit(flow_suites.report_run(flow_suites.run_selected(suites, flow_suites.SuiteLogs(Path(logs)), settings)))
 PY
 run_on_stepping_clock() { rm -rf "$work/stepping-logs"; mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$1" "$2" "$3" "$work/stepping-logs" "$4" "$5" "$6" "$process_probe" > "$work/output" 2>&1; }
