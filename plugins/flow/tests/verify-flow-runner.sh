@@ -50,7 +50,7 @@ flow_status() { python3 -c 'import json,sys; print([check["status"] for check in
 flow_summary() { python3 -c 'import json,sys; print([check["summary"] for check in json.load(open(sys.argv[1]))["checks"] if check["name"]=="tests flow"][0])' "$reports/verify.json"; }
 sorted_passed_suites() { sed -n 's/^flow: \(.*\) pass ([0-9.]*s)$/\1/p' "$reports/verify.log" | sort | tr '\n' ' '; }
 every_suite_ran() { [ "$(flow_status)" = pass ] && [ "$(sorted_passed_suites)" = "$expected_suites " ]; }
-expected_suites="base-claim base-readers contract-github contract-jira contract-local holds inline sessions"
+expected_suites="base-claim base-readers contract-github contract-jira contract-local holds sessions"
 
 mark_scenario_base
 printf 'echo "  ok   Stub_StillHolds"\n' >> "$stub_suites/sessions.sh"
@@ -79,14 +79,14 @@ check "UnresolvedBase_SaysTheBaseIsUnavailable because a full run must say why i
 mark_scenario_base
 git -C "$worktree" mv plugins/flow/tests/sessions.sh plugins/flow/tests/renamed-sessions.sh
 commit_flow_changes "rename"
-expected_suites="base-claim base-readers contract-github contract-jira contract-local holds inline renamed-sessions"
+expected_suites="base-claim base-readers contract-github contract-jira contract-local holds renamed-sessions"
 verify --base scenario-base >/dev/null 2>&1
 check "RenamedSuite_RunsEverySuite because the old path names no suite" 'every_suite_ran'
 
 mark_scenario_base
 git -C "$worktree" rm -q plugins/flow/tests/holds.sh
 commit_flow_changes "delete"
-expected_suites="base-claim base-readers contract-github contract-jira contract-local inline renamed-sessions"
+expected_suites="base-claim base-readers contract-github contract-jira contract-local renamed-sessions"
 verify --base scenario-base >/dev/null 2>&1
 check "DeletedSuite_RunsEverySuite because what it covered is unknown" 'every_suite_ran'
 
