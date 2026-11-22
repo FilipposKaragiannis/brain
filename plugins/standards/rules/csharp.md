@@ -1,5 +1,7 @@
 # Appendix A. C#
 
+Files: `.cs`.
+
 - **CS-01** `sealed` and `internal` by default. `public` only across an assembly boundary.
 - **CS-02** `var` preferred. Private fields `_camelCase`, constants `PascalCase`, interfaces `IPascalCase`.
 - **CS-03** Nullable reference types enabled everywhere.

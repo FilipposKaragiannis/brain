@@ -1,0 +1,11 @@
+Known defects of the flow runner at the baseline commit cc8e93f, recorded and not fixed here.
+
+plugins/flow/tests/run.sh line 3881 runs `git worktree remove -q --force ../plugin-wt`. This git
+has no -q switch for worktree remove, so the CI log of run 44945078416 holds the line
+"error: unknown switch `q'" and the usage text after it, and the worktree is not removed.
+The baseline inventory does not count those lines: they are not result lines.
+
+The baseline was built from the log of CI run 44945078416 (job test, commit cc8e93f) for the
+inline results, and from a local run of each of the 19 child test files for the results the
+old runner hides behind one wrapper line each. The child runs used offline stubs first on PATH,
+as the runner does.

@@ -1,0 +1,9 @@
+runner: starting
+[core] alpha
+[core]   ok   Alpha_One: the first check
+[core]   ok   Alpha_Two: the second check
+[core]   ok   a repeated check
+[core]   ok   a repeated check
+[beta]   ok   Beta_One: the first beta check
+[beta]   ok   Beta_Two: the second beta check
+[beta] beta: ok

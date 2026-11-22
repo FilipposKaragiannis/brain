@@ -17,7 +17,9 @@ sandbox_enter() { # sandbox_enter <work> <watched dir>
   # shellcheck disable=SC2046
   unset $(git rev-parse --local-env-vars) GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM \
     GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM XDG_CONFIG_HOME \
-    CLAUDE_CONFIG_DIR CODEX_HOME FLOW_HOME FLOW_SLACK_WEBHOOK FLOW_LAUNCH_AGENTS
+    CLAUDE_CONFIG_DIR CODEX_HOME FLOW_HOME FLOW_SLACK_WEBHOOK FLOW_LAUNCH_AGENTS \
+    FLOW_MAIN_WORKTREE FLOW_MAIN_WORKTREE_FOLDER FLOW_MAIN_WORKTREE_SEARCH_PATH FLOW_GIT_PROGRAM \
+    FLOW_GIT_SEARCH_PATH
   sandbox_repositories="$(printf '%s\n%s\n' "$sandbox_repositories" \
     "$(git -C "$sandbox_watched" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" | sort -u | sed '/^$/d')"
   sandbox_inside_checkout && { echo "sandbox: $sandbox_work is inside a real checkout; set TMPDIR elsewhere" >&2; exit 2; }

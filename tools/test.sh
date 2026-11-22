@@ -10,8 +10,7 @@ every_part="lint standards flow meta console tools console-app plugins"
 parts="$every_part"; [ $# -eq 0 ] || parts="$*"
 status=0
 # The suites run in an empty environment, so nothing the owner exports (a Slack webhook, a token)
-# reaches them; FLOW_SUITE_LANES alone passes, for the flow runner. Each suite also stubs the
-# network, desktop and agent tools itself.
+# reaches them. Each suite also stubs the network, desktop and agent tools itself.
 clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" ${FLOW_SUITE_LANES+"FLOW_SUITE_LANES=$FLOW_SUITE_LANES"} "$@"; }
 if [ "${1:-}" = flow-since ]; then
   [ "$#" -eq 2 ] || { echo "usage: tools/test.sh flow-since <base commit>" >&2; exit 2; }
@@ -56,6 +55,7 @@ for part in $parts; do
     standards)
       clean plugins/standards/hooks/tests/run.sh || status=1
       clean plugins/standards/hooks/tests/testing-guide.sh || status=1
+      clean plugins/standards/hooks/tests/appendices.sh || status=1
       ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
@@ -63,6 +63,7 @@ for part in $parts; do
     tools)
       clean tools/tests/run.sh || status=1
       clean sh tools/tests/flow-selection.sh || status=1
+      clean tools/tests/suite-parity.sh || status=1
       ;;
     console-app) console_app || status=1 ;;
     plugins) plugins_valid || status=1 ;;
