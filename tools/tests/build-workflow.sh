@@ -1,5 +1,6 @@
 #!/bin/sh
-# Tests that the CI workflow limits every job, gathers them under one result and skips no part.
+# Tests that the CI workflow limits every job, gathers them under one result and skips no part,
+# and that every job that runs lint, in CI or in the release workflow, installs the linters first.
 # Ruby reads the workflow because python3 has no YAML module here or in CI.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
@@ -24,6 +25,9 @@ import sys
 from itertools import takewhile
 
 _TEST_SCRIPT = "tools/test.sh"
+_LINT_SCRIPT = "tools/lint.sh"
+_LINT_PART = "lint"
+_LINTER_REQUIREMENTS = "tools/requirements-lint.txt"
 _PART_NAME = re.compile(r"[a-z][a-z-]*")
 _NEW_JOB = {"runs-on": "ubuntu-latest", "timeout-minutes": 5, "steps": [{"run": "true"}]}
 
@@ -69,6 +73,27 @@ def skip_guard(workflow: dict) -> "list[str]":
     return [step["run"] for step in workflow["jobs"]["console"]["steps"] if "grep -i skip" in step.get("run", "")]
 
 
+def _runs_lint(run: str) -> bool:
+    words = shlex.split(run)
+    parts = [part for at, word in enumerate(words) if word == _TEST_SCRIPT for part in _parts_after(words[at + 1:])]
+    return _LINT_SCRIPT in words or _LINT_PART in parts
+
+
+def _lints_before_installing(job: dict) -> bool:
+    runs = [step["run"] for step in job.get("steps", []) if "run" in step]
+    before_lint = list(takewhile(lambda run: not _runs_lint(run), runs))
+    return len(before_lint) < len(runs) and not any(_LINTER_REQUIREMENTS in shlex.split(run) for run in before_lint)
+
+
+def lint_without_linters(workflow: dict) -> "list[str]":
+    return sorted(name for name, job in workflow["jobs"].items() if _lints_before_installing(job))
+
+
+def without_linter_install(workflow: dict, job: str) -> dict:
+    steps = [step for step in workflow["jobs"][job]["steps"] if _LINTER_REQUIREMENTS not in step.get("run", "")]
+    return dict(workflow, jobs=dict(workflow["jobs"], **{job: dict(workflow["jobs"][job], steps=steps)}))
+
+
 def without_need(workflow: dict, job: str) -> dict:
     result = dict(workflow["jobs"]["result"], needs=[need for need in workflow["jobs"]["result"]["needs"] if need != job])
     return dict(workflow, jobs=dict(workflow["jobs"], result=result))
@@ -85,8 +110,9 @@ _QUESTIONS = {
     "bare-test-script-runs": bare_test_script_runs,
     "result-script": result_script,
     "skip-guard": skip_guard,
+    "lint-without-linters": lint_without_linters,
 }
-_EDITS = {"without-need": without_need, "with-job": with_job}
+_EDITS = {"without-need": without_need, "with-job": with_job, "without-linter-install": without_linter_install}
 
 
 def main(arguments: "list[str]") -> int:
@@ -117,6 +143,9 @@ needs_check_on() {
 }
 edit without-need "$workflow" flow "$work/without-flow.json"
 edit with-job "$workflow" new-job "$work/with-new-job.json"
+release_workflow="$work/release.json"
+yaml_to_json "$root/.github/workflows/release.yml" "$release_workflow"
+edit without-linter-install "$release_workflow" release "$work/release-without-linters.json"
 
 ask "$workflow" result-script > "$work/result.sh"
 result_for() {
@@ -143,3 +172,6 @@ expect 'EveryPartButFlow_IsNamedOnTheTestScriptCommandLine because an unnamed pa
 expect 'TestScriptWithNoPartNamed_IsNeverRun because a whole run skips a part whose tools are missing' "$(ask "$workflow" bare-test-script-runs)" 0
 expect 'ConsoleLogWithASkippedCheck_FailsTheJob because a check that did not run proves nothing' "$(skip_guard_for '  skip a demo pane: no zsh on PATH')" fail
 expect 'ConsoleLogWithEveryCheckRun_PassesTheJob because nothing was left out' "$(skip_guard_for '  ok every check')" pass
+expect 'CiJobThatRunsLint_InstallsTheLintersFirst because lint fails in CI when a linter is missing' "$(ask "$workflow" lint-without-linters)" ''
+expect 'ReleaseJobThatRunsLint_InstallsTheLintersFirst because a release that cannot lint opens no release PR' "$(ask "$release_workflow" lint-without-linters)" ''
+expect 'ReleaseJobWithoutTheLinterInstall_FailsTheLinterCheck because the check must see a job that lints with no linters' "$(ask "$work/release-without-linters.json" lint-without-linters)" release
