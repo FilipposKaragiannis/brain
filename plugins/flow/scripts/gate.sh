@@ -18,8 +18,11 @@
 #                                           `--` (step=implement ...) go into the one tracker write
 #                                           that records the gate, so no reader sees the one
 #                                           without the other. A write the tracker refuses raises
-#                                           nothing, exit 1; a comment or notification that fails
-#                                           after it is said on stderr and the gate stands
+#                                           nothing, exit 1, unless the tracker shows the gate
+#                                           after it (labels that landed before the state comment
+#                                           or property failed): that gate stands, with a warning.
+#                                           A comment or notification that fails after the write
+#                                           is said on stderr and the gate stands
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
 #                                           children are all closed, the plan step runs again;
@@ -88,13 +91,11 @@ RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--optio
 OPTION_AND_BACK="gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step"
 CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <condition>"
 
-# parse_raise_flags <flag> <value> ...: sets options_given, condition_given and raised_by_given
-# from raise's --options, --condition and --raised-by, and flag_words to the words read, up to and
-# with a `--`; dies, exit 2, on anything else.
+# parse_raise_flags <flag> <value> ... [-- ...]: sets options_given, condition_given and raised_by_given
+# from raise's --options, --condition and --raised-by up to a `--`; dies, exit 2, on anything else.
 parse_raise_flags() {
-  options_given=""; condition_given=""; raised_by_given=""; flag_words=0
-  while [ $# -gt 0 ]; do
-    [ "$1" != -- ] || { flag_words=$((flag_words + 1)); return 0; }
+  options_given=""; condition_given=""; raised_by_given=""
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do
     [ $# -ge 2 ] || die "$RAISE_USAGE" 2
     case "$1" in
       --options) options_given="$2" ;;
@@ -102,7 +103,7 @@ parse_raise_flags() {
       --raised-by) raised_by_given="$2" ;;
       *) die "$RAISE_USAGE" 2 ;;
     esac
-    shift 2; flag_words=$((flag_words + 2))
+    shift 2
   done
 }
 
@@ -147,7 +148,9 @@ case "${1:-}" in
     [ $# -ge 4 ] || die "$RAISE_USAGE" 2
     item="$2"; gate="$3"; message="$4"; from=""; shift 4
     case "${1:-}" in --*) ;; *) [ $# -eq 0 ] || { from="$1"; shift; } ;; esac
-    parse_raise_flags "$@"; shift "$flag_words"
+    parse_raise_flags "$@"
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do shift 2; done
+    [ $# -eq 0 ] || shift
     gate_known "$gate" || die "unknown gate '$(printf '%s' "$gate" | tr -cd '[:print:]' | head -c "$refused_gate_name_limit")': nothing raised; the gates are $(python3 -I -c 'import json, sys; print(", ".join(json.load(open(sys.argv[1]))["gates"]))' "$FLOW_PLUGIN/profiles.json")" 2
     data="$(adapter read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
     [ -n "$from" ] || from="$step"
@@ -159,8 +162,11 @@ case "${1:-}" in
     answered_by="$(carrier_field "$carrier" "$FIELD_ANSWERED_BY")"
     footer="$(gate_footer "$condition" "$(carrier_field "$carrier" "$FIELD_HOW_TO_CLEAR")")"
     condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
-    step_write "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null \
-      || die "cannot record the $gate gate on $item: nothing raised, its state and its run are as they were"
+    if ! step_write "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null; then
+      [ "$(state_get "$(adapter read "$item" 2>/dev/null)" gate)" = "$gate" ] \
+        || die "cannot record the $gate gate on $item, and its tracker does not show it: nothing raised, its run stays"
+      echo "flow: the write of the $gate gate on $item failed part way, but its tracker shows the gate, so it stands; the rest of its state may lag until the next write" >&2
+    fi
     adapter comment "$item" --body "**Gate: $gate**
 
 $message

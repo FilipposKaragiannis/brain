@@ -15,8 +15,11 @@
 # changes at the merge gate, where the sweep looks again.
 # A gate and the step past it are one tracker write (gate.sh raise ... -- step=...): a write the
 # tracker refuses leaves the item at its step with its run, and advance.sh run again raises it.
-# Exit codes: 0 next step ready · 1 the gate could not be recorded · 4 waiting at a gate, or split
-# and waiting on its children · 6 done.
+# That retry can still double what it repeats before the write: the "Step ... done" comment, the
+# plan's hold line in events.log; and after a stop between the write and the run's removal, the
+# gate comment and notification. The state, the gate and its record stay one.
+# Exit codes: 0 next step ready · 1 a state write failed (the gate, the size or the next step) ·
+# 4 waiting at a gate, or split and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/pull_request.sh"
@@ -81,7 +84,7 @@ raise_asked() {
 }
 
 gate_not_recorded() {
-  die "the $1 gate on $item is not recorded, so nothing moved past it: $item keeps its run, and advance.sh $item raises it again"
+  die "the $1 gate on $item did not finish raising: $item keeps its run, and advance.sh $item raises it again"
 }
 
 escalate_unopened_epic_pull_request() {
@@ -283,7 +286,8 @@ ${summary:-No summary.}" -- "size=$new_size" "step=$step" "profile=$(profile_sel
       || gate_not_recorded plan-approval
     size="$new_size"; report 4 "" plan-approval
   fi
-  adapter write-state "$item" "size=$new_size" >/dev/null
+  adapter write-state "$item" "size=$new_size" >/dev/null \
+    || die "cannot record size $new_size on $item: it keeps its run, and advance.sh $item applies the step again"
   size="$new_size"
   next_profile="$(profile_select "$kind" "$new_size")"
   [ "$next_profile" = "$profile" ] || adapter comment "$item" --body "Re-sized $size: profile $profile -> $next_profile, continuing with the added depth." >/dev/null
@@ -342,7 +346,8 @@ Verify passed and the change touches rendered code. What to launch and what to l
         -- "step=$following" "profile=$profile" "attempts=0" "$moved_on" >/dev/null || gate_not_recorded feel-test
       report 4 "$following" feel-test
     fi
-    step_write "$item" "step=$following" "profile=$profile" "attempts=0" "$moved_on" >/dev/null
+    step_write "$item" "step=$following" "profile=$profile" "attempts=0" "$moved_on" >/dev/null \
+      || die "cannot move $item to $following: it keeps its run, and advance.sh $item moves it again"
     finish_run
     report 0 "$following" "" ;;
 esac

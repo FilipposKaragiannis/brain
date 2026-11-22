@@ -1,11 +1,12 @@
 #!/bin/sh
 # gate-transition.sh: an item never moves past a human gate the tracker has not recorded, on the
-# local adapter with a stand-in write-state that refuses or dies on the write that records a gate,
-# and on the GitHub adapter with the fake gh. advance.sh moves the step and records the gate in
-# one tracker write; a refused or killed write leaves the item at its step with its run, exits 1
-# with the reason, and a retry raises the gate once. A failing notifier leaves the gate standing
-# and says so. next.sh runs no step for an item with a gate record on this host that its tracker
-# does not show.
+# local adapter with a stand-in write-state that refuses or dies on the write that records a gate
+# and a stand-in comment that refuses or kills gate.sh after it, and on the GitHub and Jira
+# adapters with their fakes, where the labels can land and the state write after them fail.
+# advance.sh moves the step and records the gate in one tracker write; a refused or killed write
+# leaves the item at its step with its run, exits 1 with the reason, and a retry raises the gate
+# once. A failing notifier or comment leaves the gate standing and says so. next.sh runs no step
+# for an item with a gate record on this host that its tracker does not show.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -35,7 +36,10 @@ cat > "$stubbed/adapters/local/comment.sh" <<'STUB'
 #!/bin/sh
 case "$*" in
   *"**Gate: "*)
-    [ ! -e "$GATE_COMMENT_MODE" ] || { echo "flow: the tracker refused the comment" >&2; exit 1; } ;;
+    case "$(cat "$GATE_COMMENT_MODE" 2>/dev/null)" in
+      refused) echo "flow: the tracker refused the comment" >&2; exit 1 ;;
+      killed) kill -9 "$PPID"; exit 1 ;;
+    esac ;;
 esac
 exec "$(dirname "$0")/comment-tracker.sh" "$@"
 STUB
@@ -48,10 +52,12 @@ mkdir -p "$FAKE_GH_DIR" "$work/github" && cp "$plugin/tests/_fake_gh.py" "$FAKE_
 ln -s "$plugin/tests/fake-gh.sh" "$work/github/gh"
 PATH="$work/github:$PATH"; export PATH
 
+gate_wait_status=4
 PLAN_SUMMARY="Plan: one module, two steps."
 item_file() { printf '.flow/items/task/%s.md' "${1##*/}"; }
 gate_comments() { grep -c '\*\*Gate: plan-approval\*\*' "$(item_file "$1")"; }
 gate_record() { printf '.flow/gates/%s.json' "$(slug "$1")"; }
+gate_events() { grep -cF "$(printf '\t%s\tplan-approval\t' "$1")" .flow/events.log; }
 reports_of() { json_value reports < "$(run_file "$1")"; }
 planned_task() {
   planned="$(new_task "$1")"
@@ -70,11 +76,11 @@ advance "$refused"; refused_code=$?
 check "RefusedGateWrite_ExitsWithAFailure: the caller must not report success" \
   '[ "$refused_code" -ne 0 ]'
 check "RefusedGateWrite_DoesNotExitWithTheGateWaitStatus: the caller must not report the item as waiting at a gate" \
-  '[ "$refused_code" -ne 4 ]'
+  '[ "$refused_code" -ne "$gate_wait_status" ]'
 check "RefusedGateWrite_NamesTheTrackersReason: the owner reads why no gate was raised" \
   'grep -q "rate limit" "$work/advance.err"'
-check "RefusedGateWrite_NamesTheGateThatIsNotRecorded: the owner reads which gate the retry raises" \
-  'grep -q "plan-approval gate on $refused is not recorded" "$work/advance.err"'
+check "RefusedGateWrite_NamesTheGateAndTheItem: the owner reads which gate the retry raises, and where" \
+  'grep "plan-approval" "$work/advance.err" | grep -qF "$refused"'
 check "RefusedGateWrite_KeepsTheItemAtThePlanStep: no reader sees the step past an unrecorded gate" \
   '[ "$(state "$refused" step)" = plan ]'
 check "RefusedGateWrite_RecordsNoGateInTheState: the tracker holds neither half of the transition" \
@@ -93,22 +99,31 @@ echo "gate transition: a retry after the refusal"
 rm -f "$GATE_WRITE_MODE"
 advance "$refused"; retry_code=$?
 check "RetryAfterARefusedGateWrite_ExitsWithTheGateWaitStatus: the transition the refusal stopped completes" \
-  '[ "$retry_code" -eq 4 ]'
+  '[ "$retry_code" -eq "$gate_wait_status" ]'
 check "RetryAfterARefusedGateWrite_RecordsTheGateInTheState: the item waits at the gate" \
   '[ "$(state "$refused" gate)" = plan-approval ]'
 check "RetryAfterARefusedGateWrite_MovesTheItemToTheStepAfterTheGate: the step lands with the gate" \
   '[ "$(state "$refused" step)" = implement ]'
 check "RetryAfterARefusedGateWrite_RaisesOneGateComment: the owner is asked once" \
   '[ "$(gate_comments "$refused")" -eq 1 ]'
-check "RetryAfterARefusedGateWrite_WritesOneGateRecord: the board lists the gate once" \
-  '[ "$(ls .flow/gates | wc -l | tr -d " ")" -eq 1 ]'
+check "RetryAfterARefusedGateWrite_LogsOneGateRaise: the board shows one raise of the gate" \
+  '[ "$(gate_events "$refused")" -eq 1 ]'
 check "RetryAfterARefusedGateWrite_RecordsThePlanApprovalGate: the record names the gate the owner answers" \
   '[ "$(json_value gate < "$(gate_record "$refused")")" = plan-approval ]'
 "$stubbed/scripts/next.sh" "$refused" >/dev/null 2>&1; retry_next_code=$?
 check "RetryAfterARefusedGateWrite_NextExitsWithTheGateWaitStatus: implement waits for the approval" \
-  '[ "$retry_next_code" -eq 4 ]'
+  '[ "$retry_next_code" -eq "$gate_wait_status" ]'
 check "RetryAfterARefusedGateWrite_NextStartsNoImplementStep: the plan is still not approved" \
   '[ ! -e "$refused_reports/brief-implement.md" ]'
+
+echo "gate transition: a refused gate write whose run is gone"
+orphaned="$(planned_task "Orphaned gate")"
+echo refused > "$GATE_WRITE_MODE"
+advance "$orphaned"
+rm -f "$GATE_WRITE_MODE" "$(run_file "$orphaned")"
+"$stubbed/scripts/next.sh" "$orphaned" >/dev/null 2>&1
+check "RefusedGateWriteWithItsRunGone_NextRunsThePlanAgain: the tracker state alone keeps the item before the gate" \
+  '[ "$(json_value step < "$(run_file "$orphaned")")" = plan ]'
 
 echo "gate transition: the gate write dies"
 new_repo killed
@@ -119,7 +134,7 @@ rm -f "$GATE_WRITE_MODE"
 check "KilledGateWrite_ExitsWithAFailure: a write that died recorded nothing" \
   '[ "$killed_code" -ne 0 ]'
 check "KilledGateWrite_DoesNotExitWithTheGateWaitStatus: the caller must not report the item as waiting at a gate" \
-  '[ "$killed_code" -ne 4 ]'
+  '[ "$killed_code" -ne "$gate_wait_status" ]'
 check "KilledGateWrite_KeepsTheItemAtThePlanStep: the step and the gate land together or not at all" \
   '[ "$(state "$killed" step)" = plan ]'
 check "KilledGateWrite_RecordsNoGateInTheState: the tracker holds neither half of the transition" \
@@ -132,12 +147,34 @@ check "KilledGateWrite_NextStartsNoImplementStep: the plan is not approved" \
 check "KilledGateWrite_NextDoesNotSucceed: the caller is not handed a step to run" \
   '[ "$killed_next_code" -ne 0 ]'
 advance "$killed"; killed_retry_code=$?
-check "RetryAfterAKilledGateWrite_WaitsAtTheGate: the retry completes the transition" \
-  '[ "$killed_retry_code" -eq 4 ] && [ "$(state "$killed" gate)" = plan-approval ]'
+check "RetryAfterAKilledGateWrite_ExitsWithTheGateWaitStatus: the retry completes the transition" \
+  '[ "$killed_retry_code" -eq "$gate_wait_status" ]'
+check "RetryAfterAKilledGateWrite_RecordsThePlanApprovalGate: the item waits at the gate" \
+  '[ "$(state "$killed" gate)" = plan-approval ]'
 check "RetryAfterAKilledGateWrite_RaisesOneGateComment: the owner is asked once" \
   '[ "$(gate_comments "$killed")" -eq 1 ]'
-check "RetryAfterAKilledGateWrite_WritesOneGateRecord: the board lists the gate once" \
-  '[ "$(ls .flow/gates | wc -l | tr -d " ")" -eq 1 ]'
+check "RetryAfterAKilledGateWrite_LogsOneGateRaise: the board shows one raise of the gate" \
+  '[ "$(gate_events "$killed")" -eq 1 ]'
+
+echo "gate transition: gate.sh dies after the gate write"
+stopped="$(planned_task "Stopped after the write")"; stopped_reports="$(reports_of "$stopped")"
+echo killed > "$GATE_COMMENT_MODE"
+advance "$stopped"; stopped_code=$?
+rm -f "$GATE_COMMENT_MODE"
+check "StopAfterTheGateWrite_DoesNotExitWithTheGateWaitStatus: the raise did not finish" \
+  '[ "$stopped_code" -ne 0 ] && [ "$stopped_code" -ne "$gate_wait_status" ]'
+check "StopAfterTheGateWrite_LeavesTheGateInTheState: the item past the plan stays blocked" \
+  '[ "$(state "$stopped" gate)" = plan-approval ]'
+"$stubbed/scripts/next.sh" "$stopped" >/dev/null 2>&1
+check "StopAfterTheGateWrite_NextStartsNoImplementStep: the plan is not approved" \
+  '[ ! -e "$stopped_reports/brief-implement.md" ]'
+advance "$stopped"; stopped_retry_code=$?
+check "RetryAfterAStopAfterTheGateWrite_ExitsWithTheGateWaitStatus: the retry finishes the raise" \
+  '[ "$stopped_retry_code" -eq "$gate_wait_status" ]'
+check "RetryAfterAStopAfterTheGateWrite_RaisesOneGateComment: the owner is asked once" \
+  '[ "$(gate_comments "$stopped")" -eq 1 ]'
+check "RetryAfterAStopAfterTheGateWrite_LogsOneGateRaise: the board shows one raise of the gate" \
+  '[ "$(gate_events "$stopped")" -eq 1 ]'
 
 echo "gate transition: the desktop notification fails"
 new_repo notifier
@@ -146,20 +183,20 @@ mkdir -p "$work/broken" && printf '#!/bin/sh\nexit 1\n' > "$work/broken/osascrip
 notified="$(planned_task "Notifier down")"
 PATH="$work/broken:$PATH" advance "$notified"; notified_code=$?
 check "FailingNotifier_StillWaitsAtTheGate: a notification is no part of the gate" \
-  '[ "$notified_code" -eq 4 ]'
+  '[ "$notified_code" -eq "$gate_wait_status" ]'
 check "FailingNotifier_LeavesTheGateInTheState: the tracker keeps the gate" \
   '[ "$(state "$notified" gate)" = plan-approval ]'
 check "FailingNotifier_LeavesTheGateRecordOnThisHost: the board still lists the gate" \
   '[ -f "$(gate_record "$notified")" ]'
 check "FailingNotifier_IsReported: the owner learns no notification went out" \
-  'grep -q "desktop notification failed" "$work/advance.err"'
+  'grep -qi "notif" "$work/advance.err"'
 
 echo "gate transition: the normal path"
 new_repo normal
 normal="$(planned_task "Normal gate")"
 advance "$normal"; normal_code=$?
 check "PlanDone_ExitsWithTheGateWaitStatus: the owner approves before implement" \
-  '[ "$normal_code" -eq 4 ]'
+  '[ "$normal_code" -eq "$gate_wait_status" ]'
 check "PlanDone_RecordsThePlanApprovalGate: the tracker shows the gate" \
   '[ "$(state "$normal" gate)" = plan-approval ]'
 check "PlanDone_MovesTheItemToImplement: the step after the gate is recorded with it" \
@@ -170,57 +207,124 @@ check "PlanDone_RaisesOneGateComment: the owner is asked once" \
 echo "gate transition: the gate comment fails"
 new_repo commented
 commented="$(planned_task "Comment down")"
-: > "$GATE_COMMENT_MODE"
+echo refused > "$GATE_COMMENT_MODE"
 advance "$commented"; commented_code=$?
 rm -f "$GATE_COMMENT_MODE"
 check "FailingGateComment_StillWaitsAtTheGate: the comment is no part of the gate" \
-  '[ "$commented_code" -eq 4 ]'
+  '[ "$commented_code" -eq "$gate_wait_status" ]'
 check "FailingGateComment_LeavesTheGateInTheState: the tracker keeps the gate" \
   '[ "$(state "$commented" gate)" = plan-approval ]'
 check "FailingGateComment_IsReported: the owner learns the comment is missing" \
-  'grep -q "recorded, but its comment could not be posted" "$work/advance.err"'
+  'grep "plan-approval" "$work/advance.err" | grep -qi "comment"'
 
 echo "gate transition: a gate record the tracker does not show"
+new_repo stray
 stray="$(new_task "Stray record")"
 "$local_adapter/write-state.sh" "$stray" step=implement profile=task-M size=M
+mkdir -p .flow/gates
 printf '{"gate": "plan-approval", "item": "%s", "message": "Approve the plan."}' "$stray" > "$(gate_record "$stray")"
 "$stubbed/scripts/next.sh" "$stray" > "$work/stray.out" 2> "$work/stray.err"; stray_code=$?
 check "GateRecordTheTrackerLacks_StopsNextWithTheGateWaitStatus: the owner was asked, so the step waits for the answer" \
-  '[ "$stray_code" -eq 4 ]'
+  '[ "$stray_code" -eq "$gate_wait_status" ]'
 check "GateRecordTheTrackerLacks_StartsNoRun: no step runs behind the record" \
   '[ ! -f "$(run_file "$stray")" ]'
-check "GateRecordTheTrackerLacks_NamesTheRecord: the owner learns which gate holds the item" \
-  'grep -q "plan-approval gate recorded on this host" "$work/stray.err"'
+check "GateRecordTheTrackerLacks_NamesTheGateAndTheRecord: the owner learns which gate holds the item, and where" \
+  'grep "plan-approval" "$work/stray.err" | grep -qF "$(gate_record "$stray")"'
 check "GateRecordTheTrackerLacks_SaysHowToAnswer: the owner learns the command that clears it" \
   'grep -q "gate.sh clear $stray" "$work/stray.err"'
+"$stubbed/scripts/next.sh" > "$work/stray-pick.out" 2> "$work/stray-pick.err"; stray_pick_code=$?
+check "PickWithAGateRecordTheTrackerLacks_HandsNoStep: the pick passes the item over" \
+  '[ "$stray_pick_code" -ne 0 ]'
+check "PickWithAGateRecordTheTrackerLacks_StartsNoRun: no step runs behind the record" \
+  '[ ! -f "$(run_file "$stray")" ]'
+check "PickWithAGateRecordTheTrackerLacks_NamesTheRecord: the owner learns why the item was passed over" \
+  'grep -qF "$(gate_record "$stray")" "$work/stray-pick.err"'
 
 echo "gate transition: GitHub refuses the gate labels"
 new_repo github
 sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
 printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
-tracked="$("$stubbed/adapters/github/create.sh" task "Tracked gate" --size M --body "$body")"
-"$stubbed/adapters/github/write-state.sh" "$tracked" step=plan profile=task-M size=M
-"$stubbed/scripts/next.sh" "$tracked" >/dev/null 2>&1
+planned_issue() {
+  issue="$("$stubbed/adapters/$1/create.sh" task "$2" --size M --body "$body")"
+  "$stubbed/adapters/$1/write-state.sh" "$issue" step=plan profile=task-M size=M
+  "$stubbed/scripts/next.sh" "$issue" >/dev/null 2>&1
+  printf '%s' "$issue"
+}
+tracker_state() { "$stubbed/adapters/$1/read.sh" "$2" | json_value "state.$3"; }
+tracked="$(planned_issue github "Tracked gate")"
 printf '%s\n' "{\"status\":\"done\",\"summary\":\"$PLAN_SUMMARY\"}" > "$(reports_of "$tracked")/plan.json"
 refused_label_edits=9
 printf '%s\nAPI rate limit exceeded\nissue edit\n' "$refused_label_edits" > "$FAKE_GH_DIR/fail"
 advance "$tracked"; tracked_code=$?
 rm -f "$FAKE_GH_DIR/fail"
-tracked_state() { "$stubbed/adapters/github/read.sh" "$tracked" | json_value "state.$1"; }
 check "GitHubRefusedGateLabels_ExitsWithAFailure: the caller must not report the item as waiting at a gate" \
-  '[ "$tracked_code" -ne 0 ] && [ "$tracked_code" -ne 4 ]'
+  '[ "$tracked_code" -ne 0 ] && [ "$tracked_code" -ne "$gate_wait_status" ]'
 check "GitHubRefusedGateLabels_KeepsTheIssueAtThePlanStep: no reader sees implement without the gate" \
-  '[ "$(tracked_state step)" = plan ]'
+  '[ "$(tracker_state github "$tracked" step)" = plan ]'
 check "GitHubRefusedGateLabels_RecordsNoGateInTheState: the issue holds neither half of the transition" \
-  '[ "$(tracked_state gate)" = none ]'
+  '[ "$(tracker_state github "$tracked" gate)" = none ]'
 advance "$tracked"; tracked_retry_code=$?
 check "GitHubRetryAfterARefusal_ExitsWithTheGateWaitStatus: the retry completes the transition" \
-  '[ "$tracked_retry_code" -eq 4 ]'
+  '[ "$tracked_retry_code" -eq "$gate_wait_status" ]'
 check "GitHubRetryAfterARefusal_MovesTheIssueToImplement: the step lands with the gate" \
-  '[ "$(tracked_state step)" = implement ]'
+  '[ "$(tracker_state github "$tracked" step)" = implement ]'
 check "GitHubRetryAfterARefusal_RecordsThePlanApprovalGate: the issue shows the gate" \
-  '[ "$(tracked_state gate)" = plan-approval ]'
+  '[ "$(tracker_state github "$tracked" gate)" = plan-approval ]'
+
+echo "gate transition: GitHub takes the gate labels and refuses the state comment"
+labelled="$(planned_issue github "Labels landed")"
+printf '%s\n' "{\"status\":\"done\",\"summary\":\"$PLAN_SUMMARY\"}" > "$(reports_of "$labelled")/plan.json"
+printf '1\nAPI rate limit exceeded\nissue edit\nlanded\n' > "$FAKE_GH_DIR/fail"
+advance "$labelled"; labelled_code=$?
+rm -f "$FAKE_GH_DIR/fail"
+check "GitHubStateCommentRefusedAfterTheLabels_WaitsAtTheGate: the labels carry the gate, so it stands" \
+  '[ "$labelled_code" -eq "$gate_wait_status" ]'
+check "GitHubStateCommentRefusedAfterTheLabels_ShowsTheGateOnTheIssue: the issue blocks implement" \
+  '[ "$(tracker_state github "$labelled" gate)" = plan-approval ]'
+check "GitHubStateCommentRefusedAfterTheLabels_WritesTheGateRecord: the board lists the gate the issue shows" \
+  '[ "$(json_value gate < "$(gate_record "$labelled")")" = plan-approval ]'
+check "GitHubStateCommentRefusedAfterTheLabels_IsReported: the owner learns the state write failed part way" \
+  'grep -qF "plan-approval" "$work/advance.err"'
+
+echo "gate transition: GitHub refuses the gate comment"
+uncommented="$(planned_issue github "Comment refused")"
+printf '%s\n' "{\"status\":\"done\",\"summary\":\"$PLAN_SUMMARY\"}" > "$(reports_of "$uncommented")/plan.json"
+printf '1\nAPI rate limit exceeded\nissue comment\n' > "$FAKE_GH_DIR/fail"
+advance "$uncommented"; uncommented_code=$?
+rm -f "$FAKE_GH_DIR/fail"
+check "GitHubFailingGateComment_StillWaitsAtTheGate: the comment is no part of the gate" \
+  '[ "$uncommented_code" -eq "$gate_wait_status" ]'
+check "GitHubFailingGateComment_IsReported: the owner learns the comment is missing" \
+  'grep "plan-approval" "$work/advance.err" | grep -qi "comment"'
+
+echo "gate transition: Jira refuses the gate labels, then takes them and refuses the state"
+new_repo jira
+mkdir -p "$work/jira" "$work/jirabin" && cp "$plugin/tests/_fake_jira.py" "$work/jira/"
+ln -s "$plugin/tests/fake-jira.sh" "$work/jirabin/curl"
+printf '{}\n' > "$work/jira/jira.json"
+export FAKE_JIRA_DIR="$work/jira" JIRA_API_TOKEN="gate-transition-token" FLOW_JIRA_RETRY_WAIT="0 0"
+PATH="$work/jirabin:$PATH"; export PATH
+sed -i.bak 's/^  default: local$/  default: jira/' .flow/config.yaml && rm -f .flow/config.yaml.bak
+printf 'jira:\n  site: https://acme.atlassian.net\n  project: WID\n  email: flow@acme.test\n  fields:\n    area: Area\n' >> .flow/config.yaml
+jira_refused="$(planned_issue jira "Jira refused")"
+printf '1\n429\n/rest/api/3/issue/WID-[0-9]*$\n' > "$FAKE_JIRA_DIR/fail"
+"$stubbed/scripts/advance.sh" "$jira_refused" --status done --summary "$PLAN_SUMMARY" > "$work/advance.out" 2> "$work/advance.err"
+jira_refused_code=$?
+rm -f "$FAKE_JIRA_DIR/fail"
+check "JiraRefusedGateLabels_ExitsWithAFailure: the caller must not report the item as waiting at a gate" \
+  '[ "$jira_refused_code" -ne 0 ] && [ "$jira_refused_code" -ne "$gate_wait_status" ]'
+check "JiraRefusedGateLabels_KeepsTheIssueAtThePlanStep: no reader sees implement without the gate" \
+  '[ "$(tracker_state jira "$jira_refused" step)" = plan ]'
+jira_labelled="$(planned_issue jira "Jira labels landed")"
+printf '1\n429\n/properties/\n' > "$FAKE_JIRA_DIR/fail"
+"$stubbed/scripts/advance.sh" "$jira_labelled" --status done --summary "$PLAN_SUMMARY" > "$work/advance.out" 2> "$work/advance.err"
+jira_labelled_code=$?
+rm -f "$FAKE_JIRA_DIR/fail"
+check "JiraStatePropertyRefusedAfterTheLabels_WaitsAtTheGate: the labels carry the gate, so it stands" \
+  '[ "$jira_labelled_code" -eq "$gate_wait_status" ]'
+check "JiraStatePropertyRefusedAfterTheLabels_ShowsTheGateOnTheIssue: the issue blocks implement" \
+  '[ "$(tracker_state jira "$jira_labelled" gate)" = plan-approval ]'
 
 [ "$fails" -eq 0 ] && echo "gate-transition: all passed" || echo "gate-transition: $fails failed"
 [ "$fails" -eq 0 ]

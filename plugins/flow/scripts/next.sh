@@ -30,6 +30,7 @@
 . "$FLOW_PLUGIN/lib/branch.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
+EXIT_AT_GATE=4
 item=""; as_json=0; embed=0; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -118,12 +119,12 @@ profile="$(state_get "$data" profile)"
 [ -n "$profile" ] || die "no profile for kind $kind size $size"
 gate="$(state_get "$data" gate)"
 if [ -n "$gate" ] && [ "$gate" != "none" ]; then
-  pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" 4
+  pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" "$EXIT_AT_GATE"
 fi
 gate_record="$home/gates/$(item_slug "$item").json"
 recorded_gate=""; [ ! -f "$gate_record" ] || recorded_gate="$(json_get "$(cat "$gate_record")" gate)"
 if [ -n "$recorded_gate" ]; then
-  pass_over "$item has a $recorded_gate gate recorded on this host ($gate_record) that its tracker does not show, so no step runs. Answer it, then: gate.sh clear $item; or, if it was answered on another host, delete that file" 4
+  pass_over "$item has a $recorded_gate gate recorded on this host ($gate_record) that its tracker does not show, so no step runs. Answer it, then: gate.sh clear $item; or, if it was answered on another host, delete that file" "$EXIT_AT_GATE"
 fi
 step="$(state_get "$data" step)"
 [ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"
