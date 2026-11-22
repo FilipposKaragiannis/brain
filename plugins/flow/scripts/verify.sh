@@ -42,6 +42,7 @@
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/checks.sh"
+. "$FLOW_PLUGIN/lib/files_placeholder.sh"
 usage="usage: verify.sh <item> [--base <ref>] [--fresh] [--start | --wait [seconds]]"
 [ $# -ge 1 ] || die "$usage" 2
 item="$1"; shift
@@ -216,8 +217,24 @@ esac
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
-changed="$(git diff --no-renames --name-only "$merge_base" HEAD 2>/dev/null; git diff --no-renames --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
-changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
+changed_names="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+{ git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } > "$changed_names" 2>/dev/null
+name_separator="$(printf '\037')"
+changed_units="$(tr '\0' "$name_separator" < "$changed_names"; printf x)"; changed_units="${changed_units%x}"
+distinct_names() {
+  distinct_seen="$name_separator"; distinct_rest="$1"
+  while [ -n "$distinct_rest" ]; do
+    distinct_name="${distinct_rest%%"$name_separator"*}"; distinct_rest="${distinct_rest#*"$name_separator"}"
+    case "$distinct_name" in .flow/*) continue ;; esac
+    case "$distinct_seen" in *"$name_separator$distinct_name$name_separator"*) continue ;; esac
+    distinct_seen="$distinct_seen$distinct_name$name_separator"
+    printf '%s%s' "$distinct_name" "$name_separator"
+  done
+}
+unreadable_names=""
+[ "$(tr -cd "$name_separator" < "$changed_names" | wc -c)" -eq 0 ] || { unreadable_names=1; changed_units=""; }
+changed_units="$(distinct_names "$changed_units"; printf x)"; changed_units="${changed_units%x}"
+changed="$(printf '%s' "$changed_units" | tr "$name_separator" '\n' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 [ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
@@ -227,9 +244,9 @@ run_started="$(now_seconds)"
 records=""; changed_list=""; timings=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${changed_names:+"$changed_names"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${changed_names:+"$changed_names"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${changed_names:+"$changed_names"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
@@ -272,13 +289,26 @@ command_with_verify_base() {
   esac
 }
 
+run_with_names() {
+  run_command="$1"; shift
+  [ -n "$run_command" ] || { echo "the command is empty" >&2; return 1; }
+  run_names_escaped=""
+  case "$run_command" in
+    *format_names_escaped*) run_names_escaped="$(names_backslash_escaped "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; return 1; } ;;
+  esac
+  format_names_escaped="$run_names_escaped" sh -c "$run_command" sh "$@"
+}
+
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
-  cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
+  cmd="$command"
+  IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
   printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
+  [ "$#" -eq 0 ] || printf '  files:\n' >> "$log"
+  [ "$#" -eq 0 ] || printf '    %s\n' "$@" >> "$log"
   check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
-  if sh -c "$cmd" >> "$log" 2>&1; then st="pass"; summary="ok"
+  if run_with_names "$(files_placeholder_expanded "$cmd")" "$@" >> "$log" 2>&1; then st="pass"; summary="ok"
   else
     st="fail"; [ "$kind" = "signal" ] && st="signal"
     summary="$(tail -c "+$log_start" "$log")"
@@ -323,15 +353,29 @@ planned_checks() {
 if ! planned="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
+[ -z "$unreadable_names" ] || {
+  record "changed files" fail "" "a changed file name holds the character U+001F, which verify cannot hand to a command" 0 ""; failed "changed files"
+}
+existing_names_under() {
+  existing_rest="$changed_units"
+  while [ -n "$existing_rest" ]; do
+    existing_name="${existing_rest%%"$name_separator"*}"; existing_rest="${existing_rest#*"$name_separator"}"
+    case "$existing_name" in "$1"*) ;; *) continue ;; esac
+    [ -f "$existing_name" ] || continue
+    for existing_extension in $2; do
+      case "$existing_name" in *"$existing_extension") printf '%s%s' "$existing_name" "$name_separator"; break ;; esac
+    done
+  done
+}
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
-  exts="$(json_list "$lang" extensions | tr '\n' '|' | sed 's/|$//; s/\./\\./g')"
+  exts="$(json_list "$lang" extensions)"
   nf="$(json_length "$lang" format)"; j=0
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
-    files="$(printf '%s\n' "$changed" | grep -E "($exts)$" | { [ -n "$prefix" ] && grep "^$prefix" || cat; } | while read -r f; do [ -f "$f" ] && printf '%s ' "$f"; done)"
+    files="$(existing_names_under "$prefix" "$exts")"
     if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
