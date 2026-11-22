@@ -16,9 +16,8 @@ import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
+from collections.abc import Iterator, Mapping
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -42,6 +41,7 @@ _DEFAULT_STOP_GRACE_SECONDS = 5
 _LEAST_WHOLE_NUMBER = 1
 _SIGNAL_EXIT_BASE = 128
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+_STOP_CHECK_INTERVAL = Duration(0.1)
 _SHARD_OPTION = ("--shard", "<number>/<count>")
 _SINCE = ("since", "<base commit>")
 _USAGE = f"usage: flow_suites.py all [{' '.join(_SHARD_OPTION)}] | {' '.join(_SINCE)}"
@@ -131,14 +131,9 @@ def _report_suite(name: SuiteName, outcome: _SuiteOutcome, lanes: _Lanes, limit:
         print(f"flow: {name.text} {'FAIL' if outcome.failed() else 'pass'} ({outcome.elapsed.seconds:.1f}s)", flush=True)
 
 
-def _ignore_further_stop_signals() -> None:
-    for stop_signal in _STOP_SIGNALS:
-        signal.signal(stop_signal, lambda number, frame: None)
-
-
 def _stop_running(submitted: "Mapping[Future, SuiteName]", lanes: _Lanes, settings: Settings) -> None:
     lanes.running.close()
-    for waiting_or_running in list(submitted):
+    for waiting_or_running in submitted:
         waiting_or_running.cancel()
     _stop(lanes.running.still_running(), settings)
 
@@ -150,34 +145,33 @@ def _report_stopped(unfinished: "set[SuiteName]", lanes: _Lanes) -> None:
             print(f"flow: {name.text} stopped", flush=True)
 
 
-def _exit_on_stop_signal(number: int, frame: object) -> None:
-    _ignore_further_stop_signals()
-    raise SystemExit(_SIGNAL_EXIT_BASE + number)
-
-
-@contextmanager
-def _stopping_on_signal(submitted: "Mapping[Future, SuiteName]", unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes, settings: Settings) -> Iterator[None]:
+def _note_stop_signals(noted: "list[int]") -> None:
     for stop_signal in _STOP_SIGNALS:
-        signal.signal(stop_signal, _exit_on_stop_signal)
-    try:
-        yield
-    except SystemExit:
-        _stop_running(submitted, lanes, settings)
-        _report_stopped(unfinished(), lanes)
-        raise
+        signal.signal(stop_signal, lambda number, frame: noted.append(number))
+
+
+def _finished_until_a_stop(submitted: "Mapping[Future, SuiteName]", stop_signals: "list[int]") -> "Iterator[Future]":
+    unfinished = set(submitted)
+    while unfinished and not stop_signals:
+        finished, unfinished = wait(unfinished, timeout=_STOP_CHECK_INTERVAL.seconds, return_when=FIRST_COMPLETED)
+        yield from finished
 
 
 def run_selected(suites: "Mapping[SuiteName, SuiteCommand]", logs: SuiteLogs, settings: Settings) -> "frozenset[SuiteName]":
     outcomes = {}
-    submitted: "dict[Future, SuiteName]" = {}
+    stop_signals: "list[int]" = []
     lanes = _Lanes(logs.folder, RunningSuites(), threading.Lock())
-    with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers, _stopping_on_signal(submitted, lambda: suites.keys() - outcomes.keys(), lanes, settings):
-        for name, command in suites.items():
-            submitted[workers.submit(_run_suite, name, command, settings, lanes)] = name
-        for finished in as_completed(submitted):
+    _note_stop_signals(stop_signals)
+    with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers:
+        submitted = {workers.submit(_run_suite, name, command, settings, lanes): name for name, command in suites.items()}
+        for finished in _finished_until_a_stop(submitted, stop_signals):
             name = submitted[finished]
             outcomes[name] = finished.result()
             _report_suite(name, outcomes[name], lanes, settings.time_limit)
+        if stop_signals:
+            _stop_running(submitted, lanes, settings)
+            _report_stopped(suites.keys() - outcomes.keys(), lanes)
+            sys.exit(_SIGNAL_EXIT_BASE + stop_signals[0])
     return frozenset(name for name, outcome in outcomes.items() if outcome.failed())
 
 
