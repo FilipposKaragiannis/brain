@@ -278,6 +278,7 @@ for bad in abc -1 ''; do
   expect "LaneCount${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_LANES.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES
+default_lanes=3; echo "$default_lanes" > "$work/lanes-expected"
 rm -f "$work/holder-counts"
 expect 'NoLaneVariable_Passes because the default must work' "$(result)" pass
 expect 'NoLaneVariable_RunsThreeSuitesAtOnce because the default is three lanes' "$(most_suites_at_once)" 3
