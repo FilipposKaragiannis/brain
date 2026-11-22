@@ -80,16 +80,21 @@ main_worktree() {
   if main_worktree_handed_down; then printf '%s\n' "$FLOW_MAIN_WORKTREE"; return; fi
   git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'
 }
-# main_worktree_handed_down: FLOW_MAIN_WORKTREE was found for this folder, with no git override.
+# main_worktree_handed_down: FLOW_MAIN_WORKTREE was found for this folder and this PATH, with no
+# git override.
 main_worktree_handed_down() {
-  [ "${FLOW_MAIN_WORKTREE_FOLDER:-}" = "$PWD" ] && [ -n "${FLOW_MAIN_WORKTREE+set}" ] && ! git_repository_overridden
+  [ "${FLOW_MAIN_WORKTREE_FOLDER:-}" = "$PWD" ] && [ "${FLOW_MAIN_WORKTREE_SEARCH_PATH:-}" = "$PATH" ] &&
+    [ -n "${FLOW_MAIN_WORKTREE+set}" ] && ! git_repository_overridden
 }
 # git_repository_overridden: GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR points git at a repository.
 git_repository_overridden() { [ -n "${GIT_DIR:-}${GIT_WORK_TREE:-}${GIT_COMMON_DIR:-}" ]; }
-if ! main_worktree_handed_down && ! git_repository_overridden; then
-  FLOW_MAIN_WORKTREE="$(main_worktree)"; FLOW_MAIN_WORKTREE_FOLDER="$PWD"
-  export FLOW_MAIN_WORKTREE FLOW_MAIN_WORKTREE_FOLDER
-fi
+# main_worktree_resolve: finds the main worktree for this folder, unless handed down, and exports it.
+main_worktree_resolve() {
+  if main_worktree_handed_down || git_repository_overridden; then return 0; fi
+  FLOW_MAIN_WORKTREE="$(main_worktree)"; FLOW_MAIN_WORKTREE_FOLDER="$PWD"; FLOW_MAIN_WORKTREE_SEARCH_PATH="$PATH"
+  export FLOW_MAIN_WORKTREE FLOW_MAIN_WORKTREE_FOLDER FLOW_MAIN_WORKTREE_SEARCH_PATH
+}
+main_worktree_resolve
 
 # The flow home holds the project config, the local items and the gate records. It is the main
 # worktree's .flow, found from any linked worktree. FLOW_HOME overrides it (tests).
