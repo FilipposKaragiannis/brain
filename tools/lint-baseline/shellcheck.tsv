@@ -117,6 +117,8 @@ plugins/flow/tests/verify-detached.sh	SC2034	15
 plugins/flow/tests/verify-detached.sh	SC2154	6
 plugins/flow/tests/verify-ends.sh	SC2034	13
 plugins/flow/tests/verify-ends.sh	SC2154	6
+plugins/flow/tests/verify-file-names.sh	SC2034	13
+plugins/flow/tests/verify-file-names.sh	SC2154	6
 plugins/flow/tests/verify-flow-runner.sh	SC2034	5
 plugins/flow/tests/verify-flow-runner.sh	SC2154	6
 plugins/flow/tests/verify-report.sh	SC2010	1
@@ -142,3 +144,9 @@ tools/cost.sh	SC2164	1
 tools/lint.sh	SC2044	2
 tools/lint.sh	SC2164	1
 tools/test.sh	SC2164	1
+tools/tests/_flow_project_fixture.sh	SC2154	2
+tools/tests/_flow_project_fixture.sh	SC2164	1
+tools/tests/flow-runner.sh	SC2034	1
+tools/tests/flow-runner.sh	SC2154	6
+tools/tests/flow-selection.sh	SC2034	2
+tools/tests/flow-selection.sh	SC2154	1

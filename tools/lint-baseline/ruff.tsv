@@ -67,7 +67,7 @@ plugins/flow/scripts/_reviews.py	I001	1
 plugins/flow/scripts/_reviews.py	SIM115	1
 plugins/flow/scripts/_slack.py	E401	1
 plugins/flow/scripts/_slack.py	I001	1
-plugins/flow/scripts/_verify_report.py	E741	2
+plugins/flow/scripts/_verify_report.py	E741	1
 plugins/flow/tests/_fake_gh.py	E401	1
 plugins/flow/tests/_fake_gh.py	E701	18
 plugins/flow/tests/_fake_gh.py	E702	53
@@ -88,9 +88,13 @@ plugins/flow/tests/_fake_notifier.py	I001	1
 tools/lib/check_plugins.py	SIM115	2
 tools/lib/eval_summary.py	S603	1
 tools/lib/eval_summary.py	S607	1
+tools/lib/flow_process_groups.py	I001	1
+tools/lib/flow_process_groups.py	S607	1
+tools/lib/flow_selection.py	I001	1
+tools/lib/flow_selection.py	S603	1
+tools/lib/flow_selection.py	S607	1
 tools/lib/flow_suites.py	I001	1
-tools/lib/flow_suites.py	S603	2
-tools/lib/flow_suites.py	S607	1
+tools/lib/flow_suites.py	S603	1
 tools/lib/generate.py	I001	1
 tools/lib/map.py	B007	1
 tools/lib/map.py	E731	2

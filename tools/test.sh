@@ -64,6 +64,7 @@ for part in $parts; do
     console) clean plugins/console/tests/run.sh || status=1 ;;
     tools)
       clean tools/tests/run.sh || status=1
+      clean tools/tests/lint-baseline.sh || status=1
       clean sh tools/tests/flow-selection.sh || status=1
       clean sh tools/tests/flow-runner.sh || status=1
       clean tools/tests/suite-parity.sh || status=1
