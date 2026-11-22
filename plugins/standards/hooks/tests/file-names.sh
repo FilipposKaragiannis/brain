@@ -110,5 +110,29 @@ printf 'class Pre {}\n' > "dir with space/Pre.cs"
 git add -A
 run_hook check-format.sh
 check "FormatCommand_PathWithSpaceIsOneFile: the formatter got one argument" [ "$(cat "$work/count")" = 1 ]
+printf '%s\0' 'dir with space/Pre.cs' > "$work/expected-path"
+check "FormatCommand_PathWithSpaceKeepsItsName: the argument is the whole path byte for byte" cmp -s "$work/seen" "$work/expected-path"
+
+echo "check-format: a loop over {files}"
+git reset -q --hard "$base"
+cat > .standards/config.json <<JSON
+{
+  "version": "0.1.0",
+  "languages": [
+    { "name": "csharp", "extensions": [".cs"],
+      "format": [ { "prefix": "", "command": "for f in {files}; do printf '%s\\\\n' \"\$f\" >> $work/loop.log; done" } ] }
+  ],
+  "build": "true"
+}
+JSON
+git add -A && git commit -qm "loop config"
+names_do write_interface
+git add -A
+run_hook check-format.sh; loop_status=$?
+check "FormatLoop_NormalCommitPasses: a for loop over {files} exited 0" [ "$loop_status" -eq 0 ]
+check "FormatLoop_SpaceNameIsOneIteration: the loop saw with space.cs as one line" grep -qFx 'with space.cs' "$work/loop.log"
+check "FormatLoop_QuoteBreakNameIsOneIteration: the loop saw the quote-break name as one line" grep -qFx 'it'\''$(touch${IFS}INJECTED)'\''s.cs' "$work/loop.log"
+check "FormatLoop_LeadingDashNameIsOneIteration: the loop saw -dash.cs as one line" grep -qFx -e '-dash.cs' "$work/loop.log"
+check "FormatLoop_CraftedNamesCreateNoFile: no name ran as a command" no_injection
 
 [ "$fails" -eq 0 ] && echo "file-names: ok" || { echo "file-names: $fails failed"; exit 1; }
