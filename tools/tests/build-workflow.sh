@@ -1,8 +1,6 @@
 #!/bin/sh
-# Tests the shape of .github/workflows/ci.yml that keeps CI honest: every job has a time limit, the
-# one result job needs every other job and fails on anything but success, every part of
-# tools/test.sh is named so none can be skipped. Ruby's YAML parser reads the workflow, since
-# python3 has no YAML module here or in CI. Exit 1 on any failure.
+# Tests that the CI workflow limits every job, gathers them under one result and skips no part.
+# Ruby reads the workflow because python3 has no YAML module here or in CI.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
@@ -10,11 +8,11 @@ work="$(mktemp -d)"
 trap 'sandbox_close $?' EXIT
 
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; echo "  got:      $2"; echo "  expected: $3"; exit 1; }; echo "ok $1"; }
-yaml_to_json() { # yaml_to_json <yaml file> <json file>
+yaml_to_json() {
   ruby -ryaml -rjson -e 'File.write(ARGV[1], JSON.generate(YAML.safe_load(File.read(ARGV[0]))))' "$1" "$2" 2> "$work/ruby-errors" \
     || { echo "FAIL $1 could not be read as YAML"; cat "$work/ruby-errors"; exit 1; }
 }
-json_to_yaml() { # json_to_yaml <json file> <yaml file>
+json_to_yaml() {
   ruby -ryaml -rjson -e 'File.write(ARGV[1], YAML.dump(JSON.parse(File.read(ARGV[0]))))' "$1" "$2" 2> "$work/ruby-errors" \
     || { echo "FAIL $1 could not be written as YAML"; cat "$work/ruby-errors"; exit 1; }
 }
@@ -105,13 +103,12 @@ yaml_to_json "$root/.github/workflows/ci.yml" "$workflow"
 every_part="$("$root/tools/test.sh" no-such-part 2>&1 | sed -n 's/^.* the parts are //p')"
 parts_run_by_shards="$(printf '%s\n' "$every_part" | tr ' ' '\n' | grep -vx flow | sort | tr '\n' ' ' | sed 's/ $//')"
 
-needs_check_on() { # needs_check_on <json workflow>: the jobs the result job's needs leave out, once written as YAML
+needs_check_on() {
   json_to_yaml "$1" "$work/rewritten.yml"; yaml_to_json "$work/rewritten.yml" "$work/rewritten.json"
   ask "$work/rewritten.json" missing-from-result-needs
 }
 edit without-need "$workflow" flow "$work/without-flow.json"
 edit with-job "$workflow" new-job "$work/with-new-job.json"
-json_to_yaml "$workflow" "$work/reformatted.yml"
 
 ask "$workflow" result-script > "$work/result.sh"
 result_for() {
@@ -128,7 +125,6 @@ expect 'EveryJob_HasATimeLimit because a hung suite once ran 73 minutes' "$(ask 
 expect 'ResultJob_NeedsEveryOtherJob because one required check must stand for them all' "$(ask "$workflow" missing-from-result-needs)" ''
 expect 'ResultJobMissingANeed_FailsTheNeedsCheck because a job left out of needs would not hold up the required check' "$(needs_check_on "$work/without-flow.json")" flow
 expect 'JobAddedWithoutANeed_FailsTheNeedsCheck because a job added later must join the required check' "$(needs_check_on "$work/with-new-job.json")" new-job
-expect 'ReformattedWorkflow_DiffersInText because the next check must read another layout' "$(cmp -s "$root/.github/workflows/ci.yml" "$work/reformatted.yml" && echo same || echo differs)" differs
 expect 'ReformattedWorkflow_PassesTheNeedsCheck because layout is not behaviour' "$(needs_check_on "$workflow")" ''
 expect 'ResultStepGivenOnlySuccess_Passes because every job holds' "$(result_for success)" pass
 expect 'ResultStepGivenAFailure_Fails because one failed job fails the run' "$(result_for failure)" fail

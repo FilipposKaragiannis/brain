@@ -1,7 +1,6 @@
 #!/bin/sh
-# Tests that tools/test.sh fails the console part named on the command line when a tool its shell
-# suite needs is missing, and runs that suite once every tool is there. The suite is a stub in a
-# copy of the checkout; node, curl and zsh are stubs on a PATH of their own. Exit 1 on any failure.
+# Tests that a console part named on the test script's command line fails when a tool it needs is
+# missing.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
