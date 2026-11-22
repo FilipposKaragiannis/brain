@@ -61,10 +61,10 @@ def suite_entries(file: Path) -> dict:
 
 def commands(root):
     directory = root / TESTS
-    suites = {"inline": ("sh", directory / "run.sh", "inline")}
+    suites = {}
     for file in suite_files(directory):
         entries = suite_entries(file)
-        if entries.keys() & (suites.keys() | {"verify"}):
+        if entries.keys() & suites.keys():
             raise ValueError(f"duplicate Flow suite name: {file.stem}")
         suites.update(entries)
     return suites
@@ -84,15 +84,15 @@ def suites_by_path(suites) -> dict:
     verify_suites = {name for name in suites if name.startswith("verify-")}
     rules = {
         TESTS / "_verify_fixture.sh": verify_suites,
-        TESTS / "_base_fixture.sh": set(suites) - {"inline"},
+        TESTS / "_base_fixture.sh": set(suites),
         TESTS / "adapter-contract.sh": {"contract-" + adapter for adapter in ADAPTERS},
     }
-    return {**rules, **dict.fromkeys(VERIFY_INPUTS, {"verify", "base-claim", "base-readers"} | verify_suites)}
+    return {**rules, **dict.fromkeys(VERIFY_INPUTS, {"verify-report", "base-claim", "base-readers"} | verify_suites)}
 
 
 def affected(path, suites):
     rules = suites_by_path(suites)
-    if path in rules and rules[path] <= suites.keys() | {"verify"}:
+    if path in rules and rules[path] <= suites.keys():
         return rules[path]
     if path.parent == TESTS and path.suffix == ".sh" and path.stem in suites:
         return {path.stem}
@@ -113,8 +113,6 @@ def narrowed(root, paths, suites) -> Selection:
     patterns = flow_inputs(root)
     relevant = (path for path in paths if matches(path, patterns) and not matches(path, UNRELATED_TO_TESTS))
     selected = set().union(*(affected(path, suites) for path in relevant))
-    if "inline" in selected:
-        selected.discard("verify")
     return Selection(frozenset(selected), ())
 
 
@@ -203,7 +201,6 @@ def run(root, base, lanes: int, clock: Callable[[], float]):
     chosen = selection(root, base, suites)
     for notice in chosen.notices:
         print(notice, flush=True)
-    suites["verify"] = ("sh", root / TESTS / "run.sh", "verify")
     if not chosen.suites:
         print("flow: no Flow test inputs changed", flush=True)
         return 0

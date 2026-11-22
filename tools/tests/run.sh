@@ -256,6 +256,18 @@ json.dump(package, open(sys.argv[1], "w"), indent=2)
 PY2
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "AppTestScriptOutsideSandbox_FailsLint: lint exits 1 and names an app whose test script skips tools/lib/sandboxed.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
+fresh
+flow_dispatcher="$repo/plugins/flow/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"
+check "FlowDispatcherHoldingOnlyTheDispatch_IsNotNamedByLint: the flow run.sh that only hands the run to flow_suites.py needs no sandbox lines" sh -c "! printf '%s' \"\$0\" | grep -q 'plugins/flow/tests/run.sh'" "$out"
+mkdir -p "$demo/tests"
+cp "$flow_dispatcher" "$demo/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "SuiteCopyingTheFlowDispatcher_FailsLint: lint exits 1 and names any other file that holds the dispatch outside the sandbox" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+rm "$demo/tests/run.sh"
+printf 'touch "$HOME/setup-outside-the-sandbox"\n' >> "$flow_dispatcher"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "FlowDispatcherWithALineBesideTheDispatch_FailsLint: lint exits 1 and names the flow run.sh once it runs anything but the dispatch" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'flow dispatcher holds more than the dispatch.*plugins/flow/tests/run.sh'" "$out"
 
 echo "test.sh fails a part named on the command line that cannot run"
 # The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.
