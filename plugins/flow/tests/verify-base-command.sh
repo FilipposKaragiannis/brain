@@ -268,10 +268,55 @@ check "BaseOptionNamingTheItemsOwnBranch_ExitsFailing because the caller's choic
 check "BaseOptionNamingTheItemsOwnBranch_FailsOnTheChangedFilesCheckAlone because the refused base is the only fault" \
   '[ "$(failed_checks)" = "changed files" ]'
 
+printf "the comparison base %s is the item's own branch\n" "$(git -C "$worktree" symbolic-ref --short HEAD)" > "$work/expected-own-branch-option"
+check "BaseOptionNamingTheItemsOwnBranch_NamesTheOwnBranch because the reader must know why the caller's base is refused" \
+  'check_field "changed files" summary | grep -qF -f "$work/expected-own-branch-option"'
+
+changed_source_item head-alias "$failing_scoped_test" committed
+git -C "$worktree" branch head-alias HEAD
+verify --base head-alias >/dev/null 2>&1
+# shellcheck disable=SC2034 # the check's condition reads it
+head_alias_result=$?
+printf "the comparison base head-alias is the item's own branch\n" > "$work/expected-head-alias"
+check "BaseOptionAtTheItemsHeadCommitUnderAnotherName_ExitsFailing because a base at HEAD hides every commit the branch holds" \
+  '[ "$head_alias_result" -eq 1 ]'
+check "BaseOptionAtTheItemsHeadCommitUnderAnotherName_NamesTheOwnBranch because the reader must know why the base is refused" \
+  'check_field "changed files" summary | grep -qF -f "$work/expected-head-alias"'
+check "BaseOptionAtTheItemsHeadCommitUnderAnotherName_RunsTheScopedTest because a hiding base cannot show that nothing under its paths changed" \
+  '[ "$(check_field "tests scoped" status)" = fail ]'
+
+changed_source_item own-branch-no-record "$failing_scoped_test" committed
+"$local_adapter/write-state.sh" "$item" base= >/dev/null
+set_claim_base "$item" "$(git -C "$worktree" symbolic-ref --short HEAD)"
+verify >/dev/null 2>&1
+# shellcheck disable=SC2034 # the check's condition reads it
+own_branch_no_record_result=$?
+check "ClaimBaseOnTheItemsOwnBranchWithNoRecordedBase_ExitsFailing because a base that hides the work is refused with no record to compare" \
+  '[ "$own_branch_no_record_result" -eq 1 ]'
+check "ClaimBaseOnTheItemsOwnBranchWithNoRecordedBase_RunsTheScopedTest because the hiding base must not skip a test under the changed paths" \
+  '[ "$(check_field "tests scoped" status)" = fail ]'
+
+changed_source_item claim-hides-a-commit "$failing_scoped_test" committed
+echo note > "$worktree/notes.txt"
+git -C "$worktree" add notes.txt && git -C "$worktree" commit -qm "later change"
+git -C "$worktree" branch hidden-base HEAD~1
+set_claim_base "$item" hidden-base
+verify >/dev/null 2>&1
+check "ClaimBaseDifferingFromTheRecordAndHidingACommit_RunsTheScopedTest because verify must not trust a base it cannot tell from the record" \
+  '[ "$(check_field "tests scoped" status)" = fail ]'
+check "ClaimBaseDifferingFromTheRecordAndHidingACommit_RaisesFeelTest because a change under the feel-test paths cannot be ruled out" \
+  '[ "$(feel_test)" = true ]'
+
 changed_source_item no-commits-yet "$failing_scoped_test" staged
 git -C "$worktree" reset -q --soft main
 verify >/dev/null 2>&1
 check "ItemWithNoCommitsYet_FailsOnItsScopedTestAlone because a base at HEAD hides nothing when the branch holds no commit of its own" \
+  '[ "$(failed_checks)" = "tests scoped" ]'
+
+changed_source_item no-commits-untracked "$failing_scoped_test" untracked
+git -C "$worktree" reset -q main
+verify >/dev/null 2>&1
+check "ItemWithNoCommitsYetAndUntrackedFiles_FailsOnItsScopedTestAlone because untracked files are changes and a base at HEAD hides nothing" \
   '[ "$(failed_checks)" = "tests scoped" ]'
 
 changed_source_item no-recorded-base "$failing_scoped_test" committed
