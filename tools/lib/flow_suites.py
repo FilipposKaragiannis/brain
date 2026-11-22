@@ -7,11 +7,11 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fnmatch import fnmatchcase
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
