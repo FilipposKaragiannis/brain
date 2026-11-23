@@ -151,7 +151,7 @@ git_cannot_start_result=$?
 check "GitCannotStart_ExitsFailing because a change list git never produced cannot prove the change" \
   '[ "$git_cannot_start_result" -eq "$verify_failed_exit" ]'
 check "GitCannotStart_NamesTheListing because the reader must know which listing could not run" \
-  'check_field "changed files" summary | grep -qF "the diff from the base main failed ("'
+  'check_field "changed files" summary | grep -qF "the diff of uncommitted changes failed ("'
 
 changed_source_item unreadable-and-failed '{"test":[]}' committed
 echo change > "$worktree/unit$(printf '\037')separator.name"
