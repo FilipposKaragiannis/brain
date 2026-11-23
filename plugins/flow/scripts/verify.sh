@@ -20,12 +20,13 @@
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
-# the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base (scripts/_change_list.py). A moved file is changed at its old path and its
-# new one. When the base is unresolved, a git listing fails or a name holds U+001F, a failed
-# `changed files` check names why, every check with paths runs, no kept pass is reused and
-# feel_test is true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is no
-# valid branch name.
+# the claim's base (.flow/claim.json in the worktree, when a valid name) and the item state's,
+# either alone when the other has none, else the config base; a claim base that differs from the
+# item state's is neither, and the run has no base. A moved file is changed at its old path and its
+# new one. When verify cannot trust the comparison, the base is unresolved, a git listing fails or
+# a name holds U+001F, a failed `changed files` check names why (scripts/_change_list.py and
+# scripts/_verify_base.py), every check with paths runs, no kept pass is reused and feel_test is
+# true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is not a valid name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -65,9 +66,10 @@ case "$wait_for" in ''|*[!0-9]*) die "--wait takes a number of seconds, not $wai
 given_base="$base"
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
+export GIT_NO_REPLACE_OBJECTS=1 # a replace ref made in the worktree could forge the base commit's tree
 main_worktree_resolve
 [ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
-[ -n "$base" ] || base="$(recorded_base "$root")"
+item_state="$(adapter read "$item" 2>/dev/null)" || item_state='{}'
 reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
 log="$reports/verify.log"; run_out="$reports/verify.out"
 # The checks the run failed so far, one name per line, so a run stopped before its report still
@@ -76,8 +78,7 @@ failed_file="$reports/verify.failed"
 
 # next_attempt: the attempt this run is, one past the item's recorded attempts.
 next_attempt() {
-  item_json="$(adapter read "$item" 2>/dev/null)" || item_json='{}'
-  recorded_attempts="$(state_get "$item_json" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
+  recorded_attempts="$(state_get "$item_state" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
 }
 # report_text <text>: the text as one line of printable characters with no quote or backslash,
 # cut to report_text_max_characters, safe inside the JSON string of a minimal report.
@@ -217,35 +218,37 @@ case "$mode" in
   detached) run_detached ;;
 esac
 
-ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
-merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
-base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
 name_separator="$(printf '\037')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
-[ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
-records=""; changed_list=""; timings=""; change_list_causes_file=""
+records=""; changed_list=""; timings=""; change_list_summary_file=""; chosen_base_file=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
-change_list_causes_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+change_list_summary_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+chosen_base_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
-changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" "$log" "$change_list_causes_file" "$base" "$base_commit")"
+config_base="$(cfg_or base main)"
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" --log="$log" --summary="$change_list_summary_file" \
+  --chosen-base-file="$chosen_base_file" --given="$given_base" --claimed="$(claim_name "$root" base)" \
+  --recorded="$(checked_name "$(state_get "$item_state" base)")" \
+  --task-branch="$(checked_name "$(state_get "$item_state" branch)")" --fallback="$config_base")"
 case "$?" in
   0) change_list=complete; listed_files_only="" ;;
   "$unreadable_names_exit") change_list=unreadable_names ;;
   "$incomplete_list_exit") change_list=incomplete ;;
   *) die "cannot read the changed file names" ;;
 esac
-change_list_causes="$(cat "$change_list_causes_file")" || die "cannot read why the changed file list is short"
+{ IFS= read -r base_commit && IFS= read -r base; } < "$chosen_base_file" || die "cannot read the comparison base"
+change_list_summary="$(cat "$change_list_summary_file")" || die "cannot read why the changed file list is short"
 
 record() {
   # record <name> <status> <command> <summary source> <seconds> <reused from>: one check, four
@@ -356,10 +359,7 @@ planned_checks() {
 if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
-case "$change_list" in
-  unreadable_names) record "changed files" fail "" "$change_list_causes" 0 ""; failed "changed files" ;;
-  incomplete) record "changed files" fail "" "verify cannot list every changed file, so it cannot pass: $change_list_causes. Every check with paths runs." 0 ""; failed "changed files" ;;
-esac
+if [ "$change_list" != complete ]; then record "changed files" fail "" "$change_list_summary" 0 ""; failed "changed files"; fi
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do

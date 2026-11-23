@@ -2,8 +2,11 @@
 # pr-without-pull-request.sh: how an item ends when its pr step opens no pull request, on the local
 # adapter in a throwaway repo. A pr step done with no PR in its result and nothing on the task
 # branch its base lacks leaves nothing for the owner to merge: the item closes and frees its
-# worktree. With changes on the branch and no PR there it escalates; with a PR on the branch it
-# waits at the merge gate. The board lists a merge gate with no PR linked under Health.
+# worktree. With changes on the branch and no PR there it escalates, also when the claim or the
+# record names the task branch as its base; with no base recorded the claim's base is compared. A
+# release keeps a task branch its claim's base, read by its full ref, does not hold, and deletes
+# one merged into it. With a PR on the branch it waits at the merge gate. The board lists a merge
+# gate with no PR linked under Health.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -72,6 +75,57 @@ check "PrStepWithNoPullRequestAndChangesOnTheBranch_RaisesAnEscalationGate: a ch
   '[ "$(state "$unopened" gate)" = escalation ]'
 check "PrStepWithNoPullRequestAndChangesOnTheBranch_LeavesTheItemOpen: changes that never merged mean the item is not finished" \
   '[ "$(item_field "$unopened" status)" = open ]'
+
+echo "pr without a pull request: a claim base rewritten to the task branch is not read as nothing to merge"
+rewritten="$("$local_adapter/create.sh" bug "Change whose claim names its own branch as base" --size S --body "$body")"
+start_step_with_a_commit "$rewritten" rewritten-change
+rewritten_branch="$(state "$rewritten" branch)"
+set_claim_base "$rewritten" "$rewritten_branch"
+step_result "$rewritten" pr "{\"status\":\"done\",\"summary\":\"$NO_PULL_REQUEST_SUMMARY\"}"
+finish_step "$rewritten"
+check "PrStepWithNoPullRequestAndTheClaimBaseOnTheTaskBranch_RaisesAnEscalationGate because the item's record, not the claim, names the base the change must reach" \
+  '[ "$(state "$rewritten" gate)" = escalation ]'
+check "PrStepWithNoPullRequestAndTheClaimBaseOnTheTaskBranch_LeavesTheItemOpen because changes that never merged mean the item is not finished" \
+  '[ "$(item_field "$rewritten" status)" = open ]'
+"$plugin/scripts/steward.sh" release "$rewritten" >/dev/null 2>&1
+check "ReleaseWithTheClaimBaseOnTheTaskBranch_KeepsTheTaskBranch because a branch is never merged into itself, so its commits are not yet anywhere else" \
+  'git show-ref --verify --quiet "refs/heads/$rewritten_branch"'
+
+echo "pr without a pull request: a recorded base on the task branch is not read as nothing to merge"
+recorded_on_branch="$("$local_adapter/create.sh" bug "Change whose record names its own branch as base" --size S --body "$body")"
+start_step_with_a_commit "$recorded_on_branch" recorded-on-branch-change
+"$local_adapter/write-state.sh" "$recorded_on_branch" "base=$(state "$recorded_on_branch" branch)" >/dev/null
+step_result "$recorded_on_branch" pr "{\"status\":\"done\",\"summary\":\"$NO_PULL_REQUEST_SUMMARY\"}"
+finish_step "$recorded_on_branch"
+check "PrStepWithNoPullRequestAndTheRecordedBaseOnTheTaskBranch_RaisesAnEscalationGate because a branch compared with itself always shows nothing to merge" \
+  '[ "$(state "$recorded_on_branch" gate)" = escalation ]'
+
+echo "pr without a pull request: with no recorded base the claim's base is the one compared"
+claim_only="$("$local_adapter/create.sh" bug "Change whose record holds no base" --size S --body "$body")"
+start_step_with_a_commit "$claim_only" claim-only-change
+git branch claim-only-base "$(state "$claim_only" branch)"
+"$local_adapter/write-state.sh" "$claim_only" base= >/dev/null
+set_claim_base "$claim_only" claim-only-base
+step_result "$claim_only" pr "{\"status\":\"done\",\"summary\":\"$NO_PULL_REQUEST_SUMMARY\"}"
+finish_step "$claim_only"
+check "PrStepWithNoPullRequestAndNoRecordedBase_ComparesWithTheClaimsBase because an item whose record holds no base has only its claim to go by" \
+  'closing_comment "$claim_only" | grep -qF "no change against claim-only-base"'
+
+echo "release: the claim's base is read by its full ref"
+short_ref_base="$("$local_adapter/create.sh" bug "Change whose claim names its branch by a short ref" --size S --body "$body")"
+start_step_with_a_commit "$short_ref_base" short-ref-change
+short_ref_branch="$(state "$short_ref_base" branch)"
+set_claim_base "$short_ref_base" "heads/$short_ref_branch"
+"$plugin/scripts/steward.sh" release "$short_ref_base" >/dev/null 2>&1
+check "ReleaseWithTheClaimBaseNamingTheTaskBranchByAShortRef_KeepsTheTaskBranch because no base branch of that name holds the commits" \
+  'git show-ref --verify --quiet "refs/heads/$short_ref_branch"'
+merged="$("$local_adapter/create.sh" bug "Change merged into its base" --size S --body "$body")"
+start_step_with_a_commit "$merged" merged-change
+merged_branch="$(state "$merged" branch)"
+git merge -q --ff-only "$merged_branch" && git push -q origin main
+"$plugin/scripts/steward.sh" release "$merged" >/dev/null 2>&1
+check "ReleaseOfABranchMergedIntoItsBase_DeletesTheTaskBranch because its base holds every commit of it" \
+  '! git show-ref --verify --quiet "refs/heads/$merged_branch"'
 
 echo "pr without a pull request in its result: a PR on the branch waits at the merge gate"
 unrecorded="$("$local_adapter/create.sh" bug "Change whose PR its worker did not record" --size S --body "$body")"

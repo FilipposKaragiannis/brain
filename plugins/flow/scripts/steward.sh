@@ -354,11 +354,11 @@ cmd_release() {
   park "$p"; parked=$?
   [ "$parked" -ne 2 ] || die "cannot move $p to $(idle_branch "$p") at $(base_ref)"
   [ "$parked" -eq 0 ] || echo "flow: $(idle_branch "$p") has commits not in $(base_ref); kept, and $(basename "$p") left detached at $(base_ref)" >&2
-  # The branch goes only when the claim's base holds every commit of it: git branch -d would judge
-  # it against the idle branch's tip, or delete one merged into its upstream but ahead of the base.
+  # Gone only when the claim's base, by its full ref and never the branch itself, holds it all: branch -d would read the idle tip or the upstream.
+  release_base_ref="refs/remotes/origin/$base"; git -C "$p" show-ref --verify --quiet "$release_base_ref" || release_base_ref="refs/heads/$base"
   if [ -n "$branch" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$branch"; then
     if [ "$force" -eq 1 ]; then git -C "$p" branch -q -D "$branch"
-    elif ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$(base_ref "$base")" 2>/dev/null ||
+    elif ! checked_name "$base" >/dev/null || [ "$base" = "$branch" ] || ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$release_base_ref" 2>/dev/null ||
          ! git -C "$p" branch -q -D "$branch" 2>/dev/null; then echo "flow: $branch is not merged into $(base_ref "$base"); kept. Use --force to delete it." >&2; fi
   fi
   rm -f "$p/.flow/claim.json"
