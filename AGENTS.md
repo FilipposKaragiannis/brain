@@ -22,8 +22,8 @@ point one at a real project, its worktrees or the owner's console settings.
 - The token is in `<folder>/state/token`. Run the script again to reset the demo.
 - Stop the demo console when you are done; leave no daemon running.
 
-<!-- standards:begin v1.8.0 -->
-# Coding standards (standards plugin v1.8.0)
+<!-- standards:begin v1.9.0 -->
+# Coding standards (standards plugin v1.9.0)
 Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched code
 only; existing code is not refactored to meet a rule (U-05). A [judgement] breach is declared in the
 commit message, the PR body and the review (U-02). Language conventions, one file per configured
