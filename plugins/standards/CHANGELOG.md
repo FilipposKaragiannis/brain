@@ -1,5 +1,10 @@
 # standards
 
+## 1.9.1 (2026-11-23)
+
+- PY-02 no longer says a type checker runs in lint. Lint runs ShellCheck and Ruff. The rule now
+  says the type checker, with a recorded baseline, is planned and does not run yet.
+
 ## 1.9.0 (2026-11-22)
 
 - The formatter hook reads `{files}` through the same shared helper as flow's verify, so the two
