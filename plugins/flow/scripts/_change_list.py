@@ -1,6 +1,6 @@
 """The changed file list verify reads, and whether it holds every change. See scripts/verify.sh.
 
-  _change_list.py --log=<file> --summary=<file> --chosen-base=<file> --given=<base>
+  _change_list.py --log=<file> --summary=<file> --chosen-base-file=<file> --given=<base>
                   --claimed=<base> --recorded=<base> --task-branch=<branch> --fallback=<base>
       Chooses the comparison base (scripts/_verify_base.py) from the --base value (given), the
       claim's base when it is a valid base name (claimed), the base and the task branch the item's
@@ -52,7 +52,7 @@ UNTRUSTED_COMPARISON = "verify cannot trust the comparison, so it cannot pass: %
 SHORT_LIST = "verify cannot list every changed file, so it cannot pass: %s."
 EVERY_CHECK_RUNS = "Every check with paths runs."
 UNAVAILABLE_BASE_LOG_LINE = "%s: every check with paths runs, and {verify_base} is unavailable\n"
-OPTIONS = ("--log", "--summary", "--chosen-base", "--given", "--claimed", "--recorded", "--task-branch", "--fallback")
+OPTIONS = ("--log", "--summary", "--chosen-base-file", "--given", "--claimed", "--recorded", "--task-branch", "--fallback")
 
 
 class ChangeList(enum.Enum):
@@ -85,7 +85,7 @@ class ChangedFiles:
 class Options:
     log: str
     summary: str
-    chosen_base: str
+    chosen_base_file: str
     sources: BaseSources
 
 
@@ -180,7 +180,7 @@ def parsed_options(arguments: list[str]) -> Options:
         parser.add_argument(option, required=True)
     parsed = parser.parse_args(arguments)
     sources = BaseSources(parsed.given, parsed.claimed, parsed.recorded, parsed.task_branch, parsed.fallback)
-    return Options(parsed.log, parsed.summary, parsed.chosen_base, sources)
+    return Options(parsed.log, parsed.summary, parsed.chosen_base_file, sources)
 
 
 def main(arguments: list[str]) -> int:
@@ -190,7 +190,7 @@ def main(arguments: list[str]) -> int:
         log_file.write(unavailable_base_line(base))
         log_file.flush()
         changed = changed_files(all_listed(base, log_file), base.refusals)
-    replaced_atomically(options.chosen_base, "%s\n%s\n" % (base.comparison.commit, base.comparison.name))
+    replaced_atomically(options.chosen_base_file, "%s\n%s\n" % (base.comparison.commit, base.comparison.name))
     replaced_atomically(options.summary, summary_of(changed))
     sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in changed.names))
     return changed.state.value

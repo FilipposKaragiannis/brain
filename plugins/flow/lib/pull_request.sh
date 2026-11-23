@@ -26,8 +26,10 @@ settlement_without_pull_request() {
   if nothing_to_merge "$1" "$2"; then printf nothing-to-merge; else printf '%s' "$3"; fi
 }
 
-# pull_request_settlement <home> <worktree> <branch> <base>: the outcome word for the branch.
+# pull_request_settlement <home> <worktree> <branch> <base>: the outcome word for the branch. A base
+# that is the branch itself would always show nothing to merge, so it is unopened.
 pull_request_settlement() {
+  [ "$3" != "$4" ] || { printf unopened; return 0; }
   branch_pull_request="$(pull_request_on_branch "$1" "$3")" || { settlement_without_pull_request "$2" "$4" unanswered; return 0; }
   [ -z "$branch_pull_request" ] || { printf 'found %s' "$branch_pull_request"; return 0; }
   settlement_without_pull_request "$2" "$4" unopened

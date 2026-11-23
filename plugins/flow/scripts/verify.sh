@@ -66,6 +66,7 @@ case "$wait_for" in ''|*[!0-9]*) die "--wait takes a number of seconds, not $wai
 given_base="$base"
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
+export GIT_NO_REPLACE_OBJECTS=1 # a replace ref made in the worktree could forge the base commit's tree
 main_worktree_resolve
 [ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
 item_state="$(adapter read "$item" 2>/dev/null)" || item_state='{}'
@@ -237,7 +238,7 @@ chosen_base_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot
 unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
 config_base="$(cfg_or base main)"
 changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" --log="$log" --summary="$change_list_summary_file" \
-  --chosen-base="$chosen_base_file" --given="$given_base" --claimed="$(claim_name "$root" base)" \
+  --chosen-base-file="$chosen_base_file" --given="$given_base" --claimed="$(claim_name "$root" base)" \
   --recorded="$(checked_name "$(state_get "$item_state" base)")" \
   --task-branch="$(checked_name "$(state_get "$item_state" branch)")" --fallback="$config_base")"
 case "$?" in

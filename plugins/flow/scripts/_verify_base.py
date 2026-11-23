@@ -14,7 +14,7 @@ The comparison is refused, its commit unavailable and each cause named, when:
   and is not the base outside the worktree (the record's base, else the config base), or its
   comparison commit is HEAD while the item's base (the record's, else the claim's, else the config
   base) lacks a commit HEAD holds; a claim base the record disputes is judged by its name alone;
-- the record holds a task branch that exists and HEAD is not at its commit;
+- the record holds a task branch and HEAD is not at its commit, or the branch is gone;
 - the claim and the record name different bases.
 Every git call here only reads, with its errors dropped: a failure that matters is a cause.
 """
@@ -29,7 +29,6 @@ GIT_TIMEOUT_SECONDS = 300
 GIT_SUCCESS = 0
 GIT_DID_NOT_RUN = -1
 DETACHED_HEAD_EXIT = 1
-NO_SUCH_REVISION_EXIT = 1
 HEAD = "HEAD"
 COMMIT_OF = "^{commit}"
 UNAVAILABLE_COMMIT = "unavailable"
@@ -143,8 +142,7 @@ class ReadHead:
     def is_off_the_task_branch(self, sources: BaseSources) -> bool:
         if not sources.task_branch:
             return False
-        task_commit = commit_answer(LOCAL_BRANCH_PREFIX + sources.task_branch)
-        return task_commit.exit_code != NO_SUCH_REVISION_EXIT and task_commit.output != self.commit
+        return commit_of(LOCAL_BRANCH_PREFIX + sources.task_branch) != self.commit
 
     def refusals(self, sources: BaseSources, comparison: Comparison) -> tuple[str, ...]:
         judged = (

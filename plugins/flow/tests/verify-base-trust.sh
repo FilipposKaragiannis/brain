@@ -155,6 +155,24 @@ check "HeadOnAnotherBranchThanTheItems_ExitsFailingOnTheRefusal because the bran
 check "HeadOnAnotherBranchThanTheItems_NamesTheItemsBranch because the reader must know which branch to check out" \
   "summary_names_the_cause \"HEAD is not the item's branch $task_branch\""
 
+changed_source_item task-branch-gone "$failing_scoped_test" committed
+task_branch="$(current_branch)"
+git -C "$worktree" checkout -q -b renamed-branch && git -C "$worktree" branch -q -D "$task_branch"
+verify >/dev/null 2>&1
+# shellcheck disable=SC2034 # the check's condition reads it
+task_branch_gone_result=$?
+check "ItemsBranchDeletedUnderHead_ExitsFailingOnTheRefusal because a missing branch cannot show HEAD is the item's work" \
+  '[ "$task_branch_gone_result" -eq "$verify_failed_exit" ] && [ "$(failed_checks)" = "$refused_checks" ]'
+
+changed_source_item replaced-base "$failing_scoped_test" committed
+replaced_base_commit="$(git -C "$worktree" merge-base refs/heads/main HEAD)"
+replaced_base_parents=""; for parent in $(git -C "$worktree" log -1 --format=%P "$replaced_base_commit"); do replaced_base_parents="$replaced_base_parents -p $parent"; done
+# shellcheck disable=SC2086 # each parent is one -p argument
+git -C "$worktree" replace "$replaced_base_commit" "$(git -C "$worktree" commit-tree "$(git -C "$worktree" rev-parse 'HEAD^{tree}')" $replaced_base_parents -m forged)"
+verify >/dev/null 2>&1
+check "BaseCommitReplacedByOneHoldingTheWork_FailsTheScopedTestAlone because a replace ref must not hide the committed change from the comparison" \
+  '[ "$(failed_checks)" = "tests scoped" ]'
+
 real_git="$(command -v git)"; stand_in_git="$work/stand-in-git"; mkdir -p "$stand_in_git"
 cat > "$stand_in_git/git" <<'STUB'
 #!/bin/sh

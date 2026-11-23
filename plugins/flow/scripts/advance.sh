@@ -184,14 +184,12 @@ link_branch_pull_request() {
 }
 
 # settle_unrecorded_pull_request: for a pr step done with no PR in its result or on the item, records
-# the PR the task branch has, closes the item when there is nothing to merge, or escalates. A base
-# that is the task branch itself would always show nothing to merge, so it escalates.
+# the PR the task branch has, closes the item when there is nothing to merge, or escalates.
 settle_unrecorded_pull_request() {
   [ -z "$(json_get "$result" pr)$(state_get "$data" pr)" ] || return 0
   settle_task_branch="$(claim_name "$wt" branch)" || return 0
   settle_base="$(checked_name "$(state_get "$data" base)")" || settle_base="$(recorded_base "$wt")"
-  settle_outcome=unopened
-  [ "$settle_base" = "$settle_task_branch" ] || settle_outcome="$(pull_request_settlement "$home" "$wt" "$settle_task_branch" "$settle_base")"
+  settle_outcome="$(pull_request_settlement "$home" "$wt" "$settle_task_branch" "$settle_base")"
   case "$settle_outcome" in
     found\ *) link_branch_pull_request "${settle_outcome#found }" ;;
     nothing-to-merge) close_with_nothing_to_merge "$settle_base" ;;

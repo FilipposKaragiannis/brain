@@ -13,7 +13,7 @@ bump: patch
   `changed files` check says "verify cannot read HEAD".
 - Verify reads the branch HEAD is on by its full ref, so a tag named like the task branch no
   longer hides that the base is the item's own branch.
-- When the item's record holds a task branch that exists, verify refuses a HEAD that is not at
+- When the item's record holds a task branch, verify refuses a HEAD that is not at
   that branch's commit: the `changed files` check says "HEAD is not the item's branch" and names
   it.
 - Verify reads the base by its full branch ref, so a tag named like the base (`main` or
@@ -26,3 +26,7 @@ bump: patch
 - A release reads the claim's base by its full ref, the remote's when origin has one, and keeps
   the task branch when that base is the branch itself, is no valid name or does not resolve, so a
   claim base such as `heads/<task branch>` no longer deletes the branch it names.
+- Verify ignores git replace refs, so a replaced base commit no longer hides the item's committed
+  work from the comparison.
+- A base that is the task branch itself is settled as an unopened pull request in
+  `lib/pull_request.sh`, where the settlement is decided.
