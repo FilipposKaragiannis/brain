@@ -29,7 +29,7 @@ health_notifications_holding() {
 }
 health_line_holds() {
   health_line_file="$1"; shift; health_line_matches="$(cat "$health_line_file")"
-  for health_line_text in "$@"; do health_line_matches="$(printf '%s\n' "$health_line_matches" | grep -F -- "$health_line_text")"; done
+  for health_line_text in "$@"; do health_line_matches="$(printf '%s\n' "$health_line_matches" | grep -Fw -- "$health_line_text")"; done
   [ -n "$health_line_matches" ]
 }
 parent_of() { git -C "$root/origin.git" rev-parse -q --verify "$1^$2" 2>/dev/null; }
@@ -37,6 +37,7 @@ first_parent=1
 second_parent=2
 one_notification=1
 no_notification=0
+main_commits_ahead=2
 
 echo "epic base: an epic branch past behind_base gets its base merged in"
 new_repo behind
@@ -51,8 +52,12 @@ git fetch -q origin
 health_pass --dry-run > "$work/behind-dry.out"
 check "HealthDryRunOnAnEpicBranchBehind_PushesNothing: a dry run only says what it would do" \
   '[ -n "$old_main_tip_before" ] && [ "$(remote_tip "$(epic_of "$at_old_main")")" = "$old_main_tip_before" ]'
-check "HealthDryRunOnAnEpicBranchBehind_SaysWhatItWouldMerge: the owner sees the base, the epic branch and how far behind it is" \
-  'grep -qF "would merge origin/main into $(epic_of "$at_old_main") (2 commits behind)" "$work/behind-dry.out"'
+check "HealthDryRunOnAnEpicBranchBehind_SaysItWouldMergeIntoTheEpicBranch: the owner sees which epic branch the real run would change" \
+  'health_line_holds "$work/behind-dry.out" "$at_old_main: would" "$(epic_of "$at_old_main")"'
+check "HealthDryRunOnAnEpicBranchBehind_NamesTheBase: the owner sees which branch the real run would merge in" \
+  'health_line_holds "$work/behind-dry.out" "$(epic_of "$at_old_main")" main'
+check "HealthDryRunOnAnEpicBranchBehind_SaysHowFarBehind: the owner sees how many base commits the epic branch lacks" \
+  'health_line_holds "$work/behind-dry.out" "$(epic_of "$at_old_main")" "$main_commits_ahead"'
 health_pass > "$work/behind.out"
 check "EpicBranchPastBehindBaseWithACleanMerge_HasTheBaseMergedInAndPushed: the children start from an epic branch that holds the default branch's newest commits" \
   '[ -n "$(remote_tip main)" ] && git -C "$root/origin.git" merge-base --is-ancestor "$(remote_tip main)" "$(remote_tip "$(epic_of "$at_old_main")")"'
@@ -142,25 +147,28 @@ remote_commit_text "$clashing_branch" clash.txt "epic side"
 remote_commit_text main clash.txt "main side"
 remote_commit main main-one.txt
 clashing_tip_before="$(remote_tip "$clashing_branch")"
-clashing_behind="2 commits behind"
 git fetch -q origin
 : > "$work/offline.log"
 health_pass --dry-run > "$work/conflict-dry.out"
 check "HealthDryRunOnAConflictingEpicBranch_SaysWhatItWouldSay: a dry run shows the conflict the real run would report" \
-  'health_line_holds "$work/conflict-dry.out" "would say" "$clashing_branch" "clash.txt"'
+  'health_line_holds "$work/conflict-dry.out" "$clashing: would" "$clashing_branch" "clash.txt"'
 check "HealthDryRunOnAConflictingEpicBranch_NotifiesNothing: a dry run only says what it would do" \
   'grep -q "^health: " "$work/conflict-dry.out" && [ "$(health_notifications_holding "$clashing_branch")" = "$no_notification" ]'
 health_pass --dry-run > "$work/conflict-dry-again.out"
 check "HealthDryRunOnAConflictingEpicBranch_RecordsNothing: a second dry run still shows the conflict, so the first one marked nothing as said" \
-  'health_line_holds "$work/conflict-dry-again.out" "would say" "$clashing_branch" "clash.txt"'
+  'health_line_holds "$work/conflict-dry-again.out" "$clashing: would" "$clashing_branch" "clash.txt"'
 : > "$work/offline.log"
 health_pass > "$work/conflict.out"
 check "EpicBranchWhoseMergeConflicts_LeavesTheRemoteAsItWas: a conflicted merge is the owner's to resolve, so nothing is pushed" \
   '[ -n "$clashing_tip_before" ] && [ "$(remote_tip "$clashing_branch")" = "$clashing_tip_before" ]'
-check "EpicBranchWhoseMergeConflicts_SaysTheEpicHowFarBehindAndTheFiles: the owner learns which branch, how far behind and which files to merge by hand" \
-  'health_line_holds "$work/conflict.out" "$clashing_branch" "$clashing_behind" "clash.txt"'
+check "EpicBranchWhoseMergeConflicts_NamesTheEpicBranch: the owner learns which branch to merge by hand" \
+  'health_line_holds "$work/conflict.out" "clash.txt" "$clashing_branch"'
+check "EpicBranchWhoseMergeConflicts_SaysHowFarBehind: the owner learns how many base commits the epic branch lacks" \
+  'health_line_holds "$work/conflict.out" "$clashing_branch" "$main_commits_ahead"'
+check "EpicBranchWhoseMergeConflicts_NamesTheConflictedFiles: the owner learns which files to merge by hand" \
+  'health_line_holds "$work/conflict.out" "$clashing:" "clash.txt"'
 check "EpicBranchWhoseMergeConflicts_Notifies: a conflict waits on the owner, so it reaches them away from the terminal" \
-  '[ "$(health_notifications_holding "$clashing_branch" "$clashing_behind" "clash.txt")" = "$one_notification" ]'
+  '[ "$(health_notifications_holding "$clashing_branch" "clash.txt")" = "$one_notification" ]'
 remote_commit main main-two.txt
 : > "$work/offline.log"
 health_pass > "$work/conflict-again.out"
