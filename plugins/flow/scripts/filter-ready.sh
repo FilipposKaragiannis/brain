@@ -24,7 +24,9 @@
 # epic-branch, split, done, blocked or held; an elsewhere one adds machine, a status one category,
 # an assigned one assignees, a held one held_by and held_reason, a blocked one blocked_by, its open
 # blockers, one that waits for an epic branch epic and branch), so next.sh can say why a pick
-# found nothing.
+# found nothing. With FLOW_READY_WARNINGS naming a file, a warning (an adapter's me that failed)
+# is appended to it as a line instead of stderr, so next.sh says it though it drops list-ready's
+# stderr.
 . "$(dirname "$0")/../lib/flow.sh"
 ready_policy
 FLOW_MACHINE="$(flow_machine)"

@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Optional
+from typing import Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ready_policy as ready_policy  # noqa: E402
@@ -269,9 +269,19 @@ def write_notes(notes: list, path: str) -> None:
     with open(path, "a", encoding="utf-8") as notes_file:
         notes_file.writelines(json.dumps(note) + "\n" for note in notes)
 
+def append_line(path: str, message: str) -> None:
+    with open(path, "a", encoding="utf-8") as warnings_file:
+        warnings_file.write(message + "\n")
+
+def warning_writer(path: str) -> Callable[[str], None]:
+    """Where a warning goes: appended to the file FLOW_READY_WARNINGS names, else stderr."""
+    if path:
+        return functools.partial(append_line, path)
+    return functools.partial(print, file=sys.stderr)
+
 def main() -> None:
     policy = ready_policy.policy_from(os.environ)
-    me = ready_policy.MeNames(plugin, functools.partial(print, file=sys.stderr))
+    me = ready_policy.MeNames(plugin, warning_writer(os.environ.get("FLOW_READY_WARNINGS", "")))
     ready, notes = [], []
     for item in (item for item in items if item.get("status", "open") == "open"):
         verdict = policy_verdict(item, policy, me)

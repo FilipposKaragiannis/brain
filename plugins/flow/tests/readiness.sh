@@ -4,8 +4,9 @@
 # value exits 2 naming its key; an item a person holds (assigned to someone else, or in progress
 # on its tracker) is not ready and is noted why; an item the flow holds (a record claim, or a
 # tracker step with no record under tracker_state labels) is judged by its record; a record another
-# machine claimed is never ready, noted elsewhere; a failing me stands for no one, said once; and
-# next.sh checks the policy again on a named item and on a pick from an older ready list.
+# machine claimed is never ready, noted elsewhere; a failing me stands for no one, said once, and
+# an automatic pick says it too; and next.sh checks the policy again on a named item and on a pick
+# from an older ready list.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -150,6 +151,12 @@ stale="$("$local_adapter/list-ready.sh")"
 write_frontmatter "$taken_since" assignee bob
 picked="$(stale_pick "$stale" 2>/dev/null | json_value item)"
 check "StaleListItemAPersonTookSince_PickTakesTheNextOne: a pick from an older ready list passes over the item a person took and takes the next, because the fresh read wins" '[ "$picked" = "$still_free" ]'
+end_runs_and_close_every_open_item
+owners="$(new_task "The owner's, while me fails")"; write_frontmatter "$owners" assignee "$git_identity_email"
+failing_me="$work/plugin-failing-me"; cp -R "$plugin" "$failing_me"; rm -rf "$failing_me/evals/results"
+printf '#!/bin/sh\necho "identity unavailable" >&2\nexit 1\n' > "$failing_me/adapters/local/me.sh"
+FLOW_PLUGIN="$failing_me" "$failing_me/scripts/next.sh" >/dev/null 2> "$work/failing-me-pick.err"
+check "MeFailsOnAnAutomaticPick_TheWarningReachesStderr: a pick that lists the owner's item while me fails says the me failure, because the owner must tell an unread identity from work someone else holds" 'grep -qF "me failed (identity unavailable)" "$work/failing-me-pick.err"'
 
 [ "$fails" -eq 0 ] && { echo "readiness: ok"; exit 0; }
 echo "readiness: $fails failed"; exit 1

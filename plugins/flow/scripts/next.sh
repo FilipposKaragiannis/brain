@@ -66,7 +66,8 @@ pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
 # run records, the claim and the item's state, all read under it. Beside the ready list come the
 # items the filter held back and why (FLOW_READY_NOTES in filter-ready.sh), for the reason a pick
-# that finds nothing gives. The cache holds both, a line each.
+# that finds nothing gives. The cache holds both, a line each. list-ready's stderr is dropped, so
+# a warning the filter gives (FLOW_READY_WARNINGS) is said here.
 notready=""
 if [ -z "$item" ] && [ -f "$ready_cache" ]; then
   ready="$(sed -n 1p "$ready_cache")"; notready="$(sed -n 2p "$ready_cache")"; rm -f "$ready_cache"
@@ -74,8 +75,8 @@ elif [ -z "$item" ]; then
   trackers="$(adapters_configured)" || exit 2
   # shellcheck disable=SC2086
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
-  notes="$home/tmp/.notes.$$"; rm -f "$notes"
-  listed="$(FLOW_READY_NOTES="$notes"; export FLOW_READY_NOTES
+  notes="$home/tmp/.notes.$$"; warnings="$home/tmp/.warnings.$$"; rm -f "$notes" "$warnings"
+  listed="$(FLOW_READY_NOTES="$notes" FLOW_READY_WARNINGS="$warnings"; export FLOW_READY_NOTES FLOW_READY_WARNINGS
     for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | cached_python3 -I -c '
 import json, os, sys
 seen, out = set(), []
@@ -90,6 +91,7 @@ print(json.dumps(out))
 notes = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()] if os.path.exists(sys.argv[1]) else []
 print(json.dumps(notes))' "$notes")"
   rm -f "$notes"
+  [ ! -s "$warnings" ] || cat "$warnings" >&2; rm -f "$warnings"
   ready="$(printf '%s\n' "$listed" | sed -n 1p)"; notready="$(printf '%s\n' "$listed" | sed -n 2p)"
   wait_notes "$notready"
 fi
