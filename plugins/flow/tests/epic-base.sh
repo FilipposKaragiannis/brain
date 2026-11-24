@@ -92,11 +92,15 @@ release_line="base: release"
 on_release="$(approved_epic "Hotfixes" --body "$release_line")"
 remote_branch "$(epic_of "$on_release")"
 remote_commit release release-one.txt; remote_commit release release-two.txt
+nested_with_a_line="$(approved_epic "Goalkeeping" --body "$release_line" --parent "$parent_epic")"
+remote_branch "$(epic_of "$nested_with_a_line")"
 health_pass > "$work/bases.out"
 check "EpicUnderAnEpicWithABranch_HasThatEpicBranchMergedIn: the epic's work starts from the epic above it, so that branch is its base, not main" \
   '[ -n "$(remote_tip "$(epic_of "$parent_epic")")" ] && [ "$(parent_of "$(remote_tip "$(epic_of "$nested")")" "$second_parent")" = "$(remote_tip "$(epic_of "$parent_epic")")" ]'
 check "EpicWithABaseLine_HasThatBranchMergedIn: the base: line names the branch the epic keeps up with" \
   '[ -n "$(remote_tip release)" ] && [ "$(parent_of "$(remote_tip "$(epic_of "$on_release")")" "$second_parent")" = "$(remote_tip release)" ]'
+check "EpicUnderAnEpicWithABranchAndABaseLine_HasTheEpicBranchAboveMergedIn: an epic branch above wins over a base: line, as it does for a child's base" \
+  '[ -n "$(remote_tip "$(epic_of "$parent_epic")")" ] && [ "$(parent_of "$(remote_tip "$(epic_of "$nested_with_a_line")")" "$second_parent")" = "$(remote_tip "$(epic_of "$parent_epic")")" ]'
 
 echo "epic base: a base not on the remote is left alone"
 new_repo missing
@@ -140,9 +144,15 @@ remote_commit main main-one.txt
 clashing_tip_before="$(remote_tip "$clashing_branch")"
 clashing_behind="2 commits behind"
 git fetch -q origin
+: > "$work/offline.log"
 health_pass --dry-run > "$work/conflict-dry.out"
 check "HealthDryRunOnAConflictingEpicBranch_SaysWhatItWouldSay: a dry run shows the conflict the real run would report" \
   'health_line_holds "$work/conflict-dry.out" "would say" "$clashing_branch" "clash.txt"'
+check "HealthDryRunOnAConflictingEpicBranch_NotifiesNothing: a dry run only says what it would do" \
+  'grep -q "^health: " "$work/conflict-dry.out" && [ "$(health_notifications_holding "$clashing_branch")" = "$no_notification" ]'
+health_pass --dry-run > "$work/conflict-dry-again.out"
+check "HealthDryRunOnAConflictingEpicBranch_RecordsNothing: a second dry run still shows the conflict, so the first one marked nothing as said" \
+  'health_line_holds "$work/conflict-dry-again.out" "would say" "$clashing_branch" "clash.txt"'
 : > "$work/offline.log"
 health_pass > "$work/conflict.out"
 check "EpicBranchWhoseMergeConflicts_LeavesTheRemoteAsItWas: a conflicted merge is the owner's to resolve, so nothing is pushed" \
@@ -151,8 +161,6 @@ check "EpicBranchWhoseMergeConflicts_SaysTheEpicHowFarBehindAndTheFiles: the own
   'health_line_holds "$work/conflict.out" "$clashing_branch" "$clashing_behind" "clash.txt"'
 check "EpicBranchWhoseMergeConflicts_Notifies: a conflict waits on the owner, so it reaches them away from the terminal" \
   '[ "$(health_notifications_holding "$clashing_branch" "$clashing_behind" "clash.txt")" = "$one_notification" ]'
-check "HealthDryRunOnAConflictingEpicBranch_RecordsNothing: the real pass after a dry run still says the conflict" \
-  'health_line_holds "$work/conflict.out" "$clashing_branch" "clash.txt" "merge it by hand"'
 remote_commit main main-two.txt
 : > "$work/offline.log"
 health_pass > "$work/conflict-again.out"
@@ -166,6 +174,28 @@ remote_commit_text main clash-two.txt "main side"
 health_pass > "$work/conflict-changed.out"
 check "EpicBranchWhoseConflictedFilesChange_IsSaidAgain: a new conflicted file is a new finding" \
   'health_line_holds "$work/conflict-changed.out" "$clashing_branch" "clash-two.txt"'
+check "EpicBranchWhoseConflictedFilesChange_NotifiesAgain: the owner hears of each new set of files to merge by hand" \
+  '[ "$(health_notifications_holding "$clashing_branch" "clash-two.txt")" = "$one_notification" ]'
+
+echo "epic base: a conflict merged by hand and met again is said again"
+new_repo cleared
+notify_on_the_desktop
+cleared="$(approved_epic "Referees" --body x)"
+cleared_branch="$(epic_of "$cleared")"
+remote_branch "$cleared_branch"
+remote_commit_text "$cleared_branch" clash.txt "epic side"
+remote_commit_text main clash.txt "main side"
+remote_commit main main-one.txt
+health_pass > "$work/cleared-first.out"
+git -C "$root/other" fetch -q origin && git -C "$root/other" checkout -q -B "$cleared_branch" "origin/$cleared_branch"
+git -C "$root/other" merge -q -X ours --no-edit -m "merge main by hand" origin/main >/dev/null && git -C "$root/other" push -q origin "$cleared_branch"
+health_pass > "$work/cleared-in-step.out"
+remote_commit_text "$cleared_branch" clash.txt "epic side again"
+remote_commit_text main clash.txt "main side again"
+remote_commit main main-two.txt
+health_pass > "$work/cleared-again.out"
+check "EpicBranchMergedByHandAfterAConflict_HasTheSameConflictSaidAgain: a branch brought in step closes the old finding, so a later conflict in the same file is new" \
+  'health_line_holds "$work/cleared-again.out" "$cleared_branch" "clash.txt"'
 
 echo "epic base: a refused push is said once and merged once the remote takes it"
 new_repo refused
