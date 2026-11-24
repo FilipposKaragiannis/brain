@@ -127,6 +127,14 @@ No flow script calls `write-state` itself: each writes through `record_set` in `
 when the tracker took them (ADR 0004). `link-pr` still writes `pr` and `pr_host` to the tracker;
 the sweep and the pr step copy both from the tracker into the record.
 
+No flow script calls `set-status` or `assign` but `lib/push.sh`. `tracker_push` sets the status the
+item's flow record stands for: `in-progress` while the flow works it, `needs-you` at a gate,
+`in-review` at the merge gate or once every step ran, nothing with no claim. It runs after a take
+that made the claim, a gate raised or cleared (but merge) and the last step, and records what
+landed in `pushed`. At that take `tracker_take` first runs `assign me` when the item has no
+assignee, and records `claim.assigned_at` when it assigned. A call that fails warns, leaves a
+`push failed` line in `events.log` and never fails the step.
+
 No flow script reads `state` from an adapter either. A script reads one item with `item_read`
 (`scripts/state.sh read`) and a list with `items_join` or `items_listed`, which join the item's
 flow record on as `state` (all twenty-one keys; the record wins whole), stamp the record's `claim`

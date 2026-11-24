@@ -4,8 +4,10 @@ Pure: no file, clock or environment is read here.
 _state.py is the edge that loads, locks and writes; this module checks pairs, merges and reads
 back; _state_views.py seeds a record and renders its views. A pair is `key=text` for one of the
 twenty-one state keys (a dash reads as an underscore) or one of the record pairs `run:=<object|null>`,
-`run.step=<text>` and `gate:=<object>`. Pairs apply in the key map's order; a key given twice takes
-its last value. Objects that hold only empty fields read null, and lists are never null.
+`run.step=<text>`, `gate:=<object>`, `pushed:=<object|null>` and `claim.assigned_at=<text>`. Pairs
+apply in the key map's order; a key given twice takes its last value. Objects that hold only empty
+fields read null, and lists are never null. pushed_status derives the tracker status a record
+stands for, the one tracker_push (lib/push.sh) sets.
 """
 import json
 import re
@@ -23,15 +25,22 @@ EXIT_BUSY = 75
 
 TEXT, NUMBER, LIST, GATE_NAME, GATE_FROM = "text", "number", "list", "gate name", "gate from"
 RUN_OBJECT, RUN_STEP, GATE_OBJECT = "run:", "run.step", "gate:"
-RECORD_PAIR_KEYS = (RUN_OBJECT, RUN_STEP, GATE_OBJECT)
+PUSHED_OBJECT, CLAIM_ASSIGNED_AT = "pushed:", "claim.assigned_at"
+RECORD_PAIR_KEYS = (RUN_OBJECT, RUN_STEP, GATE_OBJECT, PUSHED_OBJECT, CLAIM_ASSIGNED_AT)
+TEXT_RECORD_PAIR_KEYS = (RUN_STEP, CLAIM_ASSIGNED_AT)
 OBJECT_FIELDS = MappingProxyType({
     "hold": ("by", "reason"),
     "gate": ("name", "from", "message", "time", "host", "options", "raised_by", "answered_by", "condition", "footer"),
     "answer": ("gate", "asked", "text", "at", "pending"),
     "pr": ("url", "host"),
     "claim": ("machine", "host", "claimed_at", "assigned_at", "worktree"),
+    "pushed": ("status", "at"),
 })
 GATE_CLEARED = ("", "none")
+MERGE_GATE = "merge"
+STEP_DONE = "done"
+STATUS_IN_PROGRESS, STATUS_NEEDS_YOU, STATUS_IN_REVIEW = "in-progress", "needs-you", "in-review"
+NO_STATUS = ""
 RECORD_ITEM_FIELD = "item"
 NOTIFY_GATE_FIELD = "gate"
 ITEM_SLUG_SHAPE = re.compile(r"[A-Za-z0-9_-]+")
@@ -120,13 +129,13 @@ def number_pair_problem(pair):
 
 
 def record_pair_problem(pair):
-    if pair.key == RUN_STEP:
+    if pair.key in TEXT_RECORD_PAIR_KEYS:
         return ""
     try:
         value = json.loads(pair.value)
     except ValueError:
         return "%s= takes JSON, not %s" % (pair.key, pair.value)
-    return run_object_problem(pair, value) or gate_object_problem(pair, value)
+    return run_object_problem(pair, value) or gate_object_problem(pair, value) or pushed_object_problem(pair, value)
 
 
 def run_object_problem(pair, value):
@@ -138,6 +147,12 @@ def run_object_problem(pair, value):
 def gate_object_problem(pair, value):
     if pair.key == GATE_OBJECT and not names_an_open_gate(value):
         return "gate:= takes the gate's record with its name in %s, not %s" % (NOTIFY_GATE_FIELD, pair.value)
+    return ""
+
+
+def pushed_object_problem(pair, value):
+    if pair.key == PUSHED_OBJECT and not (value is None or isinstance(value, dict)):
+        return "pushed:= takes the push as a JSON object of status and at, or null, not %s" % pair.value
     return ""
 
 
@@ -159,6 +174,8 @@ def pairs_outcome(pairs):
 
 def write_outcome(record, pairs):
     last_by_key = {pair.key: pair for pair in pairs}
+    if CLAIM_ASSIGNED_AT in last_by_key and record.get("claim") is None:
+        return Outcome(EXIT_USAGE, "claim.assigned_at= needs a claim")
     if RUN_STEP not in last_by_key:
         return DONE
     run = json.loads(last_by_key[RUN_OBJECT].value) if RUN_OBJECT in last_by_key else record.get("run")
@@ -237,11 +254,24 @@ def applied_run(record, pair):
     return dict(record, run={key: value for key, value in run.items() if key != RECORD_ITEM_FIELD})
 
 
-def applied_pair(record, pair):
+def applied_pushed(record, text):
+    pushed = json.loads(text)
+    return dict(record, pushed=None if pushed is None else ordered("pushed", pushed))
+
+
+def applied_record_pair(record, pair):
     if pair.key in (RUN_OBJECT, RUN_STEP):
         return applied_run(record, pair)
     if pair.key == GATE_OBJECT:
         return applied_gate_object(record, pair.value)
+    if pair.key == PUSHED_OBJECT:
+        return applied_pushed(record, pair.value)
+    return with_field(record, "claim", "assigned_at", pair.value)
+
+
+def applied_pair(record, pair):
+    if pair.key in RECORD_PAIR_KEYS:
+        return applied_record_pair(record, pair)
     state_key = STATE_KEYS[pair.key]
     if state_key.kind == GATE_NAME:
         return applied_gate_name(record, pair.value)
@@ -264,6 +294,17 @@ def taken(record, machine, host, now):
         return record
     claimed = dict(claim, machine=machine, host=host, claimed_at=now)
     return dict(record, claim=ordered("claim", claimed), updated_at=now)
+
+
+def pushed_status(record):
+    if not (record.get("claim") or {}).get("machine"):
+        return NO_STATUS
+    gate_name = (record.get("gate") or {}).get("name", "")
+    if gate_name == MERGE_GATE or record.get("step") == STEP_DONE:
+        return STATUS_IN_REVIEW
+    if gate_name not in GATE_CLEARED:
+        return STATUS_NEEDS_YOU
+    return STATUS_IN_PROGRESS
 
 
 def claimed_elsewhere(record, machine):

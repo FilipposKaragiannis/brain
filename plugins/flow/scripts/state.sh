@@ -4,8 +4,9 @@
 #                                   path (gate.options.0.label, claim.machine, run); a string raw,
 #                                   anything else as JSON, nothing when there is no record
 #   state.sh set <item> <pair>...   record_set: key=value for the state keys, or run:=<object|null>,
-#                                   run.step=<text> and gate:=<object>; with tracker_state labels
-#                                   the state pairs reach the tracker first
+#                                   run.step=<text>, gate:=<object>, pushed:=<object|null> and
+#                                   claim.assigned_at=<text>; with tracker_state labels the state
+#                                   pairs reach the tracker first
 #   state.sh show <item>            the record as JSON; exit 1 with none
 #   state.sh path <item>            where the record lives while the item is open
 #   state.sh archive <item>         the record to closed/; refused, exit 1, while another

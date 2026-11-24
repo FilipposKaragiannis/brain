@@ -1,9 +1,10 @@
 #!/bin/sh
 # state.sh: the flow record of an item (lib/state.sh, scripts/state.sh), on the local adapter in a
-# throwaway repo. Every state key and gate record field reads back, each at its record path; a
-# refused write leaves both stores as they were; the tracker gets each state write first unless
-# tracker_state is none; the gate's value rules; where the records live; ids of the wrong shape;
-# and a caller's while-read loop keeps its input. state-disk.sh has the lock and the disk.
+# throwaway repo. Every state key and gate record field reads back, each at its record path, and
+# so do pushed and claim.assigned_at; a refused write leaves both stores as they were; the tracker
+# gets each state write first unless tracker_state is none; the gate's value rules; where the
+# records live; ids of the wrong shape; and a caller's while-read loop keeps its input.
+# state-disk.sh has the lock and the disk.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -66,6 +67,26 @@ FIELDS
 check "GateRecord_ReadsItsNameAsTheGateKey: the gate key reads the record's name" \
   '[ "$(record get "$keyed" gate)" = "$(printf "%s" "$gate_record" | json_value gate)" ]'
 
+echo "the push record: pushed and claim.assigned_at"
+pushed_item="$(new_task "Push record")"
+record set "$pushed_item" step=plan >/dev/null 2>&1
+check "PushedAbsent_ReadsNull: a record no push reached holds pushed as null, because absent objects are null" \
+  '[ "$(record show "$pushed_item" | json_value pushed)" = null ]'
+record set "$pushed_item" 'pushed:={"status":"needs-you","at":"2026-11-15T12:00:00Z"}' >/dev/null 2>&1
+check "PushedObject_ReadsBackItsStatus: pushed:= keeps the status the tracker took" \
+  '[ "$(record get "$pushed_item" pushed.status)" = needs-you ]'
+take alpha "$pushed_item" >/dev/null 2>&1
+record set "$pushed_item" claim.assigned_at=2026-11-15T12:30:00Z >/dev/null 2>&1
+check "ClaimAssignedAt_ReadsBackAsGiven: claim.assigned_at= keeps when the flow assigned the item" \
+  '[ "$(record get "$pushed_item" claim.assigned_at)" = 2026-11-15T12:30:00Z ]'
+unclaimed="$(new_task "Assigned with no claim")"
+record set "$unclaimed" "last_event=filed by hand" >/dev/null 2>&1
+record set "$unclaimed" claim.assigned_at=2026-11-15T12:30:00Z >/dev/null 2>&1; code=$?
+check "AssignedAtWithNoClaim_ExitsTwo: claim.assigned_at= on a record with no claim is a usage error, because only a take makes a claim" \
+  '[ "$code" -eq 2 ]'
+check "AssignedAtWithNoClaim_MakesNoClaim: the record still has no claim, because an assignment alone never holds the item" \
+  '[ "$(record show "$unclaimed" | json_value claim)" = null ]'
+
 echo "refused writes leave the record and the tracker as they were"
 refused="$(new_task "Refused writes")"
 record set "$refused" step=plan >/dev/null 2>&1
@@ -86,6 +107,7 @@ refusal GateObjectNotAnObject 'gate:="ambiguity"'
 refusal GateObjectWithNoName 'gate:={"message":"Which row owns the retune?"}'
 refusal GateObjectNamingTheClearedGate 'gate:={"gate":"none","message":"Which row owns the retune?"}'
 refusal StatePairBesideRecordPair step=review run.step=review
+refusal PushedObjectNotAnObject 'pushed:="in-progress"'
 record set nowhere:1 step=plan >/dev/null 2>&1; code=$?
 check "IdNoAdapterOwns_ExitsTwo: an id no adapter owns has no record" '[ "$code" -eq 2 ]'
 check "IdNoAdapterOwns_WritesNoRecord: nothing is written for an id no adapter owns" '[ ! -f "$(record path nowhere:1)" ]'
