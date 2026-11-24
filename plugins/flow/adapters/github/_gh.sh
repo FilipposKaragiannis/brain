@@ -18,12 +18,10 @@ issue_number() {
 }
 
 # assignee_login <assignee>: the login a pick or github.scope names as its assignee, with me read
-# as the gh user.
+# as the gh user (me.sh).
 assignee_login() {
   [ "$1" = me ] || { printf '%s' "$1"; return 0; }
-  _login="$(gh api user -q .login)" && [ -n "$_login" ] \
-    || die "cannot read the gh user that assignee: me stands for; log in with gh auth login"
-  printf '%s' "$_login"
+  "$FLOW_PLUGIN/adapters/github/me.sh"
 }
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority

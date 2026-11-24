@@ -11,11 +11,13 @@ Usage (always from the shell scripts):
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
+  _item.py me <home>
 
 A list with --pick keeps the items its filter matches: the item file's assignee (`me` is the git
 user's email or name), status, labels and kind, each compared without case. local.scope
 (scope_filter in lib/flow.sh) is matched the same way, on every list beside the filter, and
-in-scope exits 0 when the item matches it, 1 when not.
+in-scope exits 0 when the item matches it, 1 when not. me prints those names of the git user, one
+per line, and nothing when git has neither.
 
 An item's open_children counts the open items whose parent it is. Its rank places its priority in
 READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
@@ -42,6 +44,7 @@ NO_RANK = 999
 WORKFLOW_CATEGORIES = {"backlog": "todo", "ready": "todo", "in-progress": "in-progress", "in-review": "review",
                        "needs-you": "blocked"}
 OWNER_ONLY_MODE = 0o600
+GIT_CONFIG_TIMEOUT_SECONDS = 10
 
 
 def usage(message):
@@ -217,16 +220,24 @@ def to_json(path, meta, body, children=None):
 
 
 def git_identity():
-    """The names `me` stands for in a filter: the git user's email and name, lower case."""
-    names = set()
+    """The names `me` stands for in a filter: the git user's email, then name, lower case."""
+    names = []
     for key in ("user.email", "user.name"):
         try:
-            out = subprocess.run(["git", "config", key], capture_output=True, text=True, timeout=10)
+            git_config = subprocess.run(["git", "config", key], capture_output=True, text=True,
+                                        timeout=GIT_CONFIG_TIMEOUT_SECONDS)
         except (OSError, subprocess.SubprocessError):
             continue
-        if out.stdout.strip():
-            names.add(out.stdout.strip().lower())
+        if git_config.stdout.strip():
+            names.append(git_config.stdout.strip().lower())
     return names
+
+
+def cmd_me(home, args):
+    if args:
+        usage("me takes no arguments")
+    for name in git_identity():
+        print(name)
 
 
 def pick_rules(prefix):
@@ -240,7 +251,7 @@ def pick_rules(prefix):
             rules[field] = values
     assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
     if assignee:
-        rules["assignee"] = git_identity() if assignee == "me" else {assignee.lower()}
+        rules["assignee"] = set(git_identity()) if assignee == "me" else {assignee.lower()}
     return rules
 
 
@@ -391,7 +402,7 @@ def main():
         raise SystemExit(__doc__)
     cmd, home, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "write-state": cmd_write_state,
-     "comment": cmd_comment, "close": cmd_close, "create": cmd_create}[cmd](home, args)
+     "comment": cmd_comment, "close": cmd_close, "create": cmd_create, "me": cmd_me}[cmd](home, args)
 
 
 if __name__ == "__main__":

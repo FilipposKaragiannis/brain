@@ -10,6 +10,7 @@
   _jira.py close <id> [<text>]
   _jira.py remote-link <id> <url>
   _jira.py answers
+  _jira.py me
   _jira.py vocabulary
 
 Every call goes through curl (_http.py). The settings come from _jira.sh in FLOW_JIRA_* variables,
@@ -20,10 +21,11 @@ size:* unless jira.fields.size names a field) and kept whole in the issue proper
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
 answers prints one JSON line {"id", "text"} per gated item the owner answered with an /answer
-comment; answers.sh clears the gates. jira.scope (scope_filter in lib/flow.sh, FLOW_SCOPE_*) is
-ANDed into every search: list, its children counts, read's children count and answers; in-scope
-exits 0 when the issue is inside it, 1 when not. vocabulary prints the project's issue types and
-the options of the jira.fields.area field.
+comment; answers.sh clears the gates. me prints the names `me` stands for, one per line: the
+account id of the token's user, then jira.email. jira.scope (scope_filter in lib/flow.sh,
+FLOW_SCOPE_*) is ANDed into every search: list, its children counts, read's children count and
+answers; in-scope exits 0 when the issue is inside it, 1 when not. vocabulary prints the
+project's issue types and the options of the jira.fields.area field.
 """
 import json
 import os
@@ -423,9 +425,23 @@ def answerers():
     named = [n.strip() for n in setting("ANSWER_FROM").split(",") if n.strip()]
     if named:
         return set(named)
-    status, me = call("GET", "/rest/api/3/myself")
-    expect(status, me, "read the user the API token belongs to")
-    return {me.get("accountId", ""), me.get("emailAddress", "")} - {""}
+    user = myself()
+    return {user.get("accountId", ""), user.get("emailAddress", "")} - {""}
+
+
+def myself():
+    """The user the API token belongs to, as GET /rest/api/3/myself answers."""
+    status, user = call("GET", "/rest/api/3/myself")
+    expect(status, user, "read the user the API token belongs to")
+    return user
+
+
+def cmd_me(args):
+    if args:
+        fail("me takes no arguments", 2)
+    for name in (myself().get("accountId", ""), setting("EMAIL")):
+        if name:
+            print(name)
 
 
 def comments_of(key):
@@ -514,7 +530,7 @@ def main():
     command, args = sys.argv[1], sys.argv[2:]
     commands = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "create": cmd_create, "write-state": cmd_write_state,
                 "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
-                "answers": cmd_answers, "vocabulary": cmd_vocabulary}
+                "answers": cmd_answers, "me": cmd_me, "vocabulary": cmd_vocabulary}
     if command not in commands:
         fail("unknown command %s" % command, 2)
     commands[command](args)
