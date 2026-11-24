@@ -215,7 +215,7 @@ def policy_verdict(item: dict, policy: ready_policy.ReadyPolicy,
                    me: ready_policy.MeNames) -> ready_policy.NotReady:
     """Why the ready: policy keeps the item back (lib/ready.sh), with its detail, or READY."""
     me_names = functools.partial(me.read_names, adapter_for(item["id"]))
-    return ready_policy.not_ready(item, policy, me_names)
+    return ready_policy.not_ready(ready_policy.readiness_item(item), policy, me_names)
 
 def held_back(item: dict, verdict: ready_policy.NotReady) -> Optional[str]:
     """Why an open item is not ready, in one word, or None when it is ready. The verdict is the

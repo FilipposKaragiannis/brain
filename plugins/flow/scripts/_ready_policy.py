@@ -24,7 +24,6 @@ from typing import Callable, Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _state_join as join  # noqa: E402
-import _state_schema as schema  # noqa: E402
 
 ELSEWHERE, STATUS, ASSIGNED = "elsewhere", "status", "assigned"
 WORDS = (ELSEWHERE, STATUS, ASSIGNED)
@@ -65,23 +64,52 @@ def policy_from(environment: Mapping[str, str]) -> ReadyPolicy:
                        names(environment[ASSIGNEE_VARIABLE]))
 
 
-def held(item: Mapping) -> bool:
-    if item.get(join.CLAIM_FIELD) is not None:
+@dataclass(frozen=True)
+class Claim:
+    machine: str
+
+
+NO_CLAIM = Claim("")
+
+
+@dataclass(frozen=True)
+class ReadinessItem:
+    """What the policy reads of one joined item, parsed once by readiness_item."""
+    claim: Claim
+    step: str
+    state_from: str
+    category: str
+    assignees: tuple[str, ...]
+
+
+def claim_of(item: Mapping) -> Claim:
+    claim = item.get(join.CLAIM_FIELD)
+    if claim is None:
+        return NO_CLAIM
+    return Claim(str(claim.get("machine") or ""))
+
+
+def readiness_item(item: Mapping) -> ReadinessItem:
+    return ReadinessItem(
+        claim=claim_of(item),
+        step=str((item.get(join.STATE_FIELD) or {}).get("step") or ""),
+        state_from=str(item.get(join.STATE_FROM_FIELD) or ""),
+        category=str(item.get("category") or CATEGORY_UNKNOWN),
+        assignees=tuple(str(assignee) for assignee in item.get("assignees") or ()))
+
+
+def claimed_elsewhere(item: ReadinessItem, machine: str) -> bool:
+    return item.claim.machine not in ("", machine)
+
+
+def held(item: ReadinessItem) -> bool:
+    if item.claim is not NO_CLAIM:
         return True
-    started = bool((item.get(join.STATE_FIELD) or {}).get("step"))
-    return item.get(join.STATE_FROM_FIELD) == join.FROM_TRACKER and started
+    return item.state_from == join.FROM_TRACKER and bool(item.step)
 
 
-def category_of(item: Mapping) -> str:
-    return item.get("category") or CATEGORY_UNKNOWN
-
-
-def assignees_of(item: Mapping) -> frozenset[str]:
-    return frozenset(str(assignee).lower() for assignee in item.get("assignees") or [])
-
-
-def assignees_allowed(item: Mapping, policy: ReadyPolicy, me_names: Callable[[], frozenset[str]]) -> bool:
-    assignees = assignees_of(item)
+def assignees_allowed(item: ReadinessItem, policy: ReadyPolicy, me_names: Callable[[], frozenset[str]]) -> bool:
+    assignees = frozenset(assignee.lower() for assignee in item.assignees)
     if ASSIGNEE_ANY in policy.assignees:
         return True
     if not assignees:
@@ -90,18 +118,18 @@ def assignees_allowed(item: Mapping, policy: ReadyPolicy, me_names: Callable[[],
     return not unnamed or (ASSIGNEE_ME in policy.assignees and unnamed <= me_names())
 
 
-def not_ready(item: Mapping, policy: ReadyPolicy, me_names: Callable[[], frozenset[str]]) -> NotReady:
+def not_ready(item: ReadinessItem, policy: ReadyPolicy, me_names: Callable[[], frozenset[str]]) -> NotReady:
     """Why the policy keeps the item back, elsewhere before status before assigned, or READY. me_names
     gives what me stands for on the item's adapter; it is asked only for an assignee the policy
     does not name."""
-    if schema.claimed_elsewhere(item, policy.machine):
-        return NotReady(ELSEWHERE, MappingProxyType({"machine": item[join.CLAIM_FIELD]["machine"]}))
+    if claimed_elsewhere(item, policy.machine):
+        return NotReady(ELSEWHERE, MappingProxyType({"machine": item.claim.machine}))
     if held(item):
         return READY
-    if category_of(item) not in policy.categories:
-        return NotReady(STATUS, MappingProxyType({"category": category_of(item)}))
+    if item.category not in policy.categories:
+        return NotReady(STATUS, MappingProxyType({"category": item.category}))
     if not assignees_allowed(item, policy, me_names):
-        return NotReady(ASSIGNED, MappingProxyType({ASSIGNEES_DETAIL: tuple(item.get("assignees") or ())}))
+        return NotReady(ASSIGNED, MappingProxyType({ASSIGNEES_DETAIL: item.assignees}))
     return READY
 
 
@@ -144,7 +172,7 @@ def detail_text(verdict: NotReady) -> str:
 
 
 def main(plugin: str, adapter: str) -> int:
-    item = json.load(sys.stdin)
+    item = readiness_item(json.load(sys.stdin))
     me = MeNames(plugin, functools.partial(print, file=sys.stderr))
     verdict = not_ready(item, policy_from(os.environ), functools.partial(me.read_names, adapter))
     if verdict.why:
