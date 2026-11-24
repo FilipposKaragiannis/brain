@@ -26,8 +26,8 @@
 #     Use it for a script that must not run by hand; forbid is for a verb passed as an argument.
 # Agent hosts feed the Bash payload on stdin; the git hooks feed a plain `git commit` or `git push`;
 # check-range.sh sets STANDARDS_STAGE=ci so only the gates that list "ci" run. An agent's commit
-# runs the gates once: the agent hook records the index it passed, and git's hooks skip that same
-# index (passed_mark and passed_seen in lib.sh).
+# runs the gates once: the agent hook records the content the commit will hold, and git's hooks
+# skip that same content (passed_mark and passed_seen in commit-index.sh).
 . "$(dirname "$0")/lib.sh"
 payload="$(read_payload)"
 cmd="$(payload_command "$payload")"
