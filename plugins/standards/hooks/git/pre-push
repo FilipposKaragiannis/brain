@@ -2,11 +2,17 @@
 # Git pre-push hook installed by `standards init`. Runs the project's build command from
 # .standards/config.json ("build": a command, or a map with `command`) when one is set, then the
 # project gates that list "push". The build's `paths` scope it in verify only: a push runs it.
+# A project with flow has the build-passed.sh wrapper in its flow home (the main worktree's .flow,
+# FLOW_HOME in tests): when it names a run where verify passed the same build command on the same
+# files, the push says so and does not build again. Without it the push builds.
 dir="$(cd "$(dirname "$0")" && pwd)/.."
 . "$dir/lib.sh"
 cd "$(repo_root)" || exit 0
 build="$(config_command "$(config_text)" build)"
-if [ -n "$build" ]; then
+build_passed_lookup="${FLOW_HOME:-$(main_worktree)/.flow}/build-passed.sh"
+if [ -n "$build" ] && [ -x "$build_passed_lookup" ] && passed_run="$("$build_passed_lookup" 2>/dev/null)"; then
+  echo "standards: the build passed on the same command and files in the run of $passed_run; not built again." >&2
+elif [ -n "$build" ]; then
   sh -c "$build" || { echo "standards: the build failed (L-01). Fix it before pushing." >&2; exit 1; }
 fi
 printf '%s' '{"tool_input":{"command":"git push"}}' | "$dir/check-gates.sh" || exit 1

@@ -11,9 +11,10 @@
 # command that passed on the same command and the same files is not run again: the check is a pass
 # that names the run it came from (lib/checks.sh); a command with no paths is reused only while the
 # whole tree is unchanged, a failed one never, and --fresh runs every command. A build always runs:
-# its outputs are ignored files, which a pass kept in another worktree cannot bring back. An empty
-# mutation is the off switch (a skipped check); a mutation command with {files} runs on the changed
-# source files only, like a format command, and is skipped when none changed. A project gate is
+# its outputs are ignored files, which a pass kept in another worktree cannot bring back. Its pass
+# is kept all the same, so a push of the same inputs skips the build (scripts/build-passed.sh).
+# An empty mutation is the off switch (a skipped check); a mutation command with {files} runs on
+# the changed source files only, like a format command, and is skipped when none changed. A project gate is
 # `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
 # matches a glob; otherwise a skipped check). feel_test is true when a changed file matches
 # feel_test_paths in the flow config. Never edits anything. The report is built from data by
@@ -283,11 +284,11 @@ scoped_check() {
   # scoped_check <name> <command> <globs, one per line> <build|test>: a build or test command.
   # With globs it runs only when a changed file matches one. A test pass kept for the same command
   # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
-  # --fresh runs the command whatever is kept. A test pass is kept for the next run, and a fail
-  # drops what is kept. A build has no key, so it always runs and nothing of it is kept.
+  # --fresh runs the command whatever is kept. A pass is kept for the next run, and a fail drops
+  # what is kept. A build always runs, and its kept pass is for a push (scripts/build-passed.sh).
   if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
-  inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
-  if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
+  inputs_key="$(check_key "$2" "$3")"
+  if [ "$4" = test ] && [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
