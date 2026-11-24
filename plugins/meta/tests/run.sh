@@ -79,6 +79,14 @@ import html, json, sys
 gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
 section = html.unescape(sys.argv[1])
 sys.exit(1 if not gates or [name for name, gate in gates.items() if gate['asks'] not in section] else 0)" "$flows_section"
+check "FlowsSection_NamesEveryAgentAStepRuns: each roster agent a flow step names is named in Flows, because the playbooks named who runs each station and Flows now says it" python3 -I -c "
+import json, re, sys
+steps = json.load(open('$root/plugins/flow/profiles.json'))['steps'].values()
+roster = json.load(open('$root/roster/agents.json'))['agents']
+said = ' '.join(step['agent'] + ' ' + step['summary'] for step in steps)
+named = [agent for agent in roster if re.search(r'(?<![\w-])' + re.escape(agent) + r'(?![\w-])', said)]
+missing = [agent for agent in named if not re.search(r'(?<![\w-])' + re.escape(agent) + r'(?![\w-])', sys.argv[1])]
+sys.exit(1 if not named or missing else 0)" "$flows_section"
 check "FlowsSection_ShowsTheGateCommand: Flows shows the flow:gate command, because it is how the reader answers a diamond" sh -c "printf '%s' \"\$0\" | grep -q '/flow:gate'" "$flows_section"
 check "CommittedPage_HasNoDrift: tools/generate.sh --check finds every generated file fresh, because the committed map must match what the sources render" "$root/tools/generate.sh" --check
 printf '{"agents":{"physics-reviewer":{"tier":"read-only","model":"opus","effort":"high","description":"Reviews physics. Use when src/Physics changes."}}}\n' > "$work/project-roster.json"
