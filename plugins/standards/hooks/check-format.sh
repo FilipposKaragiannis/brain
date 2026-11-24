@@ -11,7 +11,7 @@ seg="$(git_segment commit "$cmd")"
 cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
-index="$(commit_index "$seg")"
+index="$(commit_index "$seg" "$cmd")"
 discard_index_at_exit "$index"
 key="$(commit_key "$index")"
 passed_seen check-format "$key" && exit 0

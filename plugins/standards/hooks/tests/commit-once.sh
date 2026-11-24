@@ -74,6 +74,8 @@ run_commit() {
   [ "$(git rev-parse HEAD)" != "$before" ] || fail "$case_name: the commit did not land: $1"
 }
 
+names_file() { printf '%s\n' "$1" | grep -qwF -- "$2"; }
+
 expect_runs() {
   # $1 test name, $2 log, $3 wanted runs, $4 because.
   check "$1: $4 (ran $(runs "$2"), wanted $3)" [ "$(runs "$2")" -eq "$3" ]
@@ -101,6 +103,23 @@ expect_runs IncludeCommit_RunsFormatOnce "$format_log" "$once" "the agent hook a
 expect_runs IncludeCommit_RunsTheUnmarkedGateOnce "$unmarked_log" "$once" "pre-commit sees the content the agent hook passed"
 expect_runs IncludeCommit_RunsTheMarkedGateOnce "$marked_log" "$once" "commit-msg sees the content the agent hook passed"
 
+start_case AddThenCommit
+printf 'e\n' > e.txt
+agent_hooks 'git add e.txt && git commit -m "feat: add e"'
+agent_formatted="$(cat "$format_log")"
+run_commit 'git add e.txt && git commit -m "feat: add e"'
+expect_runs AddThenCommit_RunsFormatOnce "$format_log" "$once" "git's hooks skip the format check the agent hook passed with e.txt added"
+expect_runs AddThenCommit_RunsTheUnmarkedGateOnce "$unmarked_log" "$once" "pre-commit sees the content the agent hook passed"
+expect_runs AddThenCommit_RunsTheMarkedGateOnce "$marked_log" "$once" "commit-msg sees the content the agent hook passed"
+check "AddThenCommit_FormatsTheAddedFile: the agent hook formats e.txt, which the earlier add stages ($agent_formatted)" names_file "$agent_formatted" e.txt
+
+start_case AddAllThenCommit
+printf 'f\n' > f.txt; printf 'a6\n' > a.txt
+agent_hooks 'git add -A && git commit -m "feat: add f"'; run_commit 'git add -A && git commit -m "feat: add f"'
+expect_runs AddAllThenCommit_RunsFormatOnce "$format_log" "$once" "the agent hook stages every change as git add -A does"
+expect_runs AddAllThenCommit_RunsTheUnmarkedGateOnce "$unmarked_log" "$once" "pre-commit sees the content the agent hook passed"
+expect_runs AddAllThenCommit_RunsTheMarkedGateOnce "$marked_log" "$once" "commit-msg sees the content the agent hook passed"
+
 echo "a commit outside an agent is checked in full"
 start_case HumanCommit
 printf 'a3\n' > a.txt
@@ -126,6 +145,14 @@ printf 'd3\n' > d.txt
 run_commit 'git commit -m "feat: change b"'
 expect_runs EditToFileOutsideTheCommitBetweenHooks_RunsTheUnmarkedGateAgain "$unmarked_log" "$twice" "a gate's build reads d.txt, which changed after the agent hook"
 expect_runs EditToFileOutsideTheCommitBetweenHooks_RunsTheMarkedGateAgain "$marked_log" "$twice" "a gate's build reads d.txt, which changed after the agent hook"
+
+start_case AddThenEditThenCommitAll
+printf 'g\n' > g.txt
+agent_hooks 'git add g.txt && echo x >> a.txt && git commit -a -m "feat: add g"'
+run_commit 'git add g.txt && echo x >> a.txt && git commit -a -m "feat: add g"'
+expect_runs AddThenEditThenCommitAll_RunsFormatAgain "$format_log" "$twice" "the commit holds a.txt as the command left it, which no hook formatted"
+expect_runs AddThenEditThenCommitAll_RunsTheUnmarkedGateAgain "$unmarked_log" "$twice" "the commit holds a.txt as the command left it, which no gate saw"
+expect_runs AddThenEditThenCommitAll_RunsTheMarkedGateAgain "$marked_log" "$twice" "the commit holds a.txt as the command left it, which no gate saw"
 
 echo "throwaway indexes"
 leftovers="$(find "$TMPDIR" "$(git rev-parse --git-dir)" -name 'standards-index*' 2>/dev/null)"

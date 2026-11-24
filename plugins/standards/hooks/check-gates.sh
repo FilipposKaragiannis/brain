@@ -40,7 +40,7 @@ count="$(json_length "$config" gates)"
 set -f   # the globs stay literal
 commit_seg="$(git_segment commit "$cmd")"
 index=""
-[ -n "$commit_seg" ] && index="$(commit_index "$commit_seg")"
+[ -n "$commit_seg" ] && index="$(commit_index "$commit_seg" "$cmd")"
 discard_index_at_exit "$index"
 key="$(commit_key "$index")"
 passed_seen check-gates "$key" && exit 0

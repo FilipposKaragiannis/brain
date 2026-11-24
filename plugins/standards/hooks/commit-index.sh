@@ -2,16 +2,18 @@
 # What an agent's commit will hold, and the record that lets git's hooks skip a check the agent
 # hook already passed. POSIX sh, sourced by lib.sh.
 # The agent hook and git's own hooks both see an agent's commit. Before a check, the agent hook
-# builds the index the commit will make (the index as it is, -a, a pathspec with -o or -i) in a
-# throwaway file and keys it on two trees: the commit's tree and the tracked working files on top
-# of it. When the check passes and the key has not moved, it records the key; git's pre-commit
-# and commit-msg (STANDARDS_FROM_GIT=1) skip that check when the index git hands them gives the
-# same key, recorded in the last 10 minutes. A content key cannot match other content, so a wrong
-# prediction only runs the check again, and so does an edit to any tracked file between the
-# hooks. A command it cannot read (-p, --interactive, --pathspec-from-file, git options before
-# commit, a quoted or globbed path) records nothing. Untracked files are not in the key: hashing
-# them would write their blobs on every commit. The record lives in the worktree's git dir, in its
-# own file, so hook copies from before this rule never read its lines.
+# builds the index the commit will make (the index as it is, the `git add` calls earlier in the
+# same command, -a, a pathspec with -o or -i) in a throwaway file and keys it on two trees: the
+# commit's tree and the tracked working files on top of it. When the check passes and the key has
+# not moved, it records the key; git's pre-commit and commit-msg (STANDARDS_FROM_GIT=1) skip that
+# check when the index git hands them gives the same key, recorded in the last 10 minutes. A
+# content key cannot match other content, so a wrong prediction only runs the check again, and so
+# does an edit to any tracked file between the hooks. A command it cannot read (-p, --interactive,
+# --pathspec-from-file, git options before commit, a quoted or globbed path, an earlier cd, git
+# call other than add, or add option other than -A, -u or -f) records nothing. Untracked files
+# are not in the key: hashing them would write their blobs on every commit. The record lives in
+# the worktree's git dir, in its own file, so hook copies from before this rule never read its
+# lines.
 
 standards_start_folder="$(pwd)"
 passed_window_seconds=600
@@ -69,6 +71,67 @@ commit_staging() {
     }'
 }
 
+segments_before() {
+  # $1 wanted subcommand, $2 shell command text. Prints, one per line, the segments before the one
+  # git_segment finds, split as it splits them.
+  wanted_segment="$(git_segment "$1" "$2")"
+  [ -n "$wanted_segment" ] || return 0
+  printf '%s\n' "$2" | wanted_segment="$wanted_segment" awk '
+    {
+      count = split($0, segments, /&&|\|\||;|\|/)
+      for (position = 1; position <= count; position++) {
+        if (segments[position] == ENVIRON["wanted_segment"]) exit
+        print segments[position]
+      }
+    }'
+}
+
+earlier_adds() {
+  # $1 shell command text. Prints the arguments of each `git add` before the commit, one add per
+  # line. Fails when an earlier segment is a cd, another git call or an add it cannot read.
+  segments_before commit "$1" | tr '\t' ' ' | awk -v path_word="$commit_path_word" '
+    function unreadable() { failed = 1; exit 1 }
+    function read_add_word(word) {
+      if (word == "") return
+      if (!options_done && word == "--") options_done = 1
+      else if (!options_done && word ~ /^-/) { if (word !~ /^(-A|--all|-u|--update|-f|--force)$/) unreadable() }
+      else if (word !~ path_word) unreadable()
+      add_arguments = add_arguments " " word
+    }
+    function read_add(first, count) {
+      if (words[first] !~ /(^|\/)git$/ || words[first + 1] != "add") unreadable()
+      add_arguments = ""; options_done = 0
+      for (position = first + 2; position <= count; position++) read_add_word(words[position])
+      print add_arguments
+    }
+    {
+      count = split($0, words, / +/); first = 0
+      for (position = count; position >= 1; position--) {
+        if (words[position] ~ /^\(*(cd|pushd|popd)$/) unreadable()
+        if (words[position] ~ /(^|[\/(])git$/) first = position
+      }
+      if (first == 0) next
+      for (position = 1; position < first; position++) if (words[position] != "") unreadable()
+      read_add(first, count)
+    }
+    END { exit failed }'
+}
+
+add_to_index() {
+  # $1 index file, $2 the arguments of each `git add`, one add per line. Runs them on that index in
+  # order. Fails when one fails.
+  while IFS= read -r add_arguments; do
+    [ -n "$add_arguments" ] || continue
+    (
+      set -f; IFS=' '
+      # shellcheck disable=SC2086
+      git_on_index "$1" add $add_arguments
+    ) || return 1
+  done <<ADDS
+$2
+ADDS
+}
+
 git_on_index() {
   # $1 index file, then git's arguments. Runs git on that index from the folder the hook started in.
   (
@@ -85,7 +148,8 @@ source_index_path() {
 }
 
 write_commit_index() {
-  # $1 index file to write, $2 the staging (commit_staging). Fails when git cannot stage it.
+  # $1 index file to write, $2 the staging (commit_staging), $3 the earlier adds (earlier_adds).
+  # Fails when git cannot stage it.
   staging_mode="$(printf '%s\n' "$2" | head -n 1)"
   staged_paths="$(printf '%s\n' "$2" | sed '1d')"
   if [ "$staging_mode" = only ]; then
@@ -93,7 +157,7 @@ write_commit_index() {
     git_on_index "$1" rev-parse -q --verify HEAD >/dev/null || head_tree=--empty
     git_on_index "$1" read-tree "$head_tree" || return 1
   else
-    cp "$(source_index_path)" "$1" 2>/dev/null || return 1
+    cp "$(source_index_path)" "$1" 2>/dev/null && add_to_index "$1" "$3" || return 1
   fi
   [ "$staging_mode" != all ] || git_on_index "$1" add -u || return 1
   case "$staging_mode" in only|include) ;; *) return 0 ;; esac
@@ -106,11 +170,13 @@ write_commit_index() {
 }
 
 commit_index() {
-  # $1 segment. Prints a throwaway index file that holds what the commit will contain, or nothing
-  # when the command cannot be read. discard_index_at_exit removes it.
+  # $1 segment, $2 the shell command text it came from. Prints a throwaway index file that holds
+  # what the commit will contain, or nothing when the command cannot be read.
+  # discard_index_at_exit removes it.
   staging="$(commit_staging "$1")" || return 0
+  adds="$(earlier_adds "$2")" || return 0
   index_folder="$(mktemp -d "${TMPDIR:-/tmp}/standards-index.XXXXXX" 2>/dev/null)" || return 0
-  if write_commit_index "$index_folder/index" "$staging"; then printf '%s' "$index_folder/index"; return 0; fi
+  if write_commit_index "$index_folder/index" "$staging" "$adds"; then printf '%s' "$index_folder/index"; return 0; fi
   rm -rf "$index_folder"
 }
 
