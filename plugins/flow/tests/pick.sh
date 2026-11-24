@@ -293,8 +293,8 @@ cd "$repo"
 echo "pick filters: next --pick"
 mkdir -p "$work/pick" && cd "$work/pick" && git init -q -b main app && cd app && git config user.email me@pick.test && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
-pick_config() { # pick_config <the pick block's lines>: local items, P0 first, and the filters given
-  printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 2\nready:\n  priority_order: [P0, P1, P2]\nnotify:\n  desktop: false\npick:\n%s\n' "$1" > .flow/config.yaml
+pick_config() { # pick_config <the pick block's lines>: local items, P0 first, any assignee, and the filters given
+  printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 2\nready:\n  priority_order: [P0, P1, P2]\n  assignee: any\nnotify:\n  desktop: false\npick:\n%s\n' "$1" > .flow/config.yaml
 }
 assign_local() { # assign_local <id> <who>: the item file's assignee
   python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); open(p,"w").write(t.replace("---\n", "---\nassignee: %s\n" % sys.argv[2], 1))' ".flow/items/$(printf '%s' "${1#local:}").md" "$2"

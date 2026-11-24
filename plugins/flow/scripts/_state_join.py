@@ -1,14 +1,16 @@
 """The flow record laid onto an adapter's item, and the run and gate rows it lists.
 Pure: no file, clock or environment is read here.
 
-A joined item is the adapter's item with `state` replaced and `state_from` stamped. From a record:
-all twenty-one state keys, text "" when unset, attempts a number, touches and changes lists, gate none
-when clear (state_from record). With no record: the tracker's state as the adapter gave it while
+A joined item is the adapter's item with `state` replaced and `state_from` and `claim` stamped.
+From a record: all twenty-one state keys, text "" when unset, attempts a number, touches and changes
+lists, gate none when clear (state_from record). With no record: the tracker's state as the adapter gave it while
 tracker_state is labels, the empty state when it gave none (state_from tracker); the empty state
-under none (state_from none). A record wins whole, never merged per key.
+under none (state_from none). A record wins whole, never merged per key. `claim` is the record's
+claim object, null with no record or no claim: the ready filter tells held and held elsewhere by it.
 A run row is {"item", ...the run}; a gate row {"gate", "item", ...the gate's record}, only for a
 gate that carries notify.sh's record, its time. A gate named alone has no row.
 """
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import _state_schema as schema
@@ -17,6 +19,7 @@ NO_RECORD = MappingProxyType({})
 NO_ROW = MappingProxyType({})
 STATE_FIELD = "state"
 STATE_FROM_FIELD = "state_from"
+CLAIM_FIELD = "claim"
 FROM_RECORD, FROM_TRACKER, FROM_NONE = "record", "tracker", "none"
 TRACKER_LABELS, TRACKER_NONE = "labels", "none"
 TRACKER_STATES = (TRACKER_LABELS, TRACKER_NONE)
@@ -62,9 +65,10 @@ def state_source(record, tracker_state):
     return FROM_TRACKER if tracker_state == TRACKER_LABELS else FROM_NONE
 
 
-def joined_item(item, record, tracker_state):
+def joined_item(item: dict, record: Mapping, tracker_state: str) -> dict:
     state = record_state(record) if record is not NO_RECORD else unrecorded_state(item, tracker_state)
-    return dict(item, **{STATE_FIELD: state, STATE_FROM_FIELD: state_source(record, tracker_state)})
+    return dict(item, **{STATE_FIELD: state, STATE_FROM_FIELD: state_source(record, tracker_state),
+                         CLAIM_FIELD: record.get(CLAIM_FIELD)})
 
 
 def headed_row(heading, fields, left_out):

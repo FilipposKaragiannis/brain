@@ -325,7 +325,7 @@ open_status_jira() { echo "To Do"; }
 query_github() { echo "label:$1"; }
 query_jira() { echo "labels = \"$1\""; }
 other_tracker() { if [ "$name" = local ]; then echo github; else echo local; fi; }
-pick_config() { write_config 0; printf 'pick:\n%s\n' "$1" >> "$FLOW_HOME/config.yaml"; }
+pick_config() { write_config 0; printf 'ready:\n  assignee: any\npick:\n%s\n' "$1" >> "$FLOW_HOME/config.yaml"; }
 if type "set_$name" >/dev/null 2>&1; then
   pa="$("$A/create.sh" task "Pick: mine, labelled")"
   pb="$("$A/create.sh" bug "Pick: theirs")"

@@ -106,7 +106,9 @@ def branch_list(rows):
 
 WHY = [("gate", "at a gate"), ("blocked", "blocked"), ("needs", "missing a field ready.needs asks for"),
        ("children", "waiting on child items"), ("parent", "waiting on the parent's decomposition gate"),
-       ("done", "done (every step ran)"), ("split", "split")]
+       ("done", "done (every step ran)"), ("split", "split"),
+       ("status", "in progress, in review or blocked on its tracker"), ("assigned", "assigned to someone else"),
+       ("elsewhere", "held on another machine")]
 
 
 def reasons(rows, live):

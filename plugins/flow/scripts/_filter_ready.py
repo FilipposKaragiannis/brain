@@ -1,5 +1,15 @@
 """Ready filter for the adapters. See filter-ready.sh."""
-import functools, json, os, re, subprocess, sys
+import functools
+import json
+import os
+import re
+import subprocess
+import sys
+from typing import Optional
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _ready_policy as ready_policy  # noqa: E402
+
 plugin = sys.argv[1]
 # The flow home, where gate.sh clear --option writes the blockers the owner waived (lib/blockers.sh).
 home = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -10,6 +20,8 @@ GATE_THAT_HOLDS_CHILDREN = "decomposition"
 gates = {i["id"]: i.get("state", {}).get("gate", "none") for i in items if i.get("status", "open") == "open"}
 listed = {i["id"]: i for i in items}
 cache = {}
+POLICY = ready_policy.policy_from(os.environ)
+ME = ready_policy.MeNames(plugin, functools.partial(print, file=sys.stderr))
 
 def read_prefix(name):
     try:
@@ -201,11 +213,20 @@ def epic_without_branch(item):
         return None
     return epics[0]
 
-def held_back(item):
+def policy_holds(item: dict) -> ready_policy.NotReady:
+    """Why the ready: policy keeps the item back (lib/ready.sh), with its detail, or READY."""
+    return ready_policy.not_ready(item, POLICY, functools.partial(ME.read_names, adapter_for(item["id"])))
+
+def held_back(item: dict) -> Optional[str]:
     """Why an open item is not ready, in one word, or None when it is ready."""
     state = item.get("state", {})
+    if ready_policy.held_elsewhere(item, POLICY.machine):
+        return ready_policy.ELSEWHERE
     if state.get("gate", "none") not in ("", "none"):
         return "gate"
+    policy_why = policy_holds(item).why
+    if policy_why:
+        return policy_why
     if item.get("needs") and not state.get("step"):
         return "needs"
     if item.get("open_children"):
@@ -245,6 +266,8 @@ for item in items:
     elif why == "epic-branch":
         epic_id = epic_without_branch(item)
         note.update(epic=epic_id, branch=epic_branch(epic_id))
+    elif why in ready_policy.WORDS:
+        note.update(policy_holds(item).detail)
     notes.append(note)
 ready.sort(key=lambda i: (i.get("rank", 999), number_ending_the_id(i)))
 print(json.dumps(ready))
