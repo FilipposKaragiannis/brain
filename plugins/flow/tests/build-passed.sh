@@ -83,6 +83,10 @@ check "KeptPassBeforeTheCommandChanges_IsFound: the check below needs a kept pas
 commit_build_config "$(marking_build); true"
 check "BuildCommandChanged_LookupFindsNothing: a pass is kept for one command text, so another command has none" \
   '! lookup_build_pass >/dev/null'
+install_lookup_wrapper
+push_after_clearing_the_marker
+check "PushAfterTheBuildCommandChanged_Builds: the build ran, because no pass is kept for the new command" \
+  '[ -e "$build_marker" ]'
 
 echo "build-passed: no pass, or a failed build, builds as today"
 new_item unverified "$passing_gate"
