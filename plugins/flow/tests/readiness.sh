@@ -46,6 +46,7 @@ end_runs_and_close_every_open_item() {
     "$local_adapter/close.sh" "$open_item" >/dev/null 2>&1
   done
 }
+ids_in() { python3 -c 'import json,sys; print("\n".join(item["id"] for item in json.load(open(sys.argv[1]))))' "$1"; }
 next_code() { "$plugin/scripts/next.sh" "$1" >/dev/null 2>&1; echo $?; }
 
 unassigned="$(new_task "Nobody holds this")"
@@ -53,12 +54,16 @@ theirs="$(new_task "Bob took this")"; write_frontmatter "$theirs" assignee bob
 mine="$(new_task "The owner took this")"; write_frontmatter "$mine" assignee "$git_identity_email"
 started="$(new_task "Moved to in progress")"; write_frontmatter "$started" workflow in-progress
 queued="$(new_task "In the backlog column")"; write_frontmatter "$queued" workflow backlog
+reviewing="$(new_task "In the review column")"; write_frontmatter "$reviewing" workflow in-review
+waiting="$(new_task "In the needs-you column")"; write_frontmatter "$waiting" workflow needs-you
 
 echo "readiness: the policy keys"
 check "NoReadyKeys_UnassignedItemWithNoWorkflowIsReady: an item nobody holds and no board places stays ready, because the defaults take none and unknown" 'is_ready "$unassigned"'
 check "NoReadyKeys_ItemAssignedToSomeoneElseIsNotReady: the default leaves out a person's item, because ready.assignee defaults to none and me" '! is_ready "$theirs"'
 check "NoReadyKeys_ItemAssignedToTheGitIdentityIsReady: the default takes the owner's own item, because me stands for the git identity" 'is_ready "$mine"'
 check "NoReadyKeys_InProgressItemIsNotReady: the default leaves out an item in progress on its tracker, because ready.categories defaults to todo and unknown" '! is_ready "$started"'
+check "NoReadyKeys_InReviewItemIsNotReady: the default leaves out an item in review on its tracker, because review is not a default category" '! is_ready "$reviewing"'
+check "NoReadyKeys_BlockedItemIsNotReady: the default leaves out an item blocked on its tracker, because blocked is not a default category" '! is_ready "$waiting"'
 check "NoReadyKeys_TodoItemIsReady: the default takes an item in the backlog column, because todo is a default category" 'is_ready "$queued"'
 config_with_lines 'ready:
   categories: [todo]'
@@ -97,11 +102,16 @@ check "ItemAssignedToSomeoneElse_IsNotedAssigned: the note says assigned, becaus
 check "InProgressItem_IsNotedStatus: the note says status, because the tracker's category held it back" '[ "$(held_back_why "$started")" = status ]'
 
 echo "readiness: an item the flow holds is judged by its record"
-held="$(new_task "Held at design")"
+held="$(new_task "Held at design, assigned")"
 "$plugin/scripts/state.sh" set "$held" step=design >/dev/null 2>&1
 take_on_machine "$this_machine" "$held" >/dev/null 2>&1
-write_frontmatter "$held" assignee bob; write_frontmatter "$held" workflow in-progress
-check "HeldItemAtDesignStep_StaysReadyThoughAssignedAndInProgress: a record claim with no worktree keeps the item the flow's, because the flow set its card and assignees" 'is_ready "$held"'
+write_frontmatter "$held" assignee bob
+check "HeldItemAtDesignStep_StaysReadyThoughAssigned: a record claim with no worktree keeps a person's item the flow's, because the flow set its assignees" 'is_ready "$held"'
+held_started="$(new_task "Held at design, in progress")"
+"$plugin/scripts/state.sh" set "$held_started" step=design >/dev/null 2>&1
+take_on_machine "$this_machine" "$held_started" >/dev/null 2>&1
+write_frontmatter "$held_started" workflow in-progress
+check "HeldItemAtDesignStep_StaysReadyThoughInProgress: a record claim with no worktree keeps an in-progress item the flow's, because the flow set its card" 'is_ready "$held_started"'
 seeded="$(new_task "Step on the tracker, no record")"
 "$local_adapter/write-state.sh" "$seeded" step=design >/dev/null 2>&1
 write_frontmatter "$seeded" assignee bob
@@ -125,14 +135,14 @@ printf '[%s,%s,%s]' \
   '{"id":"gh#703","kind":"task","status":"open","state":{"gate":"none"},"blocked_by":[],"open_children":0,"category":"unknown","assignees":["owner"]}' \
   > "$work/offline-items.json"
 "$plugin/scripts/filter-ready.sh" < "$work/offline-items.json" > "$work/offline-ready.json" 2> "$work/offline-ready.err"
-check "MeFails_UnassignedItemStaysReady: an item nobody holds is ready while me cannot be read, because none needs no identity" 'grep -qF "\"gh#701\"" "$work/offline-ready.json"'
-check "MeFails_AssignedItemIsNotReady: an assigned item is held back while me cannot be read, because a failed me stands for no one" '! grep -qF "\"gh#702\"" "$work/offline-ready.json"'
+check "MeFails_UnassignedItemStaysReady: an item nobody holds is ready while the offline gh stub leaves github me unread, because none needs no identity" 'ids_in "$work/offline-ready.json" | grep -qxF "gh#701"'
+check "MeFails_AssignedItemIsNotReady: an assigned item is held back while the offline gh stub leaves github me unread, because a failed me stands for no one" '! ids_in "$work/offline-ready.json" | grep -qxF "gh#702"'
 check "MeFailsForTwoAssignedItems_IsOneStderrLine: the failure is said on one line for two assigned items, because me is read once per adapter" '[ "$(grep -c . "$work/offline-ready.err")" = 1 ]'
 check "MeFails_TheWarningNamesTheAdapter: the failure names the github adapter, because the owner must know which tracker's me to fix" 'grep -qw github "$work/offline-ready.err"'
 
 echo "readiness: next.sh checks the fresh read"
 check "NamedItemAssignedToSomeoneElse_NextExitsFour: next.sh passes over a named item a person holds, because the policy applies to a named item too" '[ "$(next_code "$theirs")" = "$exit_waiting" ]'
-check "NamedHeldItemAtALaterStep_NextRunsIt: next.sh runs the flow's own item though it is assigned and in progress, because a held item is judged by its record" '[ "$(next_code "$held")" = "$exit_step_ready" ]'
+check "NamedHeldItemAtALaterStep_NextRunsIt: next.sh runs the flow's own item though a person is assigned, because a held item is judged by its record" '[ "$(next_code "$held")" = "$exit_step_ready" ]'
 end_runs_and_close_every_open_item
 taken_since="$(new_task "First in the list")"
 still_free="$(new_task "Second in the list")"
