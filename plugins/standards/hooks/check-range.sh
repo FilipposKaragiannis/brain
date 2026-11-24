@@ -18,6 +18,7 @@ done
 base="$1"; head="${2:-HEAD}"
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/lib.sh"
+use_working_git
 cd "$(repo_root)" || exit 2
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "check-range: commit or stash the tracked changes first; this script checks commits out." >&2

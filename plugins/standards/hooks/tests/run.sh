@@ -249,6 +249,11 @@ sh "$here/gate-git-env.sh" > "$work/gate-git-env.out" 2>&1; code=$?
 check "GateGitEnvSuite_Passes: every check in gate-git-env.sh passed ($(tail -n 1 "$work/gate-git-env.out"))" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-git-env.out"
 
+echo "non-commit calls: hook cost (tests/non-commit-cost.sh)"
+sh "$here/non-commit-cost.sh" > "$work/non-commit-cost.out" 2>&1; code=$?
+check "NonCommitCostSuite_Passes: every check in non-commit-cost.sh passed ($(tail -n 1 "$work/non-commit-cost.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/non-commit-cost.out"
+
 echo "an agent's commit runs format and each gate once (tests/commit-once.sh)"
 sh "$here/commit-once.sh" > "$work/commit-once.out" 2>&1; code=$?
 check "CommitOnceSuite_Passes: every check in commit-once.sh passed ($(tail -n 1 "$work/commit-once.out"))" [ "$code" -eq 0 ]

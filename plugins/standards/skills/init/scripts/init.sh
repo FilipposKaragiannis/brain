@@ -29,6 +29,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 STANDARDS_HOOKS="$plugin/hooks"; . "$plugin/hooks/lib.sh"
+use_working_git
 source_hash() { standards_source_hash "$plugin"; }   # the install set lives in hooks/lib.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
