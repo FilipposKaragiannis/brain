@@ -318,6 +318,11 @@ python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(ope
 "$hooks/git/pre-push" >/dev/null 2>&1
 check "BuildGivenAsAMapWithPaths_PrePushRunsItsCommand: a push builds whatever changed, because the paths scope verify only" [ -f "$work/built-from-a-map" ]
 cp "$work/config.before-build-map" .standards/config.json
+python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(open(path)); config["build"]="touch " + sys.argv[1]; json.dump(config, open(path, "w"))' "$work/built-without-flow"
+check "ProjectWithoutFlow_HasNoFlowHome: the push below must have no build-passed lookup to read" [ ! -e "$(git worktree list --porcelain | sed -n '1s/^worktree //p')/.flow" ]
+"$hooks/git/pre-push" >/dev/null 2>&1
+check "ProjectWithoutFlow_PrePushBuilds: the push builds as it always has, because standards works without flow" [ -f "$work/built-without-flow" ]
+cp "$work/config.before-build-map" .standards/config.json
 
 echo "check-range: the gates per commit over a range"
 mkdir -p "$work/range" && cp -R .standards "$work/range/" && cd "$work/range" && git init -q -b main && git config user.email t@t && git config user.name t
