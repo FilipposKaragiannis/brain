@@ -152,21 +152,33 @@ write_commit_index() {
   # Fails when git cannot stage it.
   staging_mode="$(printf '%s\n' "$2" | head -n 1)"
   staged_paths="$(printf '%s\n' "$2" | sed '1d')"
-  if [ "$staging_mode" = only ]; then
-    head_tree=HEAD
-    git_on_index "$1" rev-parse -q --verify HEAD >/dev/null || head_tree=--empty
-    git_on_index "$1" read-tree "$head_tree" || return 1
-  else
-    cp "$(source_index_path)" "$1" 2>/dev/null && add_to_index "$1" "$3" || return 1
-  fi
+  cp "$(source_index_path)" "$1" 2>/dev/null && add_to_index "$1" "$3" || return 1
   [ "$staging_mode" != all ] || git_on_index "$1" add -u || return 1
   case "$staging_mode" in only|include) ;; *) return 0 ;; esac
   (
     set -f; IFS='
 '
     # shellcheck disable=SC2086
-    git_on_index "$1" add -A -- $staged_paths
+    [ "$staging_mode" != only ] || keep_only_named_entries "$1" $staged_paths || exit 1
+    # shellcheck disable=SC2086
+    git_on_index "$1" add -u -- $staged_paths
   )
+}
+
+keep_only_named_entries() {
+  # $1 index file, then the paths the commit names. Resets that index to HEAD, keeping its entries
+  # for those paths. Fails when git cannot.
+  named_index="$1"; shift
+  named_entries="$named_index.named"
+  git_on_index "$named_index" ls-files -s --full-name -- "$@" >"$named_entries" || return 1
+  head_tree=HEAD
+  git_on_index "$named_index" rev-parse -q --verify HEAD >/dev/null || head_tree=--empty
+  git_on_index "$named_index" read-tree "$head_tree" \
+    && (GIT_INDEX_FILE="$named_index"; export GIT_INDEX_FILE
+      cd "$standards_start_folder" && git update-index --index-info <"$named_entries" 2>/dev/null)
+  named_status=$?
+  rm -f "$named_entries"
+  return "$named_status"
 }
 
 commit_index() {

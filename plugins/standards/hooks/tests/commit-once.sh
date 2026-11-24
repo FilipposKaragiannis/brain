@@ -49,6 +49,7 @@ cat > .standards/config.json <<JSON
 }
 JSON
 for file in a b c d; do printf '%s\n' "$file" > "$file.txt"; done
+mkdir src && printf 'src a\n' > src/a.txt
 git add -A && git commit -qm 'chore: init'
 git config core.hooksPath "$hooks/git"
 
@@ -108,6 +109,23 @@ agent_hooks 'git commit -i -m "feat: change b and c" c.txt'; run_commit 'git com
 expect_runs IncludeCommit_RunsFormatOnce "$format_log" "$once" "the agent hook adds c.txt to the staged b.txt as git does"
 expect_runs IncludeCommit_RunsTheUnmarkedGateOnce "$unmarked_log" "$once" "pre-commit sees the content the agent hook passed"
 expect_runs IncludeCommit_RunsTheMarkedGateOnce "$marked_log" "$once" "commit-msg sees the content the agent hook passed"
+
+start_case PathspecFolderWithUntrackedFile
+printf 'src a2\n' > src/a.txt; printf 'scratch\n' > src/scratch.txt
+agent_hooks 'git commit -m "feat: update" src/'
+agent_formatted="$(cat "$format_log")"
+run_commit 'git commit -m "feat: update" src/'
+rm -f src/scratch.txt
+check "PathspecFolderWithUntrackedFile_LeavesTheUntrackedFileUnchecked: git commits only tracked files under src/ ($agent_formatted)" sh -c '! printf "%s\n" "$1" | grep -qF scratch.txt' _ "$agent_formatted"
+expect_runs PathspecFolderWithUntrackedFile_RunsFormatOnce "$format_log" "$once" "the agent hook predicts src/a.txt alone, as git commits it"
+
+start_case AddThenPathspecCommit
+printf 'src new\n' > src/new.txt
+agent_hooks 'git add src/new.txt && git commit -m "feat: add new" src/'
+agent_formatted="$(cat "$format_log")"
+run_commit 'git add src/new.txt && git commit -m "feat: add new" src/'
+check "AddThenPathspecCommit_FormatsTheAddedFile: the earlier add makes src/new.txt part of the pathspec commit ($agent_formatted)" names_file "$agent_formatted" src/new.txt
+expect_runs AddThenPathspecCommit_RunsFormatOnce "$format_log" "$once" "the agent hook predicts the added file in the pathspec commit, as git commits it"
 
 start_case AddThenCommit
 printf 'e\n' > e.txt
