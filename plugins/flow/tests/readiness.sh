@@ -38,6 +38,14 @@ for line in open(sys.argv[1]):
     note = json.loads(line)
     if note["id"] == sys.argv[2]: print(note["why"])' "$held_back_notes" "$1"
 }
+held_back_assignees() {
+  held_back_notes="$(mktemp "$work/notes.XXXXXX")"
+  FLOW_READY_NOTES="$held_back_notes" "$local_adapter/list-ready.sh" >/dev/null 2>&1
+  python3 -c 'import json,sys
+for line in open(sys.argv[1]):
+    note = json.loads(line)
+    if note["id"] == sys.argv[2]: print("\n".join(note["assignees"]))' "$held_back_notes" "$1"
+}
 take_on_machine() { env FLOW_MACHINE="$1" sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "$1"' take "$2"; }
 list_code() { "$local_adapter/list.sh" >/dev/null 2>&1; echo $?; }
 filter_code_with_exported_policy() { printf '[]' | env READY_ASSIGNEE=none,me READY_CATEGORIES=todo,unknown "$plugin/scripts/filter-ready.sh" >/dev/null 2>&1; echo $?; }
@@ -100,6 +108,7 @@ config_with_lines ''
 
 echo "readiness: why an item is held back"
 check "ItemAssignedToSomeoneElse_IsNotedAssigned: the note says assigned, because next.sh tells the owner why nothing was picked" '[ "$(held_back_why "$theirs")" = assigned ]'
+check "ItemAssignedToSomeoneElse_NoteNamesTheAssignee: the note lists bob, because next.sh names who holds the item" '[ "$(held_back_assignees "$theirs")" = bob ]'
 check "InProgressItem_IsNotedStatus: the note says status, because the tracker's category held it back" '[ "$(held_back_why "$started")" = status ]'
 
 echo "readiness: an item the flow holds is judged by its record"

@@ -101,7 +101,7 @@ def not_ready(item: Mapping, policy: ReadyPolicy, me_names: Callable[[], frozens
     if category_of(item) not in policy.categories:
         return NotReady(STATUS, MappingProxyType({"category": category_of(item)}))
     if not assignees_allowed(item, policy, me_names):
-        return NotReady(ASSIGNED, MappingProxyType({ASSIGNEES_DETAIL: list(item.get("assignees") or [])}))
+        return NotReady(ASSIGNED, MappingProxyType({ASSIGNEES_DETAIL: tuple(item.get("assignees") or ())}))
     return READY
 
 
