@@ -70,10 +70,10 @@ targets = set(re.findall(r'href=\"#([^\"]+)\"', page))
 ids = set(re.findall(r'\sid=\"([^\"]+)\"', page))
 sys.exit(1 if not targets or targets - ids else 0)" "$map"
 check "Repository_NoFileLinksToPlaybooks: no file links the map's playbooks anchor, because that section is gone" sh -c "grep -rIiqs --exclude-dir=node_modules 'map[.]html#playbook' '$root/README.md' '$root/docs' '$root/plugins' '$root/tools'; [ \$? -eq 1 ]"
-check "FlowsSection_NamesEveryGate: each gate the flow profiles define is named in Flows, because the diamonds the playbooks explained now live there" python3 -I -c "
+check "FlowsSection_NamesEveryGate: each gate the flow profiles define stands alone as an element's text in Flows, because the diamonds the playbooks explained now live there and a gate name like merge is also a word in prose" python3 -I -c "
 import json, sys
 gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
-sys.exit(1 if not gates or [gate for gate in gates if gate not in sys.argv[1]] else 0)" "$flows_section"
+sys.exit(1 if not gates or [gate for gate in gates if '>' + gate + '<' not in sys.argv[1]] else 0)" "$flows_section"
 check "FlowsSection_SaysWhatEachGateAsks: each gate's ask from the flow profiles shows in Flows, because the reader learns there how to answer a diamond" python3 -I -c "
 import html, json, sys
 gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
@@ -90,7 +90,11 @@ named = [agent for agent in roster if mentions(said, agent)]
 missing = [agent for agent in named if not mentions(sys.argv[1], agent)]
 sys.exit(1 if not named or missing else 0)" "$flows_section"
 check "FlowsSection_ShowsTheGateCommand: Flows shows the flow:gate command, because it is how the reader answers a diamond" sh -c "printf '%s' \"\$0\" | grep -q '/flow:gate'" "$flows_section"
-check "CommittedPage_HasNoDrift: tools/generate.sh --check finds every generated file fresh, because the committed map must match what the sources render" "$root/tools/generate.sh" --check
+check "CommittedPage_HasNoDrift: the renderer tools/generate.sh uses for the map gives the committed page byte for byte, because the committed map must match what its sources render" python3 -I -c "
+import sys; sys.path.insert(0, '$root/tools/lib')
+from map import render_map
+committed = open('$root/docs/map.html', encoding='utf-8').read()
+sys.exit(1 if not committed or render_map('$root') != committed else 0)"
 printf '{"agents":{"physics-reviewer":{"tier":"read-only","model":"opus","effort":"high","description":"Reviews physics. Use when src/Physics changes."}}}\n' > "$work/project-roster.json"
 check "map with a project roster lists it beside the plugin agents" sh -c "python3 '$root/tools/lib/map.py' --root '$root' --roster '$work/project-roster.json' | grep -q 'This project (1)' && ! printf '%s' \"\$0\" | grep -q 'This project'" "$map"
 check "the plugin ships the page, same as docs/map.html" cmp -s "$root/plugins/meta/skills/map/assets/map.html" "$root/docs/map.html"
