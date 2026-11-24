@@ -11,7 +11,7 @@ import os
 import re
 import sys
 
-from playbooks import EXTRAS, PLAYBOOKS  # noqa: E402
+from flow_guide import DRIVE, EXTRAS, GATE_HINTS, RUNS, STATIONS  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "meta", "skills", "map", "scripts"))
 from project_map import EFFORT_RANK, MARK_COUNT, MARK_GROUP, MARK_LEGEND, agent_card, inject, load_roster, trigger_of  # noqa: E402,F401  (the plugin ships them)
 
@@ -20,7 +20,7 @@ MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
 # The brand colours are made for a light ground; these tints carry the same hue on a dark one.
 DARK_TINT = {"standards": "#F2F2F2", "flow": "#C4C4C4", "craft": "#8E8E8E", "meta": "#5E5E5E", "console": "#3A3A3A"}
 LIGHT_TINT = {"standards": "#0E0E0E", "flow": "#4D4D4D", "craft": "#808080", "meta": "#ABABAB", "console": "#C8C8C8"}
-# One colour per flow profile, light and dark ground. Used by the transit map and the playbooks.
+# One colour per flow profile, light and dark ground. Used by the transit map.
 LINES = {"bugfix": ("#0E0E0E", "#F2F2F2"), "task-S": ("#4D4D4D", "#C4C4C4"), "task-M": ("#808080", "#8E8E8E"),
          "task-L": ("#ABABAB", "#5E5E5E"), "epic": ("#2B2B2B", "#DADADA")}
 LINE_LABEL = {"bugfix": "bug", "task-S": "task S", "task-M": "task M", "task-L": "task L / XL", "epic": "epic"}
@@ -205,36 +205,38 @@ def sh_html(command, ask=""):
             % (esc(command.replace("{host}", "claude")), esc(command.replace("{host}", "codex")), esc(ask or command.replace("{host}", "claude"))))
 
 
-def playbook_html(pb, pj, agents_by_name):
-    key = pb["line"]
-    strip = []
-    for s in pj["profiles"][key]:
-        strip.append('<li class="gate">%s</li>' % esc(s[5:]) if s.startswith("gate:") else "<li>%s</li>" % esc(s))
-    out = ['<article class="pb" id="pb-%s" style="--lc:var(--l-%s)">' % (esc(pb["id"]), esc(key))]
-    out.append('<header><h3>%s</h3><p>%s</p><ol class="strip" aria-label="the steps of this line">%s</ol></header>' % (esc(pb["title"]), esc(pb["lede"]), "".join(strip)))
-    out.append('<ol class="steps">')
-    for n, st in enumerate(pb["steps"], 1):
-        cls = "gateful" if st.get("stop") else ""
-        out.append('<li class="%s"><span class="n">%d</span><div class="b">' % (cls, n))
-        if st.get("cmd"):
-            out.append('<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % cmd_html(st["cmd"], st.get("ask", "")))
-        if st.get("sh"):
-            out.append('<div class="cmd sh"><span class="p" aria-hidden="true">$</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % sh_html(st["sh"], st.get("ask", "")))
-        if st.get("act"):
-            out.append('<div class="act">%s</div>' % esc(st["act"]))
-        out.append('<p class="say">%s</p>' % esc(st["say"]))
-        meta = []
-        for a in st.get("who", []):
-            meta.append('<span class="ag" style="--pc:var(--c-%s)">%s</span>' % (esc(agents_by_name.get(a, "flow")), esc(a)))
-        if st.get("out"):
-            meta.append('<span class="out">&rarr; %s</span>' % esc(st["out"]))
-        if meta:
-            out.append('<div class="meta">%s</div>' % "".join(meta))
-        if st.get("stop"):
-            out.append('<div class="stop"><b>%s</b><span>%s</span></div>' % (esc(st["stop"][0]), esc(st["stop"][1])))
-        out.append("</div></li>")
-    out.append("</ol></article>")
+def step_box_html(step):
+    if step.get("command"):
+        return '<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % cmd_html(step["command"], step["ask"])
+    if step.get("shell"):
+        return '<div class="cmd sh"><span class="p" aria-hidden="true">$</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % sh_html(step["shell"], step["ask"])
+    return '<div class="act">%s</div>' % esc(step["action"])
+
+
+def step_meta_html(step, agent_plugin):
+    tags = ['<span class="ag" style="--pc:var(--c-%s)">%s</span>' % (esc(agent_plugin[agent]), esc(agent)) for agent in step.get("agents", [])]
+    if step.get("result"):
+        tags.append('<span class="out">&rarr; %s</span>' % esc(step["result"]))
+    return '<div class="meta">%s</div>' % "".join(tags) if tags else ""
+
+
+def steps_html(steps, agent_plugin):
+    out = ['<ol class="steps">']
+    for number, step in enumerate(steps, 1):
+        out.append('<li><span class="n">%d</span><div class="b">%s<p class="say">%s</p>%s</div></li>'
+                   % (number, step_box_html(step), esc(step["says"]), step_meta_html(step, agent_plugin)))
+    out.append("</ol>")
     return "\n".join(out)
+
+
+def stations_html(stations):
+    return '<div class="also">%s</div>' % "".join(
+        '<div><code class="station">%s</code><p>%s</p></div>' % (esc(station), esc(STATIONS[station])) for station in stations)
+
+
+def gates_html(gates):
+    return '<div class="gates">%s</div>' % "".join(
+        '<div class="stop"><b>%s</b><span>%s</span></div>' % (esc(name), esc(" ".join(filter(None, [gate["asks"], GATE_HINTS.get(name, "")])))) for name, gate in gates.items())
 
 
 CSS = """
@@ -283,26 +285,13 @@ figcaption{color:var(--muted);font-size:14px;margin-top:10px}
 .js .seg{display:inline-flex}
 .seg button{font:600 12px var(--mono);border:0;background:var(--panel);color:var(--fg);padding:6px 16px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
-.tabs{display:none;flex-wrap:wrap;gap:8px}
-.js .tabs{display:flex}
-.tabs button{font:600 14px var(--body);border:2px solid var(--fg);background:var(--panel);color:var(--fg);border-radius:10px;padding:8px 14px;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
-.tabs button::before{content:"";width:12px;height:12px;border-radius:50%;background:var(--lc)}
-.tabs button[aria-selected="true"]{background:var(--fg);color:var(--bg)}
-.js .pb{display:none}.js .pb.on{display:block}
-.pb{background:linear-gradient(180deg,var(--panel) 70%,var(--tint));border:2px solid var(--fg);border-radius:14px;padding:22px clamp(14px,3vw,28px) 10px;box-shadow:6px 6px 0 var(--lc);margin-bottom:22px}
-.pb header h3{font:500 clamp(24px,4vw,32px)/1.1 var(--display);margin:0;letter-spacing:-.01em}
-.pb header p{margin:4px 0 12px;color:var(--muted)}
-.strip{list-style:none;padding:0;margin:0 0 18px;display:flex;flex-wrap:wrap;gap:4px 6px}
-.strip li{font:600 11px var(--mono);padding:2px 9px;border-radius:99px;border:1.5px solid var(--lc);color:var(--fg)}
-.strip li.gate{background:var(--fg);color:var(--bg);border-color:var(--fg);padding:1px 9px 1px 7px}
-.strip li.gate::before{content:"\\25C6  "}
-.steps{list-style:none;margin:0;padding:0;counter-reset:s}
+.kicker{font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;margin:0 0 12px}
+.bar .kicker{margin:0}
+.steps{list-style:none;margin:0;padding:0;counter-reset:s;--lc:var(--fg)}
 .steps>li{display:grid;grid-template-columns:34px 1fr;gap:0 14px;position:relative;padding-bottom:20px}
 .steps>li::before{content:"";position:absolute;left:16px;top:34px;bottom:0;width:2px;background:var(--lc);opacity:.5}
 .steps>li:last-child::before{display:none}
 .steps .n{width:34px;height:34px;border-radius:50%;background:var(--panel);border:3px solid var(--lc);display:grid;place-items:center;font:700 14px var(--mono);z-index:1}
-.steps .gateful .n{border-radius:8px;transform:rotate(45deg);width:30px;height:30px;margin:2px;border-color:var(--fg);background:var(--fg)}
-.steps .gateful .n{font-size:0}
 .b{min-width:0;display:grid;gap:7px;padding-top:2px}
 .cmd{display:flex;align-items:center;gap:10px;background:linear-gradient(100deg,var(--term),#2A2A2A);color:var(--term-fg);border-radius:9px;padding:9px 10px 9px 14px;font:500 14px var(--mono);min-width:0}
 .cmd .p{color:var(--term-hot)}
@@ -319,7 +308,9 @@ figcaption{color:var(--muted);font-size:14px;margin-top:10px}
 .stop b{font:700 12px var(--mono);color:var(--fg);text-transform:uppercase;letter-spacing:.06em}
 .stop b::before{content:"\\25C6  "}
 .also{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-.also div{display:grid;gap:6px}.also p{margin:0;color:var(--muted);font-size:14px}
+.also div{display:grid;gap:6px;align-content:start}.also p{margin:0;color:var(--muted);font-size:14px}
+.station{font:600 13px var(--mono)}
+.gates{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
 .skills{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}
 .group{background:var(--panel);border:2px solid var(--fg);border-radius:14px;padding:14px 16px;min-width:0}
 .group h3{font:500 24px/1 var(--display);margin:0 0 8px;color:var(--fg);padding-left:10px;border-left:8px solid var(--pc)}
@@ -354,10 +345,6 @@ function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localSto
 function setHost(h){d.body.setAttribute('data-host',h);all('.seg button').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-host')===h));});}
 all('.seg button').forEach(function(b){b.addEventListener('click',function(){var h=b.getAttribute('data-host');setHost(h);store('brain-host',h);});});
 var h0=store('brain-host');setHost(h0==='codex'||h0==='say'?h0:'claude');
-function showPb(id){all('.pb').forEach(function(p){p.classList.toggle('on',p.id==='pb-'+id);});all('.tabs button').forEach(function(t){t.setAttribute('aria-selected',String(t.getAttribute('data-pb')===id));});}
-all('.tabs button').forEach(function(t){t.addEventListener('click',function(){showPb(t.getAttribute('data-pb'));});});
-var first=all('.tabs button')[0];var want=(location.hash||'').replace('#pb-','');
-showPb(all('.tabs button').some(function(t){return t.getAttribute('data-pb')===want;})?want:first.getAttribute('data-pb'));
 all('.cp').forEach(function(b){b.addEventListener('click',function(){
   var c=b.parentNode.querySelector('.c-'+d.body.getAttribute('data-host'));var t=c.textContent;
   var done=function(){b.textContent='copied';setTimeout(function(){b.textContent='copy';},1200);};
@@ -402,7 +389,7 @@ def render_map(root, project_roster=None):
     o.append('<div class="stats"><div><b>%d</b><span>plugins</span></div><div><b>%d</b><span>skills</span></div><div><b>%d</b><span>agents</span></div><div><b>%d</b><span>hooks</span></div></div>'
              % (len(plugins), skill_count, len(agents), hook_count))
     o[-1] = o[-1].replace("<span>agents</span></div>", "<span>agents%s</span></div>" % MARK_COUNT, 1)
-    o.append('<nav class="jump"><a href="#flows">Flows</a><a href="#playbooks">Playbooks</a><a href="#hooks">Hooks</a><a href="#skills">Skills</a><a href="#agents">Agents</a><a href="#install">Install</a></nav></header>')
+    o.append('<nav class="jump"><a href="#flows">Flows</a><a href="#hooks">Hooks</a><a href="#skills">Skills</a><a href="#agents">Agents</a><a href="#install">Install</a></nav></header>')
     # plugins
     o.append('<section id="plugins"><div class="key"><span><i class="ds"></i>skill</span><span><i class="da"></i>agent</span><span><i class="dh"></i>hook</span></div><div class="plugins" style="margin-top:12px">')
     for p in plugins:
@@ -414,25 +401,25 @@ def render_map(root, project_roster=None):
     # flows
     task_keys = ["bugfix", "task-S", "task-M", "task-L"]
     o.append('<section id="flows"><h2><i>01</i>The flows</h2><p class="sub">You file an item. Its kind and size pick a line. The run follows the line and stops at every diamond.</p><div class="stack">')
-    o.append('<div>%s<figure><div>%s</div><figcaption>Bugs and tasks. Where lines meet, they share a step. A failed review or verify sends the item back to implement.</figcaption></figure></div>'
-             % (chips_html(task_keys), metro(profiles, task_keys, "The steps a bug or task runs, one line per profile")))
+    o.append('<div>%s<figure><div>%s</div><figcaption>Bugs and tasks. Where lines meet, they share a step. A failed review or verify sends the item back to implement, %d attempts in all.</figcaption></figure></div>'
+             % (chips_html(task_keys), metro(profiles, task_keys, "The steps a bug or task runs, one line per profile"), profiles["max_attempts"]))
     o.append('<div>%s<figure><div>%s</div><figcaption>Epics. They produce tasks, then wait for every one to merge.</figcaption></figure></div>'
              % (chips_html(["epic"]), metro(profiles, ["epic"], "The steps an epic runs")))
-    o.append("</div></section>")
-    # playbooks
-    o.append('<section id="playbooks"><h2><i>02</i>Playbooks</h2><p class="sub">Real sessions, step by step. Type what the dark box says, or switch to Plain words and say it. A $ box goes in a terminal or a scheduler. The diamond is where you answer.</p>')
-    o.append('<div class="bar"><div class="tabs" role="tablist">%s</div><div class="seg" role="group" aria-label="Host"><button type="button" data-host="claude" aria-pressed="true">Claude</button><button type="button" data-host="codex" aria-pressed="false">Codex</button><button type="button" data-host="say" aria-pressed="false">Plain words</button></div></div>'
-             % "".join('<button type="button" role="tab" data-pb="%s" aria-selected="false" style="--lc:var(--l-%s)">%s</button>' % (esc(pb["id"]), esc(pb["line"]), esc(pb["title"])) for pb in PLAYBOOKS))
-    for pb in PLAYBOOKS:
-        o.append(playbook_html(pb, profiles, agent_plugin))
-    o.append('<h3 class="sub" style="font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-top:30px">Also at hand</h3><div class="also">')
-    for ex in EXTRAS:
-        o.append('<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code></div><p>%s</p></div>' % (cmd_html(ex["cmd"], ex.get("ask", "")), esc(ex["say"])))
+    stations = merged_order(profiles["profiles"], task_keys)
+    stations += [station for station in profiles["profiles"]["epic"] if station not in stations]
+    o.append('<div><h3 class="kicker">The stations</h3>%s</div>' % stations_html([station for station in stations if not station.startswith("gate:")]))
+    o.append('<div><h3 class="kicker">The diamonds</h3>%s</div>' % gates_html(profiles["gates"]))
+    o.append('<div><div class="bar"><h3 class="kicker">Drive a line</h3><div class="seg" role="group" aria-label="Host"><button type="button" data-host="claude" aria-pressed="true">Claude</button><button type="button" data-host="codex" aria-pressed="false">Codex</button><button type="button" data-host="say" aria-pressed="false">Plain words</button></div></div>'
+             '<p class="sub">Type what the dark box says, or switch to Plain words and say it. A $ box goes in a terminal or a scheduler.</p>%s</div>' % steps_html(DRIVE, agent_plugin))
+    for run in RUNS:
+        o.append('<div><h3 class="kicker">%s</h3><p class="sub">%s</p>%s</div>' % (esc(run["title"]), esc(run["lede"]), steps_html(run["steps"], agent_plugin)))
+    o.append('<div><h3 class="kicker">Also at hand</h3><div class="also">%s</div></div>' % "".join(
+        '<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code></div><p>%s</p></div>' % (cmd_html(extra["command"], extra["ask"]), esc(extra["says"])) for extra in EXTRAS))
     o.append("</div></section>")
     # hooks
-    o.append('<section id="hooks"><h2><i>03</i>Hooks</h2><p class="sub">Always on, no command needed. They stop mistakes while an agent works.</p><figure><div>%s</div><figcaption>Dots take the plugin\'s colour. Same hooks on both hosts.</figcaption></figure></section>' % svg_session(plugins))
+    o.append('<section id="hooks"><h2><i>02</i>Hooks</h2><p class="sub">Always on, no command needed. They stop mistakes while an agent works.</p><figure><div>%s</div><figcaption>Dots take the plugin\'s colour. Same hooks on both hosts.</figcaption></figure></section>' % svg_session(plugins))
     # skills
-    o.append('<section id="skills"><h2><i>04</i>Skills</h2><div class="legend"><span>%s runs by itself when the ask fits</span><span>%s you call it</span></div><div class="skills">' % (glyph_auto.replace('class="g"', 'class="g" style="color:var(--fg)"'), glyph_ask.replace('class="g"', 'class="g" style="color:var(--fg)"')))
+    o.append('<section id="skills"><h2><i>03</i>Skills</h2><div class="legend"><span>%s runs by itself when the ask fits</span><span>%s you call it</span></div><div class="skills">' % (glyph_auto.replace('class="g"', 'class="g" style="color:var(--fg)"'), glyph_ask.replace('class="g"', 'class="g" style="color:var(--fg)"')))
     for p in plugins:
         o.append('<div class="group" style="--pc:var(--c-%s)"><h3>%s</h3>' % (esc(p["name"]), esc(p["name"])))
         for s in p["skills"]:
@@ -441,7 +428,7 @@ def render_map(root, project_roster=None):
         o.append("</div>")
     o.append("</div></section>")
     # agents
-    o.append('<section id="agents"><h2><i>05</i>Agents</h2><div class="legend"><span>bars: effort</span><span>stripe: plugin</span><span>right: model, what it may touch</span>%s</div><div class="agents">' % MARK_LEGEND)
+    o.append('<section id="agents"><h2><i>04</i>Agents</h2><div class="legend"><span>bars: effort</span><span>stripe: plugin</span><span>right: model, what it may touch</span>%s</div><div class="agents">' % MARK_LEGEND)
     for a in sorted(agents, key=lambda a: (PLUGIN_ORDER.index(a["plugin"]) if a["plugin"] in PLUGIN_ORDER else 9, a["name"])):
         color = "var(--c-%s)" % a["plugin"] if a["plugin"] in by_plugin else "var(--muted)"
         o.append(agent_card(a, color))
@@ -449,7 +436,7 @@ def render_map(root, project_roster=None):
     o.append(MARK_GROUP)
     o.append("</section>")
     # install
-    o.append('<section id="install"><h2><i>06</i>Install</h2><div class="install">')
+    o.append('<section id="install"><h2><i>05</i>Install</h2><div class="install">')
     o.append('<div><b>Claude</b><pre>claude plugin marketplace add FilipposKaragiannis/brain\nclaude plugin install &lt;plugin&gt;@brain-plugins --scope project\n/standards:init  /flow:init</pre></div>')
     o.append('<div><b>Codex</b><pre>codex plugin marketplace add FilipposKaragiannis/brain\ncodex plugin add &lt;plugin&gt;@brain-plugins\n[plugins."&lt;plugin&gt;@brain-plugins"] enabled = true in .codex/config.toml\n/hooks once to trust the plugin hooks  $init</pre></div>')
     o.append("</div></section>")

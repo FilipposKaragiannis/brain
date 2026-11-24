@@ -41,22 +41,22 @@ map="$(python3 "$root/tools/lib/map.py" --root "$root")"
 check "map renders every skill" sh -c "for s in \$(ls -d '$root'/plugins/*/skills/*/ | xargs -n1 basename | sort -u); do printf '%s' \"\$0\" | grep -q \"<code>\$s</code>\" || exit 1; done" "$map"
 check "map renders every agent" sh -c "for a in \$(python3 -c \"import json; print(' '.join(json.load(open('$root/roster/agents.json'))['agents']))\"); do printf '%s' \"\$0\" | grep -q \"<code>\$a</code>\" || exit 1; done" "$map"
 check "map draws the profiles and the hooks" sh -c "printf '%s' \"\$0\" | grep -q 'task-L' && printf '%s' \"\$0\" | grep -q 'delivery gate'" "$map"
-check "playbooks name only real skills and agents" python3 -I -c "
+check "the flows guide names only real skills, agents and scripts" python3 -I -c "
 import sys; sys.path.insert(0, '$root/tools/lib')
-import map as m, playbooks as pb
+import map as m, flow_guide as guide
 plugins, agents, _ = m.load('$root')
-skills = {p['name'] + ':' + s['name'] for p in plugins for s in p['skills']}
-names = {a['name'] for a in agents}
-bad = [st['cmd'][0] for b in pb.PLAYBOOKS + [{'steps': pb.EXTRAS}] for st in b['steps'] if st.get('cmd') and st['cmd'][0] not in skills]
-bad += [a for b in pb.PLAYBOOKS for st in b['steps'] for a in st.get('who', []) if a not in names]
+skills = {plugin['name'] + ':' + skill['name'] for plugin in plugins for skill in plugin['skills']}
+names = {agent['name'] for agent in agents}
+steps = guide.DRIVE + guide.EXTRAS + [step for run in guide.RUNS for step in run['steps']]
+bad = [step['command'][0] for step in steps if step.get('command') and step['command'][0] not in skills]
+bad += [agent for step in steps for agent in step.get('agents', []) if agent not in names]
 import os
 flow = '$root/plugins/flow'
-for b in pb.PLAYBOOKS:
-    for st in b['steps']:
-        if st.get('sh'):
-            script = st['sh'].split()[0].split('.flow/')[-1]
-            if not (os.path.exists(os.path.join(flow, script)) or os.path.exists(os.path.join(flow, 'templates', os.path.basename(script)))):
-                bad.append(st['sh'])
+for step in steps:
+    if step.get('shell'):
+        script = step['shell'].split()[0].split('.flow/')[-1]
+        if not (os.path.exists(os.path.join(flow, script)) or os.path.exists(os.path.join(flow, 'templates', os.path.basename(script)))):
+            bad.append(step['shell'])
 sys.exit(1 if bad else 0)"
 printf '{"agents":{"physics-reviewer":{"tier":"read-only","model":"opus","effort":"high","description":"Reviews physics. Use when src/Physics changes."}}}\n' > "$work/project-roster.json"
 check "map with a project roster lists it beside the plugin agents" sh -c "python3 '$root/tools/lib/map.py' --root '$root' --roster '$work/project-roster.json' | grep -q 'This project (1)' && ! printf '%s' \"\$0\" | grep -q 'This project'" "$map"
@@ -64,6 +64,5 @@ check "the plugin ships the page, same as docs/map.html" cmp -s "$root/plugins/m
 mkdir -p "$work/elsewhere"
 check "the plugin's script fills the roster from outside the marketplace" sh -c "cd '$work/elsewhere' && python3 -I '$root/plugins/meta/skills/map/scripts/project_map.py' --roster '$work/project-roster.json' --out page.html >/dev/null && grep -q 'This project (1)' page.html && grep -q '<code>physics-reviewer</code>' page.html && grep -q 'agents (+1 yours)' page.html && grep -q 'dashed: this project' page.html"
 check "the script and the marketplace render the same page" sh -c "python3 '$root/tools/lib/map.py' --root '$root' --roster '$work/project-roster.json' | cmp -s - '$work/elsewhere/page.html'"
-check "map shows the six playbooks" sh -c "printf '%s' \"\$0\" | grep -c 'class=\"pb\"' | grep -qx 6" "$map"
 [ "$fails" -eq 0 ] && { echo "meta: ok"; exit 0; }
 echo "meta: $fails failed"; exit 1
