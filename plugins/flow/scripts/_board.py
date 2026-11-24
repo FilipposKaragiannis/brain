@@ -78,25 +78,6 @@ for name in ("runs.1.jsonl", "runs.jsonl"):
 if as_json:
     print(json.dumps({"pool": pool, "items": items, "runs": runs, "gates": gates,
                       "overlaps": [list(o) for o in overlap], "spend": spend, "tracker_errors": tracker_errors, "holders": holders}, indent=2)); sys.exit()
-if tracker_errors:
-    print("## Trackers not read")
-    for e in tracker_errors:
-        print("- %s (exit %s): %s" % (e["tracker"], e["code"], e["message"] or "no reason given"))
-    print()
-print("## Pool")
-print("| worktree | branch | item | step | last event | state |")
-print("|---|---|---|---|---|---|")
-for p in pool:
-    it = by_id.get(p["item"], {})
-    ev = it.get("state", {}).get("last_event", "")
-    run = ""
-    if p["item"] in running:
-        r = running[p["item"]]
-        run = " (running on %s)" % r["host"] if r["alive"] else " (run starting)" if r["starting"] else " (dead run)"
-    print("| %s | %s | %s | %s | %s | %s%s |" % (p["worktree"], p["branch"], p["item"] or "-", p["step"] or "-", ev, p["state"], run))
-print("\n## Items")
-print("| item | kind | priority | size | title | step | gate | worktree | blocked by |")
-print("|---|---|---|---|---|---|---|---|---|")
 def step_of(i):
     step = i["state"].get("step") or "-"
     if step == "split":
@@ -116,26 +97,15 @@ def worktree_of(item):
     worktree = item["state"].get("worktree") or "-"
     base = claimed_bases.get(item["id"], {}).get("base", "")
     return "%s, base %s" % (worktree, base) if base and base != config_base else worktree
-for item in sorted(items, key=lambda item: item.get("rank", 999)):
-    state = item["state"]
-    print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (item["id"], item["kind"], item.get("priority", ""), item.get("size") or state.get("size", ""), item["title"][:50],
-          step_of(item), gate_of(item), worktree_of(item), ", ".join(item["open_blockers"]) or "-"))
-if spend:
-    print("\n## Spend (unattended step sessions)")
-    print("| item | cost | sessions | tokens |")
-    print("|---|---|---|---|")
-    for item, s in sorted(spend.items(), key=lambda kv: -kv[1]["cost_usd"]):
-        print("| %s | $%.2f | %d | %d |" % (item, s["cost_usd"], s["sessions"], s["tokens"]))
 # Who raised the gate, who carries the answer out, and the condition the health job clears it on
 # (gate.sh raise). A record written before these fields shows none of them.
 ROLES = (("raised_by", "raised by"), ("answered_by", "answered by"), ("condition", "waits on"))
 def roles_of(g):
     said = ["%s %s" % (label, g[key]) for key, label in ROLES if g.get(key)]
     return " (%s)" % ", ".join(said) if said else ""
-if gates:
-    print("\n## Waiting on you")
-    for g in gates:
-        print("- **%s** on %s (%s): %s%s" % (g["gate"], g["item"], g["time"], str(g["message"]).splitlines()[0] if g["message"] != "" else "", roles_of(g)))
+print("## Waiting on you" if gates else "## Waiting on you: nothing")
+for gate in gates:
+    print("- **%s** on %s (%s): %s%s" % (gate["gate"], gate["item"], gate["time"], str(gate["message"]).splitlines()[0] if gate["message"] != "" else "", roles_of(gate)))
 now = time.time()
 waiting = [g for g in gates if now - epoch(g["time"]) > reminder]
 dead = [r for r in runs if not r["alive"] and not r["starting"]]
@@ -157,3 +127,35 @@ if overlap:
     print("\n## Overlapping claims")
     for a, b in overlap:
         print("- %s and %s touch the same paths" % (a, b))
+if tracker_errors:
+    print("\n## Trackers not read")
+    for tracker_error in tracker_errors:
+        print("- %s (exit %s): %s" % (tracker_error["tracker"], tracker_error["code"], tracker_error["message"] or "no reason given"))
+def print_table_heading(title, columns, rows, empty_note):
+    if not rows:
+        print("\n## %s: %s" % (title, empty_note))
+        return
+    print("\n## %s" % title)
+    print("| %s |" % " | ".join(columns))
+    print("|" + "---|" * len(columns))
+RANK_AFTER_EVERY_RANKED_ITEM = 999
+TITLE_WIDTH = 50
+print_table_heading("Items", ("item", "kind", "priority", "size", "title", "step", "gate", "worktree", "blocked by"), items, "none open")
+for item in sorted(items, key=lambda item: item.get("rank", RANK_AFTER_EVERY_RANKED_ITEM)):
+    state = item["state"]
+    print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (item["id"], item["kind"], item.get("priority", ""), item.get("size") or state.get("size", ""), item["title"][:TITLE_WIDTH],
+          step_of(item), gate_of(item), worktree_of(item), ", ".join(item["open_blockers"]) or "-"))
+print_table_heading("Pool", ("worktree", "branch", "item", "step", "last event", "state"), pool, "no worktrees")
+for pool_entry in pool:
+    last_event = by_id.get(pool_entry["item"], {}).get("state", {}).get("last_event", "")
+    run_note = ""
+    if pool_entry["item"] in running:
+        run_record = running[pool_entry["item"]]
+        run_note = " (running on %s)" % run_record["host"] if run_record["alive"] else " (run starting)" if run_record["starting"] else " (dead run)"
+    print("| %s | %s | %s | %s | %s | %s%s |" % (pool_entry["worktree"], pool_entry["branch"], pool_entry["item"] or "-", pool_entry["step"] or "-", last_event, pool_entry["state"], run_note))
+if spend:
+    print("\n## Spend (unattended step sessions)")
+    print("| item | cost | sessions | tokens |")
+    print("|---|---|---|---|")
+    for item, item_spend in sorted(spend.items(), key=lambda spend_entry: -spend_entry[1]["cost_usd"]):
+        print("| %s | $%.2f | %d | %d |" % (item, item_spend["cost_usd"], item_spend["sessions"], item_spend["tokens"]))

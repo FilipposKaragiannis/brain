@@ -491,6 +491,11 @@ sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
 check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/blockers.out"
 
+echo "the board lists what waits on the owner first (tests/board-order.sh)"
+sh "$here/board-order.sh" > "$work/board-order.out" 2>&1; code=$?
+check "board-order: $(tail -n 1 "$work/board-order.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/board-order.out"
+
 echo "an item's recorded base is read everywhere (tests/base-readers.sh)"
 sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
 check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
