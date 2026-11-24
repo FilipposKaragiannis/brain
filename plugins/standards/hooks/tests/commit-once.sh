@@ -119,6 +119,13 @@ rm -f src/scratch.txt
 check "PathspecFolderWithUntrackedFile_LeavesTheUntrackedFileUnchecked: git commits only tracked files under src/ ($agent_formatted)" sh -c '! printf "%s\n" "$1" | grep -qF scratch.txt' _ "$agent_formatted"
 expect_runs PathspecFolderWithUntrackedFile_RunsFormatOnce "$format_log" "$once" "the agent hook predicts src/a.txt alone, as git commits it"
 
+start_case PathspecCommitWithAnotherStagedFile
+printf 'staged extra\n' > extra.txt; git add extra.txt; printf 'c6\n' > c.txt
+agent_hooks 'git commit -m "feat: change c" c.txt'; run_commit 'git commit -m "feat: change c" c.txt'
+git rm -q -f --cached extra.txt; rm -f extra.txt
+expect_runs PathspecCommitWithAnotherStagedFile_RunsTheUnmarkedGateOnce "$unmarked_log" "$once" "extra.txt, staged outside the commit, is as the agent hook saw it"
+expect_runs PathspecCommitWithAnotherStagedFile_RunsTheMarkedGateOnce "$marked_log" "$once" "extra.txt, staged outside the commit, is as the agent hook saw it"
+
 start_case AddThenPathspecCommit
 printf 'src new\n' > src/new.txt
 agent_hooks 'git add src/new.txt && git commit -m "feat: add new" src/'
@@ -169,6 +176,15 @@ printf 'd3\n' > d.txt
 run_commit 'git commit -m "feat: change b"'
 expect_runs EditToFileOutsideTheCommitBetweenHooks_RunsTheUnmarkedGateAgain "$unmarked_log" "$twice" "a gate's build reads d.txt, which changed after the agent hook"
 expect_runs EditToFileOutsideTheCommitBetweenHooks_RunsTheMarkedGateAgain "$marked_log" "$twice" "a gate's build reads d.txt, which changed after the agent hook"
+
+start_case EditToStagedFileOutsideThePathspecCommitBetweenHooks
+printf 'staged extra\n' > extra.txt; git add extra.txt; printf 'c7\n' > c.txt
+agent_hooks 'git commit -m "feat: change c" c.txt'
+printf 'edited extra\n' > extra.txt
+run_commit 'git commit -m "feat: change c" c.txt'
+git rm -q -f --cached extra.txt; rm -f extra.txt
+expect_runs EditToStagedFileOutsideThePathspecCommitBetweenHooks_RunsTheUnmarkedGateAgain "$unmarked_log" "$twice" "a gate's build reads extra.txt, tracked in the index and changed after the agent hook"
+expect_runs EditToStagedFileOutsideThePathspecCommitBetweenHooks_RunsTheMarkedGateAgain "$marked_log" "$twice" "a gate's build reads extra.txt, tracked in the index and changed after the agent hook"
 
 start_case AddThenEditThenCommitAll
 printf 'g\n' > g.txt

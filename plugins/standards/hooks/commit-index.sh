@@ -3,8 +3,9 @@
 # hook already passed. POSIX sh, sourced by lib.sh.
 # The agent hook and git's own hooks both see an agent's commit. Before a check, the agent hook
 # builds the index the commit will make (the index as it is, the `git add` calls earlier in the
-# same command, -a, a pathspec with -o or -i) in a throwaway file and keys it on two trees: the
-# commit's tree and the tracked working files on top of it. When the check passes and the key has
+# same command, -a, a pathspec with -o or -i) in a throwaway file and keys it on three trees: the
+# commit's tree, the working files tracked on top of it and the working files the worktree's index
+# tracks, which git leaves as it was until the commit lands. When the check passes and the key has
 # not moved, it records the key; git's pre-commit and commit-msg (STANDARDS_FROM_GIT=1) skip that
 # check when the index git hands them gives the same key, recorded in the last 10 minutes. A
 # content key cannot match other content, so a wrong prediction only runs the check again, and so
@@ -142,8 +143,13 @@ git_on_index() {
 
 source_index_path() {
   # Prints the index the commit starts from: the one git hands its hook, else the worktree's own.
-  source_path="${GIT_INDEX_FILE:-}"
-  [ -n "$source_path" ] || source_path="$(cd "$standards_start_folder" && git rev-parse --git-path index 2>/dev/null)" || return 1
+  if [ -n "${GIT_INDEX_FILE:-}" ]; then printf '%s' "$GIT_INDEX_FILE"; return 0; fi
+  worktree_index_path
+}
+
+worktree_index_path() {
+  # Prints the worktree's own index, which git leaves as it was until the commit lands.
+  source_path="$(unset GIT_INDEX_FILE; cd "$standards_start_folder" && git rev-parse --git-path index 2>/dev/null)" || return 1
   case "$source_path" in /*) printf '%s' "$source_path" ;; *) printf '%s/%s' "$standards_start_folder" "$source_path" ;; esac
 }
 
@@ -153,6 +159,7 @@ write_commit_index() {
   staging_mode="$(printf '%s\n' "$2" | head -n 1)"
   staged_paths="$(printf '%s\n' "$2" | sed '1d')"
   cp "$(source_index_path)" "$1" 2>/dev/null && add_to_index "$1" "$3" || return 1
+  { cp "$(worktree_index_path)" "$1.tracked" 2>/dev/null && add_to_index "$1.tracked" "$3"; } || rm -f "$1.tracked"
   [ "$staging_mode" != all ] || git_on_index "$1" add -u || return 1
   case "$staging_mode" in only|include) ;; *) return 0 ;; esac
   (
@@ -201,17 +208,23 @@ discard_index_at_exit() {
 }
 
 commit_key() {
-  # $1 index file, or empty. Prints the commit's tree and the tree of the tracked working files on
-  # top of it, or nothing when git cannot write either.
+  # $1 index file, or empty. Prints the commit's tree, the tree of the working files tracked on top
+  # of it and the tree of the working files the worktree's index tracks, or nothing when git cannot
+  # write one.
   [ -n "$1" ] || return 0
   commit_tree="$(git_on_index "$1" write-tree)" || return 0
+  working_tree="$(working_files_tree "$1")" && tracked_tree="$(working_files_tree "$1.tracked")" || return 0
+  printf '%s %s %s' "$commit_tree" "$working_tree" "$tracked_tree"
+}
+
+working_files_tree() {
+  # $1 index file. Prints the tree of the working files that index tracks. Fails when git cannot.
   working_index="$1.working"
-  working_tree=""
   cp "$1" "$working_index" 2>/dev/null && git_on_index "$working_index" add -u \
-    && working_tree="$(git_on_index "$working_index" write-tree)"
+    && git_on_index "$working_index" write-tree
+  working_status=$?
   rm -f "$working_index"
-  [ -n "$working_tree" ] || return 0
-  printf '%s %s' "$commit_tree" "$working_tree"
+  return "$working_status"
 }
 
 index_files() {
@@ -242,5 +255,5 @@ passed_seen() {
   # $1 check name, $2 key. True in a git hook when the agent hook passed this check for that key.
   [ -n "${STANDARDS_FROM_GIT:-}" ] && [ -n "$2" ] || return 1
   awk -v check="$1" -v key="$2" -v now="$(date +%s)" -v window="$passed_window_seconds" \
-    '$1 == check && ($2 " " $3) == key && now - $4 <= window { seen = 1 } END { exit !seen }' "$(passed_file)" 2>/dev/null
+    '$1 == check && ($2 " " $3 " " $4) == key && now - $5 <= window { seen = 1 } END { exit !seen }' "$(passed_file)" 2>/dev/null
 }
