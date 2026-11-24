@@ -75,7 +75,10 @@ elif [ -z "$item" ]; then
   trackers="$(adapters_configured)" || exit 2
   # shellcheck disable=SC2086
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
-  notes="$home/tmp/.notes.$$"; warnings="$home/tmp/.warnings.$$"; rm -f "$notes" "$warnings"
+  notes="$(mktemp "$home/tmp/.notes.XXXXXX")" || die "cannot make a temp file in $home/tmp"
+  warnings="$(mktemp "$home/tmp/.warnings.XXXXXX")" || { rm -f "$notes"; die "cannot make a temp file in $home/tmp"; }
+  trap 'rm -f "$notes" "$warnings"' EXIT
+  trap 'rm -f "$notes" "$warnings"; exit 130' INT TERM
   listed="$(FLOW_READY_NOTES="$notes" FLOW_READY_WARNINGS="$warnings"; export FLOW_READY_NOTES FLOW_READY_WARNINGS
     for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | cached_python3 -I -c '
 import json, os, sys
@@ -90,8 +93,8 @@ out.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(out))
 notes = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()] if os.path.exists(sys.argv[1]) else []
 print(json.dumps(notes))' "$notes")"
-  rm -f "$notes"
-  [ ! -s "$warnings" ] || cat "$warnings" >&2; rm -f "$warnings"
+  [ ! -s "$warnings" ] || cat "$warnings" >&2
+  rm -f "$notes" "$warnings"; trap - EXIT INT TERM
   ready="$(printf '%s\n' "$listed" | sed -n 1p)"; notready="$(printf '%s\n' "$listed" | sed -n 2p)"
   wait_notes "$notready"
 fi
