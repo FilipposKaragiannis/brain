@@ -54,7 +54,7 @@ claude"
 # author_host <pr>: the host that wrote the PR, claude or codex: the pr_host of the item of its head
 # branch (branch_item), else its body's footer; nothing when neither says.
 author_host() {
-  said="$(gh pr view "$1" -R "$repo" --json headRefName,body 2>/dev/null | python3 -I -c '
+  said="$(gh pr view "$1" -R "$repo" --json headRefName,body 2>/dev/null | cached_python3 -I -c '
 import json, sys
 pr = json.load(sys.stdin); head, body = pr.get("headRefName") or "-", pr.get("body") or ""
 print(head, "claude" if "Generated with [Claude Code]" in body else "codex" if "chatgpt.com/codex/tasks/" in body else "-")' 2>/dev/null)" || return 0
@@ -72,7 +72,7 @@ pr_reviewers() {
 # and waits until COMPLETED; a status passes on SUCCESS and waits on PENDING or EXPECTED; anything
 # else failed. Re-runs share a name: the one started last counts, and one not started yet is last.
 failing_of() {
-  python3 -I -c '
+  cached_python3 -I -c '
 import json, sys
 NOT_STARTED = "9999"
 latest = {}
@@ -133,7 +133,7 @@ chase_row() { # chase_row <pr> <row> <after s> <max> <head sha>: act on one revi
     seen="$(copilot_seen "$1" "$round" "$chases" "$waiting")"; chases="${seen% *}"; waiting="${seen#* }"
   fi
   [ "$waiting" -ge "$3" ] || return 0
-  ago="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" ago "$(( $(date +%s) - $(json_get "$2" waiting) ))")"
+  ago="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" ago "$(( $(date +%s) - $(json_get "$2" waiting) ))")"
   if [ "$chases" -ge "$4" ]; then
     report_stalled "$1" "$reviewer" "$(json_get "$2" asked_id)" "$ago" "$4"
   elif [ "$reviewer" = "copilot" ]; then
@@ -145,7 +145,7 @@ chase_row() { # chase_row <pr> <row> <after s> <max> <head sha>: act on one revi
 chase_pr() { # chase_pr <pr>
   # An unset key prints nothing, not an empty line, so the default is a fallback, not a sed.
   after="$(cfg reviews.chase_after)"
-  after="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds reviews.chase_after "${after:-$DEFAULT_CHASE_AFTER}")" || exit 2
+  after="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds reviews.chase_after "${after:-$DEFAULT_CHASE_AFTER}")" || exit 2
   max="$(cfg reviews.max_chases)"; max="${max:-$DEFAULT_MAX_CHASES}"
   head="$(gh pr view "$1" -R "$repo" --json headRefOid -q .headRefOid)" || exit 1
   home="$(flow_home)"; mkdir -p "$home/reviews"
@@ -155,7 +155,7 @@ case "${1:-}" in
   threads)
     n="$(pr_number "$2")"
     gh api graphql -f query="{ repository(owner:\"$owner\", name:\"$name\") { pullRequest(number:$n) { reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:50) { nodes { databaseId body author { login } createdAt } } } } } } }" \
-      | python3 -I -c '
+      | cached_python3 -I -c '
 import json, sys
 d = json.load(sys.stdin)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
 out = []
@@ -174,7 +174,7 @@ print(json.dumps(out, indent=2))' ;;
     gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}' -f t="$2" >/dev/null ;;
   issue-comments)
     n="$(pr_number "$2")"
-    gh api "repos/$repo/issues/$n/comments?per_page=100" | python3 -I -c '
+    gh api "repos/$repo/issues/$n/comments?per_page=100" | cached_python3 -I -c '
 import json, sys
 print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"], "created": c["created_at"]} for c in json.load(sys.stdin)], indent=2))' ;;
   ready)
@@ -203,7 +203,7 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
       gh api --paginate --slurp "repos/$repo/issues/$pull/timeline?per_page=$PAGE_SIZE" > "$scratch/timeline.json" &&
       me="$(gh api user -q .login)" &&
       head="$(gh pr view "$pull" -R "$repo" --json headRefOid -q .headRefOid)" &&
-      python3 -I "$FLOW_PLUGIN/scripts/_reviews.py" status "$scratch/comments.json" "$scratch/reviews.json" "$scratch/timeline.json" "$me" "$head" "$(date +%s)" $list
+      cached_python3 -I "$FLOW_PLUGIN/scripts/_reviews.py" status "$scratch/comments.json" "$scratch/reviews.json" "$scratch/timeline.json" "$me" "$head" "$(date +%s)" $list
     status=$?; rm -rf "$scratch"; exit $status ;;
   chase)
     chase_pr "$(pr_number "$2")" ;;
@@ -219,7 +219,7 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
     # A thread with no marker anywhere may hold a reply from before 1.19.0: there the flow's login
     # speaks for it. Read once, only then, through the job's per-run cache when it gives one.
     me=""
-    if printf '%s' "$th" | python3 -I -c '
+    if printf '%s' "$th" | cached_python3 -I -c '
 import json, sys
 marker = sys.argv[1]
 sys.exit(0 if any(marker not in "".join([t["body"] or ""] + [r["body"] or "" for r in t["replies"]]) for t in json.load(sys.stdin)) else 1)' "$REPLY_MARKER"; then
@@ -227,7 +227,7 @@ sys.exit(0 if any(marker not in "".join([t["body"] or ""] + [r["body"] or "" for
       if [ -n "$cache" ] && [ -f "$cache" ]; then me="$(cat "$cache")"
       else me="$(gh api user -q .login 2>/dev/null)" || me=""; [ -z "$cache" ] || printf '%s' "$me" > "$cache"; fi
     fi
-    python3 -I -c '
+    cached_python3 -I -c '
 import json, sys
 state, threads, marker, me, failing = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 def last(t):

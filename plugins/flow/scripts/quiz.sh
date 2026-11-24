@@ -34,7 +34,7 @@ case "${1:-}" in
     [ $# -eq 2 ] || die "usage: quiz.sh show <item>" 2
     item="$2"; reports="$(reports_of "$item")" || exit 2
     [ -s "$reports/quiz.md" ] || die "no quiz for $item ($reports/quiz.md)" 2
-    quiz="$(python3 -I "$FLOW_PLUGIN/scripts/_quiz.py" parse "$reports/quiz.md")" || die "cannot parse $reports/quiz.md" 2
+    quiz="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_quiz.py" parse "$reports/quiz.md")" || die "cannot parse $reports/quiz.md" 2
     result=null; [ -s "$reports/quiz.json" ] && result="$(cat "$reports/quiz.json")"
     printf '%s\n' "$(json_set "$(json_set "$quiz" item "$(json_string "$item")")" result "$result")" ;;
   answer)
@@ -42,7 +42,7 @@ case "${1:-}" in
     item="$2"; shift 2
     reports="$(reports_of "$item")" || exit 2
     [ -s "$reports/quiz.md" ] || die "no quiz for $item ($reports/quiz.md)" 2
-    result="$(python3 -I "$FLOW_PLUGIN/scripts/_quiz.py" grade "$reports/quiz.md" "$@")" || die "cannot grade $reports/quiz.md" 2
+    result="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_quiz.py" grade "$reports/quiz.md" "$@")" || die "cannot grade $reports/quiz.md" 2
     at="$(now_iso)"
     result="$(json_set "$(json_set "$result" item "$(json_string "$item")")" at "$(json_string "$at")")"
     printf '%s\n' "$result" > "$reports/quiz.json" || die "cannot write $reports/quiz.json"

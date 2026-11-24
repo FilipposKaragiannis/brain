@@ -20,9 +20,13 @@
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
-# the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base. A moved file is changed at its old path and its new one. Exit 0 on pass,
-# 1 on fail; 2 when --base is no valid branch name.
+# the claim's base (.flow/claim.json in the worktree, when a valid name) and the item state's,
+# either alone when the other has none, else the config base; a claim base that differs from the
+# item state's is neither, and the run has no base. A moved file is changed at its old path and its
+# new one. When verify cannot trust the comparison, the base is unresolved, a git listing fails or
+# a name holds U+001F, a failed `changed files` check names why (scripts/_change_list.py and
+# scripts/_verify_base.py), every check with paths runs, no kept pass is reused and feel_test is
+# true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is not a valid name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -42,6 +46,7 @@
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/checks.sh"
+. "$FLOW_PLUGIN/lib/files_placeholder.sh"
 usage="usage: verify.sh <item> [--base <ref>] [--fresh] [--start | --wait [seconds]]"
 [ $# -ge 1 ] || die "$usage" 2
 item="$1"; shift
@@ -61,8 +66,10 @@ case "$wait_for" in ''|*[!0-9]*) die "--wait takes a number of seconds, not $wai
 given_base="$base"
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
+export GIT_NO_REPLACE_OBJECTS=1 # a replace ref made in the worktree could forge the base commit's tree
+main_worktree_resolve
 [ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
-[ -n "$base" ] || base="$(recorded_base "$root")"
+item_state="$(item_read "$item" 2>/dev/null)" || item_state='{}'
 reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
 log="$reports/verify.log"; run_out="$reports/verify.out"
 # The checks the run failed so far, one name per line, so a run stopped before its report still
@@ -71,8 +78,7 @@ failed_file="$reports/verify.failed"
 
 # next_attempt: the attempt this run is, one past the item's recorded attempts.
 next_attempt() {
-  item_json="$(item_read "$item" 2>/dev/null)" || item_json='{}'
-  recorded_attempts="$(state_get "$item_json" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
+  recorded_attempts="$(state_get "$item_state" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
 }
 # report_text <text>: the text as one line of printable characters with no quote or backslash,
 # cut to report_text_max_characters, safe inside the JSON string of a minimal report.
@@ -103,7 +109,7 @@ duration() {
 now_seconds() { case "${FLOW_NOW_SECONDS:-}" in ''|*[!0-9]*) date +%s ;; *) printf '%s' "$FLOW_NOW_SECONDS" ;; esac; }
 # limit_seconds: verify.limit from the flow config in seconds; a value that is no duration says so
 # on stderr and returns 1.
-limit_seconds() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
+limit_seconds() { cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
 # running_now: the check the run is on, as the log names it, or starting before the first.
 running_now() { current_check="$(verify_running_check "$log")"; printf '%s' "${current_check:-starting}"; }
 # unfinished_report <cause> <stop cause>: the fail report of a run that ended with none, naming the
@@ -212,24 +218,37 @@ case "$mode" in
   detached) run_detached ;;
 esac
 
-ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
-merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
-changed="$(git diff --no-renames --name-only "$merge_base" HEAD 2>/dev/null; git diff --no-renames --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
-changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
+name_separator="$(printf '\037')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
-records=""; changed_list=""; timings=""
+records=""; changed_list=""; timings=""; change_list_summary_file=""; chosen_base_file=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+change_list_summary_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+chosen_base_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
+config_base="$(cfg_or base main)"
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" --log="$log" --summary="$change_list_summary_file" \
+  --chosen-base-file="$chosen_base_file" --given="$given_base" --claimed="$(claim_name "$root" base)" \
+  --recorded="$(checked_name "$(state_get "$item_state" base)")" \
+  --task-branch="$(checked_name "$(state_get "$item_state" branch)")" --fallback="$config_base")"
+case "$?" in
+  0) change_list=complete; listed_files_only="" ;;
+  "$unreadable_names_exit") change_list=unreadable_names ;;
+  "$incomplete_list_exit") change_list=incomplete ;;
+  *) die "cannot read the changed file names" ;;
+esac
+{ IFS= read -r base_commit && IFS= read -r base; } < "$chosen_base_file" || die "cannot read the comparison base"
+change_list_summary="$(cat "$change_list_summary_file")" || die "cannot read why the changed file list is short"
 
 record() {
   # record <name> <status> <command> <summary source> <seconds> <reused from>: one check, four
@@ -247,36 +266,62 @@ skipped() {
   # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
   record "$1" skipped "" "$2" 0 ""
 }
+changed_unit_matches() {
+  unit_rest="$changed_units"
+  while [ -n "$unit_rest" ]; do
+    unit_name="${unit_rest%%"$name_separator"*}"; unit_rest="${unit_rest#*"$name_separator"}"
+    glob_match "$1" "$unit_name" && return 0
+  done
+  return 1
+}
 changed_matches() {
   # changed_matches <globs, one per line>: true when a changed file matches one of them.
-  while IFS= read -r g; do
-    [ -n "$g" ] || continue
-    while IFS= read -r f; do
-      [ -n "$f" ] && glob_match "$g" "$f" && return 0
-    done <<EOF_FILES
-$changed
-EOF_FILES
+  while IFS= read -r glob_line; do
+    [ -n "$glob_line" ] || continue
+    changed_unit_matches "$glob_line" && return 0
   done <<EOF_GLOBS
 $1
 EOF_GLOBS
   return 1
 }
+in_scope() { [ "$change_list" != complete ] || changed_matches "$1"; }
+command_with_verify_base() {
+  case "$1" in
+    *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+run_with_names() {
+  run_template="$1"; shift
+  [ -n "$run_template" ] || { echo "the command is empty" >&2; return 1; }
+  run_command="$(files_placeholder_expanded "$run_template")" || return 1
+  run_names_escaped=""
+  case "$run_command" in
+    *format_names_escaped*) run_names_escaped="$(names_backslash_escaped "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; return 1; } ;;
+  esac
+  format_names_escaped="$run_names_escaped" sh -c "$run_command" sh "$@"
+}
+
+log_check_files() {
+  [ "$#" -eq 0 ] || { printf '  files:\n'; printf '    %s\n' "$@"; } >> "$log"
+}
 
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
-  cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
-  printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
-  check_started="$(now_seconds)"
-  if out="$(sh -c "$cmd" 2>&1)"; then st="pass"; summary="ok"
+  IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
+  printf '\n== %s: %s\n' "$name" "$command" >> "$log"
+  log_check_files "$@"
+  check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
+  if run_with_names "$command" "$@" >> "$log" 2>&1; then check_status="pass"; summary="ok"
   else
-    st="fail"; [ "$kind" = "signal" ] && st="signal"
-    summary="$out"
+    check_status="fail"; [ "$kind" = "signal" ] && check_status="signal"
+    summary="$(tail -c "+$log_start" "$log")"
   fi
-  printf '%s\n' "$out" >> "$log"
-  [ "$st" = "fail" ] && failed "$name"
-  record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
-  [ "$st" = "pass" ]
+  [ "$check_status" = "fail" ] && failed "$name"
+  record "$name" "$check_status" "$command" "$summary" "$(( $(now_seconds) - check_started ))" ""
+  [ "$check_status" = "pass" ]
 }
 
 scoped_check() {
@@ -285,9 +330,10 @@ scoped_check() {
   # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
   # --fresh runs the command whatever is kept. A test pass is kept for the next run, and a fail
   # drops what is kept. A build has no key, so it always runs and nothing of it is kept.
-  if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
-  if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
+  if [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
@@ -310,30 +356,34 @@ planned_checks() {
 
 # A build or test entry the plan cannot read is a failed check that names the entry, and neither
 # kind runs.
-if ! planned="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
+if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
+if [ "$change_list" != complete ]; then record "changed files" fail "" "$change_list_summary" 0 ""; failed "changed files"; fi
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
-  exts="$(json_list "$lang" extensions | tr '\n' '|' | sed 's/|$//; s/\./\\./g')"
+  extensions="$(json_list "$lang" extensions)"
   nf="$(json_length "$lang" format)"; j=0
+  if [ "${nf:-0}" -gt 0 ] && [ -z "$extensions" ]; then
+    record format fail "" "the language $(json_get "$lang" name) has a format command and no extensions, so verify cannot tell which changed files it covers" 0 ""; failed format; ran_format=1
+  fi
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
-    files="$(printf '%s\n' "$changed" | grep -E "($exts)$" | { [ -n "$prefix" ] && grep "^$prefix" || cat; } | while read -r f; do [ -f "$f" ] && printf '%s ' "$f"; done)"
+    files="$(printf '%s' "$changed_units" | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" existing "$prefix" "$extensions")"
     if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
   i=$((i + 1))
 done
-[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule"
+[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule$listed_files_only"
 planned_checks test tests
 mutation="$(json_get "$std" mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
   case "$mutation" in
-    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run"; fi ;;
+    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
     *) run_check mutation "$mutation" signal ;;
   esac
 fi
@@ -341,15 +391,13 @@ for name in $(yaml_keys "$(config_file)" gates); do
   command="$(cfg "gates.$name")"; paths=""
   if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; fi
   [ -n "$command" ] || continue
-  if [ -n "$paths" ] && ! changed_matches "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
+  if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
 done
-feel=false
-for g in $(cfg feel_test_paths); do
-  printf '%s\n' "$changed" | while read -r f; do glob_match "$g" "$f" && exit 3; done
-  [ $? -eq 3 ] && { feel=true; break; }
-done
-printf '%s\n' "$changed" > "$changed_list"
+feel_test_paths="$(cfg feel_test_paths)"; feel=false
+if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
+elif changed_matches "$feel_test_paths"; then feel=true; fi
+printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"
 
 report_failed() {
@@ -360,7 +408,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
+err="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]

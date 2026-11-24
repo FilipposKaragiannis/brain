@@ -34,6 +34,12 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    ready, the reviewers asked. A quiz never goes on the PR: the owner takes it in the console,
    which marks the draft ready on a pass. The profile raises the merge gate after this step;
    the orchestrator notifies the owner with the URL and the verify summary.
+   **No PR**: only when the branch has nothing to merge (a clean tree and no diff against the
+   base, `git diff --quiet <base>...HEAD`), the result is `done` with no `pr` key and a summary
+   that says why the item needs no PR. `advance.sh` then closes the item with that summary and
+   releases the worktree, and raises no merge gate. A branch with changes is never `done` without
+   a PR: `advance.sh` finds a PR on the task branch and records it, and with none raises an
+   escalation gate.
    A `fail` or a `gate` names, in its summary or message, what the owner runs or does to unblock
    it, filled in for this item: the git or gh command (`git -C <worktree> push -u origin
    <branch>`, `gh pr create --base <base> --head <branch>`) or the tracker action (merge the

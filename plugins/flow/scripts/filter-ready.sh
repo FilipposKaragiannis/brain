@@ -20,4 +20,4 @@
 # held_reason, a blocked one blocked_by, its open blockers, one that waits for an epic branch epic
 # and branch), so next.sh can say why a pick found nothing.
 . "$(dirname "$0")/../lib/flow.sh"
-items_join | python3 -I "$FLOW_PLUGIN/scripts/_filter_ready.py" "$FLOW_PLUGIN" "$(flow_home)"
+items_join | cached_python3 -I "$FLOW_PLUGIN/scripts/_filter_ready.py" "$FLOW_PLUGIN" "$(flow_home)"

@@ -184,7 +184,7 @@ record_linked_pr() (
 # and tracker_state.
 state_reader() {
   flow_record_reader_tracker="$(tracker_state)" || return "$EXIT_USAGE"
-  python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$@" --state-dir "$(state_dir)" --flow-home "$(flow_home)" \
+  cached_python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$@" --state-dir "$(state_dir)" --flow-home "$(flow_home)" \
     --tracker-state "$flow_record_reader_tracker"
 }
 
@@ -198,7 +198,7 @@ item_shape_required() {
 state_python() {
   flow_record_python_command="$1"; flow_record_python_dir="$2"; flow_record_python_home="$3"
   flow_record_python_item="$4"; shift 4
-  python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$flow_record_python_command" \
+  cached_python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$flow_record_python_command" \
     --state-dir "$flow_record_python_dir" --flow-home "$flow_record_python_home" \
     --item "$flow_record_python_item" "$@"
 }

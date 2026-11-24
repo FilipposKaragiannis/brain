@@ -13,4 +13,4 @@ if [ -n "$FLOW_SCOPE_KINDS" ]; then
   case ",$(printf '%s' "$FLOW_SCOPE_KINDS" | tr '[:upper:]' '[:lower:]')," in *,"$(json_get "$item" kind)",*) ;; *) exit 1 ;; esac
 fi
 FLOW_SCOPE_ASSIGNEE="$(assignee_login "$FLOW_SCOPE_ASSIGNEE")" || exit 3
-python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" in-scope "$(gh_repo)" "$STATE_MARKER" "$number" "$(cfg_or github.limit 500)"
+cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" in-scope "$(gh_repo)" "$STATE_MARKER" "$number" "$(cfg_or github.limit 500)"

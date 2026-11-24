@@ -13,13 +13,15 @@
 #   hold.sh set <item> <holder> <reason>
 #                              hold the item behind <holder>: held_by, held_reason and a `held`
 #                              line in events.log. A holder that is the item itself, closed or
-#                              unreadable is refused, exit 1, with nothing written
+#                              unreadable is refused, exit 1, with nothing written; a hold the
+#                              tracker does not take exits 3
 #   hold.sh clear <item> <why> lift the hold: held_by and held_reason cleared and an `unheld`
 #                              line with <why>; nothing when the item is not held
-# Exit codes: 0 done · 1 refused · 2 bad usage.
+# Exit codes: 0 done · 1 refused · 2 bad usage · 3 the hold could not be written.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 main="$(dirname "$home")"
+EXIT_HOLD_NOT_WRITTEN=3
 
 # event <item> <kind> <text>: one events.log line, the text on one line.
 event() { mkdir -p "$home"; printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$1" "$2" "$(printf '%s' "$3" | tr '\n\t' '  ')" >> "$home/events.log"; }
@@ -73,17 +75,17 @@ cmd_candidates() {
         [ -n "$root" ] && [ -f "$f" ] && { plan="$f"; break; }
       done
       json_obj "id=$other" "title=$(json_get "$od" title)" "by=$kind" \
-        "globs:=$(printf '%s\n' "$globs" | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')" \
+        "globs:=$(printf '%s\n' "$globs" | cached_python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')" \
         "plan=$plan" "step=$(state_get "$od" step)"
       echo
     done)"
   fi
   if [ "$as_json" -eq 1 ]; then
-    printf '%s\n' "$rows" | python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))'
+    printf '%s\n' "$rows" | cached_python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))'
     return 0
   fi
   [ -n "$rows" ] || return 0
-  printf '%s\n' "$rows" | python3 -I -c '
+  printf '%s\n' "$rows" | cached_python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if not line.strip(): continue
@@ -99,7 +101,7 @@ cmd_set() {
   [ -n "$holder" ] || die "a hold names the item it waits behind" 2
   [ "$holder" != "$item" ] && hd="$(adapter read "$holder" 2>/dev/null)" && [ "$(json_get "$hd" status)" = open ] \
     || { echo "flow: $item is not held behind $holder: it is the item itself, closed or unreadable" >&2; exit 1; }
-  record_set "$item" "held_by=$holder" "held_reason=$reason" >/dev/null || die "could not write the hold on $item"
+  record_set "$item" "held_by=$holder" "held_reason=$reason" >/dev/null || die "could not write the hold on $item" "$EXIT_HOLD_NOT_WRITTEN"
   event "$item" held "behind $holder: ${reason:-no reason given}"
 }
 

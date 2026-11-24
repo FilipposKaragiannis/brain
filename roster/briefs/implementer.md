@@ -23,6 +23,13 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
    A method writes an argument only when its name says so (M-08), even where the file
    around it threads state through `ref`: a method that decides returns its result.
+   In shell and script code the same rules hold. A function that computes prints its result
+   for the caller to assign, never a global, and one named as a check or lookup never fetches,
+   writes or creates (M-08). Loop counters, `read` variables, temporaries and helper prefixes
+   are spelt in full (`poll_count`, `pool_path`, never `i`, `p`, `tmp`, `cfg`, `vl_`): short
+   names in the file around them are no precedent, and only the glossary's allowed list is
+   (N-05). A bound, delay or cut length gets a named constant (N-06). A comment gives a why,
+   never what the next lines do, in script headers too (C-01).
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
    handling for impossible cases. When the plan is wrong, ambiguous or impossible, stop with
    status `gate` and gate `ambiguity` instead of improvising.
@@ -47,11 +54,17 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    reports. One you cannot meet inside the item's scope: stop with status `gate`, gate
    `ambiguity`, and ask the owner to drop the line or split it into a new item. Never restate
    it as a note.
+   Sent back for a rule breach: the finding cites one instance, not the list. Before you
+   commit, search the whole branch diff (`git diff <base>...HEAD`) for the same breach, the same
+   literal or the same shape in every file, and fix each one. Then reread every line you changed
+   in the fix against that rule: a line you touch to fix one literal is touched code, so its
+   other literals are named too.
 8. A test you add or change (a build repair, a moved rig, a test in a fix commit) meets the
    test writer's pre-commit checks: one behaviour per test, split where two assertions can fail
    independently; no `?.` ahead of an assertion; a not-empty check before comparing collections
    or streams; settings, constants and messages read from their owner, never copied as literals;
    the test's own tick counts and bounds named (N-06); no assertion on a fake's calls (T-08). Review blockers keep landing on tests written outside the test step.
+   A test helper, fake or rig is code under the hard rules, as the test writer's step 5 says.
 
 ## Merge and rebase conflicts
 When a rebase onto the task branch or the base conflicts: see the state (`git status`, the

@@ -75,10 +75,10 @@ trap 'c=$?; slot_give_all "$slot_pool" $$; rm -rf "$out.run"; rm -f "$out.login"
 PASS_STOP_GRACE=10
 PASS_LIMIT_EXIT=124
 pass_limit="$(cfg_or jobs.comments.pass_limit 1h)"
-pass_limit_seconds="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.pass_limit "$pass_limit" 2>&1)" || die "${pass_limit_seconds#flow: }" 2
+pass_limit_seconds="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.pass_limit "$pass_limit" 2>&1)" || die "${pass_limit_seconds#flow: }" 2
 [ "$pass_limit_seconds" -ge 1 ] || die "jobs.comments.pass_limit is '$pass_limit': a pass needs at least 1s" 2
 idle_session="$(cfg_or jobs.comments.idle_session 30m)"
-idle_session_seconds="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.idle_session "$idle_session" 2>&1)" || die "${idle_session_seconds#flow: }" 2
+idle_session_seconds="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.idle_session "$idle_session" 2>&1)" || die "${idle_session_seconds#flow: }" 2
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""; gated=""; rm -f "$out.gated"
@@ -87,7 +87,7 @@ if [ -n "$one" ]; then
 else
   trackers="$(adapters_configured 2>&1)" || { printf '%s\n' "$trackers" >&2; job_say "error: ${trackers#flow: }" >/dev/null; exit 2; }
   for a in $trackers; do
-    items_listed "$a" 2>/dev/null | python3 -I -c '
+    items_listed "$a" 2>/dev/null | cached_python3 -I -c '
 import json, sys
 for i in json.load(sys.stdin):
     pr = (i.get("state") or {}).get("pr", "")
@@ -200,7 +200,7 @@ tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 
 # head branch (branch_item); nothing for a PR the flow did not open.
 item_of() {
   if adapter_for "$1" >/dev/null; then printf '%s' "$1"; return; fi
-  io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
+  io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | cached_python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
   branch_item "$io_head"
 }
 # pass_dir <target>: where the pass's session starts: the worktree the item holds, else the main
@@ -259,7 +259,7 @@ FLOW_GH_LOGIN_CACHE="$out.login"; export FLOW_GH_LOGIN_CACHE
 list_procs() {
   [ -z "$procs" ] || return 0
   procs="${FLOW_HEALTH_PROCS:-}"
-  [ -n "$procs" ] || { procs="$out.procs"; python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs" 2>/dev/null || : > "$procs.failed"; }
+  [ -n "$procs" ] || { procs="$out.procs"; cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs" 2>/dev/null || : > "$procs.failed"; }
 }
 # in_use <target>: sets $in_use_why to why another session may be working in the worktree the
 # item holds, or to nothing. Not run in a subshell: the processes are listed once per run, the
@@ -271,13 +271,13 @@ in_use() {
   iu_wt="$("$FLOW_PLUGIN/scripts/steward.sh" find "$iu_item" 2>/dev/null)"; [ -n "$iu_wt" ] || return 0
   list_procs
   if [ -f "$procs.failed" ]; then in_use_why="the processes cannot be listed, so a session may be working in $iu_wt"; return 0; fi
-  iu_how="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" 2>/dev/null)"
+  iu_how="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" 2>/dev/null)"
   [ -n "$iu_how" ] || return 0
   # A session a person left idle past jobs.comments.idle_session holds a worktree with nothing
   # uncommitted in it no longer: the pass has no work of theirs to edit under.
   if ! dirty_tree "$iu_wt"; then
     iu_idle="$iu_how"
-    iu_how="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" "$idle_session_seconds" 2>/dev/null)"
+    iu_how="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" "$idle_session_seconds" 2>/dev/null)"
     [ -n "$iu_how" ] || { job_say "$1: $(session_named "$iu_idle") sits in $iu_wt past $idle_session with nothing uncommitted, so the pass runs" >/dev/null; return 0; }
   fi
   in_use_why="another session works in $iu_wt ($(session_named "$iu_how"))"
@@ -299,7 +299,7 @@ in_use_marker() {
 session_named() {
   sn_pid="${1##* }"
   case "$sn_pid" in ''|*[!0-9]*) printf '%s' "$1"; return 0 ;; esac
-  python3 -I "$FLOW_PLUGIN/scripts/_health.py" session "$procs" "$sn_pid" 2>/dev/null || printf '%s' "$1"
+  cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" session "$procs" "$sn_pid" 2>/dev/null || printf '%s' "$1"
 }
 # tell_in_use <target>: tells the owner once per streak that the PR waits on the session in_use
 # found ($iu_item, $iu_wt, $iu_how). Nothing when the processes could not be listed: no session
@@ -317,7 +317,7 @@ outcome() { printf '%s\t%s\n' "$1" "${2:-}" > "$slot/outcome"; }
 # pass_host_run <dir> <prompt> <group file>: job_host_run as the leader of its own session, its
 # process group's id written to <group file>, stopped with its children at the pass limit.
 pass_host_run() {
-  python3 -I "$FLOW_PLUGIN/scripts/_health.py" bounded "$pass_limit_seconds" "$PASS_STOP_GRACE" \
+  cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" bounded "$pass_limit_seconds" "$PASS_STOP_GRACE" \
     sh -c 'printf "%s\n" "$$" > "$1"; shift; . "$FLOW_PLUGIN/lib/host.sh"; host_run "$@"' host_run "$3" "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is
 }
 # pass_session <target> <notes>: the pass's host session on <target>, the brief's <notes> added,

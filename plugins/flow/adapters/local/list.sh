@@ -8,4 +8,4 @@
 ready_rules
 scope_filter local
 pick_filter local "$@" || { echo '[]'; exit 0; }
-python3 -I "$FLOW_PLUGIN/adapters/local/_item.py" list "$(flow_home)" "$@"
+cached_python3 -I "$FLOW_PLUGIN/adapters/local/_item.py" list "$(flow_home)" "$@"

@@ -11,7 +11,12 @@ parts="$every_part"; [ $# -eq 0 ] || parts="$*"
 status=0
 # The suites run in an empty environment, so nothing the owner exports (a Slack webhook, a token)
 # reaches them. Each suite also stubs the network, desktop and agent tools itself.
-clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
+clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" ${FLOW_SUITE_LANES+"FLOW_SUITE_LANES=$FLOW_SUITE_LANES"} ${FLOW_SUITE_TIME_LIMIT_SECONDS+"FLOW_SUITE_TIME_LIMIT_SECONDS=$FLOW_SUITE_TIME_LIMIT_SECONDS"} ${FLOW_SUITE_STOP_GRACE_SECONDS+"FLOW_SUITE_STOP_GRACE_SECONDS=$FLOW_SUITE_STOP_GRACE_SECONDS"} "$@"; }
+if [ "${1:-}" = flow-since ]; then
+  [ "$#" -eq 2 ] || { echo "usage: tools/test.sh flow-since <base commit>" >&2; exit 2; }
+  clean python3 -I tools/lib/flow_suites.py since "$2"
+  exit $?
+fi
 # A part whose tools are missing: the whole run skips it, as CI's test job has no Node and a job
 # of its own runs the console app; a part named on the command line fails, so a check that names
 # it never passes on a suite that did not run.
@@ -32,6 +37,15 @@ console_app() {
   (cd $console && clean npm run --silent check)
 }
 
+least_console_node=24
+console_needs() {
+  console_node="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [ "$console_node" -ge "$least_console_node" ] 2>/dev/null || { cannot_run console "node $least_console_node or newer" "install Node $least_console_node"; return; }
+  [ -d plugins/console/app/node_modules ] || { cannot_run console plugins/console/app/node_modules "run: cd plugins/console/app && npm ci"; return; }
+  command -v curl >/dev/null 2>&1 || { cannot_run console curl "install curl"; return; }
+  command -v zsh >/dev/null 2>&1 || cannot_run console zsh "install zsh"
+}
+
 plugins_valid() {
   command -v claude >/dev/null 2>&1 || { cannot_run plugins "the claude CLI" "install Claude Code: npm install -g @anthropic-ai/claude-code"; return; }
   validated=0
@@ -47,11 +61,26 @@ plugins_valid() {
 for part in $parts; do
   case "$part" in
     lint) tools/lint.sh || status=1 ;;
-    standards) clean plugins/standards/hooks/tests/run.sh || status=1 ;;
+    standards)
+      clean plugins/standards/hooks/tests/run.sh || status=1
+      clean plugins/standards/hooks/tests/file-names.sh || status=1
+      clean plugins/standards/hooks/tests/files-placeholder.sh || status=1
+      clean plugins/standards/hooks/tests/testing-guide.sh || status=1
+      clean plugins/standards/hooks/tests/appendices.sh || status=1
+      ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
-    console) clean plugins/console/tests/run.sh || status=1 ;;
-    tools) clean tools/tests/run.sh || status=1 ;;
+    console) { [ "$when_missing" = skip ] || console_needs; } && clean plugins/console/tests/run.sh || status=1 ;;
+    tools)
+      clean tools/tests/run.sh || status=1
+      clean tools/tests/lint-baseline.sh || status=1
+      clean sh tools/tests/flow-selection.sh || status=1
+      clean sh tools/tests/flow-runner.sh || status=1
+      clean sh tools/tests/flow-runner-stop.sh || status=1
+      clean sh tools/tests/named-parts.sh || status=1
+      clean sh tools/tests/build-workflow.sh || status=1
+      clean tools/tests/suite-parity.sh || status=1
+      ;;
     console-app) console_app || status=1 ;;
     plugins) plugins_valid || status=1 ;;
     *) echo "test: no part named $part; the parts are $every_part" >&2; exit 2 ;;

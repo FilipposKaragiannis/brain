@@ -87,7 +87,7 @@ raised_by_default() {
 # reason on stderr: the agent that wrote them is gone, and a gate without buttons beats no gate.
 raise_options() {
   [ -n "$2" ] || { echo "[]"; return 0; }
-  if normalised="$(python3 -I "$FLOW_PLUGIN/scripts/_gates.py" options "$2" 2>&1)"; then printf '%s\n' "$normalised"; return 0; fi
+  if normalised="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_gates.py" options "$2" 2>&1)"; then printf '%s\n' "$normalised"; return 0; fi
   echo "flow: $1: --options dropped ($normalised); the gate raises without options" >&2
   echo "[]"
 }
