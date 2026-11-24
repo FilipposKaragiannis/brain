@@ -29,7 +29,10 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
    which worktrees hold what (`steward.sh pool`) and stop.
    Exit 4: the item waits at a gate, or is held behind another open item (the line names the
    holder and why, or the open blockers and `(blocked by)`); tell the user what the gate asks,
-   or what it waits behind, and stop.
+   or what it waits behind, and stop. Exit 4 also comes for an item the flow does not hold yet
+   that is assigned to someone else, or in progress, in review or blocked on its tracker (the line
+   names the assignees and `ready.assignee`, or the category and `ready.categories`), and for one
+   held on another machine (the line names the machine); tell the user why and stop.
    Exit 5: nothing is ready; give the reason the last stderr line names and stop. Exit 6: the
    item is done; say so and stop.
    Exit 7: a run is already in flight for it; show the run file and stop (another session may be on it).
