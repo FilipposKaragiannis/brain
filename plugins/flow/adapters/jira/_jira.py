@@ -10,6 +10,7 @@
   _jira.py close <id> [<text>]
   _jira.py remote-link <id> <url>
   _jira.py answers
+  _jira.py me
   _jira.py vocabulary
 
 Every call goes through curl (_http.py). The settings come from _jira.sh in FLOW_JIRA_* variables,
@@ -20,10 +21,11 @@ size:* unless jira.fields.size names a field) and kept whole in the issue proper
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
 answers prints one JSON line {"id", "text"} per gated item the owner answered with an /answer
-comment; answers.sh clears the gates. jira.scope (scope_filter in lib/flow.sh, FLOW_SCOPE_*) is
-ANDed into every search: list, its children counts, read's children count and answers; in-scope
-exits 0 when the issue is inside it, 1 when not. vocabulary prints the project's issue types and
-the options of the jira.fields.area field.
+comment; answers.sh clears the gates. me prints the names `me` stands for, one per line: the
+account id of the token's user, then jira.email. jira.scope (scope_filter in lib/flow.sh,
+FLOW_SCOPE_*) is ANDed into every search: list, its children counts, read's children count and
+answers; in-scope exits 0 when the issue is inside it, 1 when not. vocabulary prints the
+project's issue types and the options of the jira.fields.area field.
 """
 import json
 import os
@@ -41,7 +43,8 @@ STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_e
               "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from",
               "base", "branch"]
 LABEL_PREFIXES = {"step": "step:", "gate": "gate:", "worktree": "wt:", "profile": "flow:", "size": "size:"}
-FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks"]
+FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks", "assignee"]
+STATUS_CATEGORY_KEYS = {"new": "todo", "indeterminate": "in-progress", "done": "done"}
 FOREIGN_BLOCKERS = re.compile(r"(?m)^Blocked by: (.+)$")
 NO_RANK = 999
 PAGE_SIZE = 100
@@ -94,6 +97,26 @@ def flow_state(issue, labels, fields):
     return state
 
 
+def status_names(name: str) -> set:
+    return {status.strip().lower() for status in setting(name).split(",") if status.strip()}
+
+
+def category_of(status: dict) -> str:
+    name = status.get("name", "").lower()
+    if name in status_names("STATUS_REVIEW"):
+        return "review"
+    if name in status_names("STATUS_BLOCKED"):
+        return "blocked"
+    return STATUS_CATEGORY_KEYS.get((status.get("statusCategory") or {}).get("key", ""), "unknown")
+
+
+def assignees_of(issue_fields: dict) -> list:
+    """A user's privacy setting can hide the email, so the account id stands in for it."""
+    person = issue_fields.get("assignee") or {}
+    identity = person.get("emailAddress") or person.get("accountId") or ""
+    return [identity] if identity else []
+
+
 def kind_of(issue_fields):
     """The flow kind of an issue's fields, as jira.types maps the issue types; any other type is a task."""
     type_name = (issue_fields.get("issuetype") or {}).get("name", "")
@@ -115,7 +138,8 @@ def to_item(issue, fields, open_children):
     linked_ids = [PREFIX + l["inwardIssue"]["key"] for l in links]
     item = {
         "id": PREFIX + issue["key"], "kind": kind, "type": type_name, "title": data.get("summary", ""), "body": body,
-        "status": "open" if is_open else "closed", "size": state["size"],
+        "status": "open" if is_open else "closed", "category": category_of(data.get("status") or {}),
+        "assignees": assignees_of(data), "size": state["size"],
         "priority": (data.get("priority") or {}).get("name", ""),
         "area": field_text(data.get(fields["area"]["id"])) if "area" in fields else "",
         "labels": labels, "blocked_by": linked_ids + [b for b in foreign if b not in linked_ids],
@@ -157,18 +181,22 @@ def pick_values(prefix, name):
     return [v.strip() for v in os.environ.get(prefix + name, "").split(",") if v.strip()]
 
 
-def pick_conditions(prefix):
+def assignee_condition(assignee_names):
+    """One JQL condition an issue assigned to any of the names meets. `assignee in (...)` takes no
+    currentUser(), so a list is an OR group."""
+    clauses = ["assignee = %s" % ("currentUser()" if name == "me" else jql_text(name)) for name in assignee_names]
+    return clauses[0] if len(clauses) == 1 else "(%s)" % " OR ".join(clauses)
+
+
+def pick_conditions(prefix, assignee_names):
     """The JQL conditions of `list --pick` (pick_filter in lib/flow.sh, prefix FLOW_PICK_) or of
-    jira.scope (scope_filter, prefix FLOW_SCOPE_): its query as written, else the assignee (me is
+    jira.scope (scope_filter, prefix FLOW_SCOPE_): its query as written, else the assignees (me is
     currentUser(), the jira.email login the token belongs to), the statuses, the labels and the
     kinds (kind_condition), so jira.limit counts only the issues the filter keeps."""
     query = os.environ.get(prefix + "QUERY", "").strip()
     if query:
         return ["(%s)" % query]
-    conditions = []
-    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
-    if assignee:
-        conditions.append("assignee = %s" % ("currentUser()" if assignee == "me" else jql_text(assignee)))
+    conditions = [assignee_condition(assignee_names)] if assignee_names else []
     for field, name in (("status", "STATUS"), ("labels", "LABELS")):
         if pick_values(prefix, name):
             conditions.append("%s in (%s)" % (field, ", ".join(jql_text(v) for v in pick_values(prefix, name))))
@@ -191,7 +219,9 @@ def kind_condition(kinds):
 
 
 def scope_conditions():
-    return pick_conditions(SCOPE)
+    """jira.scope names one assignee, so a comma in it is part of the name."""
+    assignee = os.environ.get(SCOPE + "ASSIGNEE", "").strip()
+    return pick_conditions(SCOPE, [assignee] if assignee else [])
 
 
 def children_of(issues, scope, narrowed):
@@ -222,7 +252,7 @@ def cmd_list(args):
         else:
             fail("unknown option %s" % args[i], 2)
     fields, limit = custom_fields(), int(setting("LIMIT", "500"))
-    scope, picked = scope_conditions(), pick_conditions(PICK)
+    scope, picked = scope_conditions(), pick_conditions(PICK, pick_values(PICK, "ASSIGNEE"))
     conditions = ["project = %s" % jql_text(setting("PROJECT"))] + scope + picked + ([] if want_all else ["statusCategory != Done"])
     issues, cut = search(" AND ".join(conditions) + " ORDER BY created DESC", field_list(fields), limit)
     if cut:
@@ -401,9 +431,23 @@ def answerers():
     named = [n.strip() for n in setting("ANSWER_FROM").split(",") if n.strip()]
     if named:
         return set(named)
-    status, me = call("GET", "/rest/api/3/myself")
-    expect(status, me, "read the user the API token belongs to")
-    return {me.get("accountId", ""), me.get("emailAddress", "")} - {""}
+    user = myself()
+    return {user.get("accountId", ""), user.get("emailAddress", "")} - {""}
+
+
+def myself():
+    """The user the API token belongs to, as GET /rest/api/3/myself answers."""
+    status, user = call("GET", "/rest/api/3/myself")
+    expect(status, user, "read the user the API token belongs to")
+    return user
+
+
+def cmd_me(args):
+    if args:
+        fail("me takes no arguments", 2)
+    for name in (myself().get("accountId", ""), setting("EMAIL")):
+        if name:
+            print(name)
 
 
 def comments_of(key):
@@ -492,7 +536,7 @@ def main():
     command, args = sys.argv[1], sys.argv[2:]
     commands = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "create": cmd_create, "write-state": cmd_write_state,
                 "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
-                "answers": cmd_answers, "vocabulary": cmd_vocabulary}
+                "answers": cmd_answers, "me": cmd_me, "vocabulary": cmd_vocabulary}
     if command not in commands:
         fail("unknown command %s" % command, 2)
     commands[command](args)

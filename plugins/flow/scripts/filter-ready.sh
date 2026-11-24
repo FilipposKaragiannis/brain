@@ -14,10 +14,21 @@
 # A blocker that cannot be read still holds. The item a plan put this one behind (state.held_by)
 # is looked up the same way but holds only while it reads open: a holder closed or not found frees
 # the item, and next.sh or the health job lifts the tag. A hold keeps back only the steps after
-# the profile's plan, so a plan sent back runs again. With FLOW_READY_NOTES naming a file, each
-# open item held back is appended to it as a JSON line, {"id", "worktree", "why"} (why: gate,
-# needs, children, parent, epic-branch, split, done, blocked or held; a held one adds held_by and
-# held_reason, a blocked one blocked_by, its open blockers, one that waits for an epic branch epic
-# and branch), so next.sh can say why a pick found nothing.
+# the profile's plan, so a plan sent back runs again. The ready: policy (lib/ready.sh, read and
+# checked here whatever the caller exported) keeps back an item whose flow record another machine
+# claimed, and an item the flow does not hold (no claim, no tracker step) whose tracker category is
+# outside ready.categories or whose assignees ready.assignee does not allow
+# (scripts/_ready_policy.py).
+# With FLOW_READY_NOTES naming a file, each open item held back is appended to it as a JSON line,
+# {"id", "worktree", "why"} (why: elsewhere, gate, status, assigned, needs, children, parent,
+# epic-branch, split, done, blocked or held; an elsewhere one adds machine, a status one category,
+# an assigned one assignees, a held one held_by and held_reason, a blocked one blocked_by, its open
+# blockers, one that waits for an epic branch epic and branch), so next.sh can say why a pick
+# found nothing. With FLOW_READY_WARNINGS naming a file, a warning (an adapter's me that failed)
+# is appended to it as a line instead of stderr, so next.sh says it though it drops list-ready's
+# stderr.
 . "$(dirname "$0")/../lib/flow.sh"
+ready_policy
+FLOW_MACHINE="$(flow_machine)"
+export FLOW_MACHINE
 items_join | cached_python3 -I "$FLOW_PLUGIN/scripts/_filter_ready.py" "$FLOW_PLUGIN" "$(flow_home)"

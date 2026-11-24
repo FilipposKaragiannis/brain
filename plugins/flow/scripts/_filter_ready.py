@@ -1,5 +1,15 @@
 """Ready filter for the adapters. See filter-ready.sh."""
-import functools, json, os, re, subprocess, sys
+import functools
+import json
+import os
+import re
+import subprocess
+import sys
+from typing import Callable, Optional
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _ready_policy as ready_policy  # noqa: E402
+
 plugin = sys.argv[1]
 # The flow home, where gate.sh clear --option writes the blockers the owner waived (lib/blockers.sh).
 home = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -201,11 +211,22 @@ def epic_without_branch(item):
         return None
     return epics[0]
 
-def held_back(item):
-    """Why an open item is not ready, in one word, or None when it is ready."""
+def policy_verdict(item: dict, policy: ready_policy.ReadyPolicy,
+                   me: ready_policy.MeNames) -> ready_policy.NotReady:
+    """Why the ready: policy keeps the item back (lib/ready.sh), with its detail, or READY."""
+    me_names = functools.partial(me.read_names, adapter_for(item["id"]))
+    return ready_policy.not_ready(ready_policy.readiness_item(item), policy, me_names)
+
+def held_back(item: dict, verdict: ready_policy.NotReady) -> Optional[str]:
+    """Why an open item is not ready, in one word, or None when it is ready. The verdict is the
+    ready: policy's on the item, whose elsewhere comes before the gate and the rest after it."""
     state = item.get("state", {})
+    if verdict.why == ready_policy.ELSEWHERE:
+        return verdict.why
     if state.get("gate", "none") not in ("", "none"):
         return "gate"
+    if verdict.why:
+        return verdict.why
     if item.get("needs") and not state.get("step"):
         return "needs"
     if item.get("open_children"):
@@ -223,19 +244,14 @@ def held_back(item):
     return None
 
 AFTER_EVERY_NUMBERED_ITEM = float("inf")
+RANK_WITHOUT_PRIORITY = 999
 
 def number_ending_the_id(item):
     digits = item["id"][len(item["id"].rstrip("0123456789")):]
     return int(digits) if digits else AFTER_EVERY_NUMBERED_ITEM
 
-ready, notes = [], []
-for item in items:
-    if item.get("status", "open") != "open":
-        continue
-    why = held_back(item)
-    if why is None:
-        ready.append(item)
-        continue
+def note_of(item: dict, why: str, verdict: ready_policy.NotReady) -> dict:
+    """The note of an open item held back: its id, worktree and why, with what the why names."""
     state = item.get("state", {})
     note = {"id": item["id"], "worktree": state.get("worktree", ""), "why": why}
     if why == "held":
@@ -245,12 +261,40 @@ for item in items:
     elif why == "epic-branch":
         epic_id = epic_without_branch(item)
         note.update(epic=epic_id, branch=epic_branch(epic_id))
-    notes.append(note)
-ready.sort(key=lambda i: (i.get("rank", 999), number_ending_the_id(i)))
-print(json.dumps(ready))
-# FLOW_READY_NOTES names a file that gets one JSON line per open item held back, with why: next.sh
-# reads them to say why a pick found nothing, at no extra tracker call.
-if os.environ.get("FLOW_READY_NOTES"):
-    with open(os.environ["FLOW_READY_NOTES"], "a", encoding="utf-8") as f:
-        for note in notes:
-            f.write(json.dumps(note) + "\n")
+    elif why in ready_policy.WORDS:
+        note.update(verdict.detail)
+    return note
+
+def write_notes(notes: list, path: str) -> None:
+    with open(path, "a", encoding="utf-8") as notes_file:
+        notes_file.writelines(json.dumps(note) + "\n" for note in notes)
+
+def append_line(path: str, message: str) -> None:
+    with open(path, "a", encoding="utf-8") as warnings_file:
+        warnings_file.write(message + "\n")
+
+def warning_writer(path: str) -> Callable[[str], None]:
+    """Where a warning goes: appended to the file FLOW_READY_WARNINGS names, else stderr."""
+    if path:
+        return functools.partial(append_line, path)
+    return functools.partial(print, file=sys.stderr)
+
+def main() -> None:
+    policy = ready_policy.policy_from(os.environ)
+    me = ready_policy.MeNames(plugin, warning_writer(os.environ.get("FLOW_READY_WARNINGS", "")))
+    ready, notes = [], []
+    for item in (item for item in items if item.get("status", "open") == "open"):
+        verdict = policy_verdict(item, policy, me)
+        why = held_back(item, verdict)
+        if why is None:
+            ready.append(item)
+        else:
+            notes.append(note_of(item, why, verdict))
+    ready.sort(key=lambda ready_item: (ready_item.get("rank", RANK_WITHOUT_PRIORITY),
+                                       number_ending_the_id(ready_item)))
+    print(json.dumps(ready))
+    if os.environ.get("FLOW_READY_NOTES"):
+        write_notes(notes, os.environ["FLOW_READY_NOTES"])
+
+if __name__ == "__main__":
+    main()

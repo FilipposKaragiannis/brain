@@ -11,12 +11,12 @@
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
 # Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
-# an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# an open item (blocked_by), held on another machine, outside the ready: policy (its tracker category or its assignees, scripts/_ready_policy.py), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
-# gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
-# be older than the item's state. A pick whose claim finds the pool full skips that item too, and
+# gate, held, blocked, done, split, or outside the ready: policy) and tries the next ready one,
+# since the ready list it came from can be older than the item's state. A pick whose claim finds the pool full skips that item too, and
 # from then on every item that holds no claim and whose step needs a worktree, with no tracker
 # read and no claim attempt (scripts/_pick.py); it tries one that already holds a claim, or whose
 # step needs no worktree. With nothing left it exits 3 when a claim found the pool full, else 5,
@@ -31,6 +31,7 @@
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 EXIT_AT_GATE=4
+EXIT_HELD_BACK=4
 item=""; as_json=0; embed=0; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,6 +47,7 @@ named="$item"
 ready_cache="$home/tmp/.ready.$$"
 if [ "${FLOW_NEXT_PID:-}" != "$$" ]; then FLOW_NEXT_SKIP=""; FLOW_NEXT_FULL=""; rm -f "$ready_cache"; fi
 mkdir -p "$home/tmp"
+ready_rules
 # pick_again: try the next ready item, without $item. Only a pick (no item named) can.
 pick_again() {
   flow_unlock
@@ -64,17 +66,20 @@ pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
 # run records, the claim and the item's state, all read under it. Beside the ready list come the
 # items the filter held back and why (FLOW_READY_NOTES in filter-ready.sh), for the reason a pick
-# that finds nothing gives. The cache holds both, a line each.
+# that finds nothing gives. The cache holds both, a line each. list-ready's stderr is dropped, so
+# a warning the filter gives (FLOW_READY_WARNINGS) is said here.
 notready=""
 if [ -z "$item" ] && [ -f "$ready_cache" ]; then
   ready="$(sed -n 1p "$ready_cache")"; notready="$(sed -n 2p "$ready_cache")"; rm -f "$ready_cache"
 elif [ -z "$item" ]; then
-  ready_rules
   trackers="$(adapters_configured)" || exit 2
   # shellcheck disable=SC2086
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
-  notes="$home/tmp/.notes.$$"; rm -f "$notes"
-  listed="$(FLOW_READY_NOTES="$notes"; export FLOW_READY_NOTES
+  notes="$(mktemp "$home/tmp/.notes.XXXXXX")" || die "cannot make a temp file in $home/tmp"
+  warnings="$(mktemp "$home/tmp/.warnings.XXXXXX")" || { rm -f "$notes"; die "cannot make a temp file in $home/tmp"; }
+  trap 'rm -f "$notes" "$warnings"' EXIT
+  trap 'rm -f "$notes" "$warnings"; exit 130' INT TERM
+  listed="$(FLOW_READY_NOTES="$notes" FLOW_READY_WARNINGS="$warnings"; export FLOW_READY_NOTES FLOW_READY_WARNINGS
     for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | cached_python3 -I -c '
 import json, os, sys
 seen, out = set(), []
@@ -88,7 +93,8 @@ out.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(out))
 notes = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()] if os.path.exists(sys.argv[1]) else []
 print(json.dumps(notes))' "$notes")"
-  rm -f "$notes"
+  [ ! -s "$warnings" ] || cat "$warnings" >&2
+  rm -f "$notes" "$warnings"; trap - EXIT INT TERM
   ready="$(printf '%s\n' "$listed" | sed -n 1p)"; notready="$(printf '%s\n' "$listed" | sed -n 2p)"
   wait_notes "$notready"
 fi
@@ -111,6 +117,19 @@ data="$(item_read "$item")" || die "cannot read $item"
 [ -z "$named" ] || ! scope_in_config || [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null 2>/dev/null)" ] \
   || scope_holds "$item" || exit 2
 [ "$(json_get "$data" status)" = "open" ] || pass_over "$item is closed" 6
+# The ready: policy again on the fresh read: a named item skipped the ready list, and a person may
+# have taken a picked one, or moved it on its tracker, since the list was read.
+FLOW_MACHINE="$(flow_machine)"; export FLOW_MACHINE
+policy="$(printf '%s' "$data" | cached_python3 -I "$FLOW_PLUGIN/scripts/_ready_policy.py" "$FLOW_PLUGIN" "$(adapter_for "$item")")" \
+  || die "cannot check $item against the ready: policy"
+{ read -r policy_why; read -r policy_detail; } <<EOF
+$policy
+EOF
+case "$policy_why" in
+  elsewhere) pass_over "$item is held on $policy_detail, which claimed it in the shared state.dir; it runs there" "$EXIT_HELD_BACK" ;;
+  status) pass_over "$item is $policy_detail on its tracker, and ready.categories in .flow/config.yaml takes $(printf '%s' "$READY_CATEGORIES" | sed 's/,/, /g')" "$EXIT_HELD_BACK" ;;
+  assigned) pass_over "$item is assigned to $policy_detail, and ready.assignee in .flow/config.yaml takes $(printf '%s' "$READY_ASSIGNEE" | sed 's/,/, /g')" "$EXIT_HELD_BACK" ;;
+esac
 kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"
 [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
 profile="$(state_get "$data" profile)"

@@ -23,8 +23,6 @@ plugins/flow/scripts/_claude_settings.py	B904	1
 plugins/flow/scripts/_claude_settings.py	E401	1
 plugins/flow/scripts/_claude_settings.py	E702	2
 plugins/flow/scripts/_claude_settings.py	I001	1
-plugins/flow/scripts/_filter_ready.py	E401	1
-plugins/flow/scripts/_filter_ready.py	I001	1
 plugins/flow/scripts/_filter_ready.py	S110	1
 plugins/flow/scripts/_filter_ready.py	S603	3
 plugins/flow/scripts/_filter_ready.py	S607	1

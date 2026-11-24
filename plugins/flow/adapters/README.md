@@ -12,7 +12,7 @@ fake backend, and `tests/run.sh` runs it for every adapter.
 |---|---|---|
 | `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`, `jira:`) |
 | `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
-| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh` | yes | the operations below, executable |
+| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh`, `me.sh` | yes | the operations below, executable |
 | `sync.sh`, `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
 
 Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for `die`, `cfg`,
@@ -56,6 +56,7 @@ prefix.
 | `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
 | `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, `state.pr_host` the host that ran it (claude or codex, else unset), and a comment names it |
 | `write-state` | `<id> key=value...` | nothing; each key reads back (below) |
+| `me` | | the names `me` stands for in a pick filter, a tracker scope and `ready.assignee`, one per line: GitHub the `gh` login; Jira the token user's account id, then `jira.email`; local the git `user.email`, then `user.name`, lower case, and nothing (exit 0) when git has neither. Exit 1 when the tracker cannot say |
 | `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round. A tracker whose board shows the flow state already (Jira's labels) has none |
 | `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
 | `answers` | | optional: clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts; never the merge gate) through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it, and a Slack gate message says to answer on the issue |
@@ -101,6 +102,8 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 | `needs` | list | the fields of `READY_NEEDS` an open item with no step yet lacks; an epic never needs a size. `_filter_ready.py` holds back an item with any |
 | `type` | string, optional | the tracker's own issue type |
 | `priority_labels` | list of strings, optional | the labels the priority came from, when the tracker reads it from labels; the board flags an item with more than one |
+| `category` | `todo`, `in-progress`, `review`, `blocked`, `done`, `unknown` | where the item stands on the tracker's own board or workflow (Readiness, below) |
+| `assignees` | list of strings | empty when unassigned: GitHub's logins, Jira's email (else the account id), the local item file's `assignee`, one name or an `[a, b]` list |
 
 `state` always has `step`, `profile`, `size`, `worktree`, `last_event`, `pr` (strings),
 `attempts` (a number), `touches` (a list of globs), `changes` (the globs among them whose existing
@@ -124,7 +127,8 @@ the sweep and the pr step copy both from the tracker into the record.
 
 No flow script reads `state` from an adapter either. A script reads one item with `item_read`
 (`scripts/state.sh read`) and a list with `items_join` or `items_listed`, which join the item's
-flow record on as `state` (all twenty-one keys; the record wins whole) and stamp `state_from`:
+flow record on as `state` (all twenty-one keys; the record wins whole), stamp the record's `claim`
+(`null` with no record or no claim) and stamp `state_from`:
 `record`; `tracker` for an item with no record while `tracker_state` is `labels`, its state then
 the tracker's; `none` under `none`, its state empty. `state_get` and `state_list` in
 `lib/flow.sh` refuse an item with no `state_from`, so an adapter's own read never stands in.
@@ -155,7 +159,9 @@ unstarted item must have before it is ready, and `ready.priority_order` ranks th
 `list` and `read` call `ready_rules` from `lib/flow.sh` before they build items; it exports them
 comma-separated as `READY_NEEDS` and `READY_PRIORITY_ORDER` (the deprecated `github.ready_needs`
 and `github.priority_order` stand in for an unset key) and refuses a field it does not know, exit
-2. The adapter fills `rank` and `needs` from those two and maps the fields to its own:
+2. `ready_rules` also runs `ready_policy` from `lib/ready.sh`, which exports `ready.categories` and
+`ready.assignee` as `READY_CATEGORIES` and `READY_ASSIGNEE`. The adapter fills `rank` and `needs`
+from the first two and maps the fields to its own:
 
 | Adapter | priority | size | state |
 |---|---|---|---|
@@ -168,6 +174,43 @@ Until `ready_rules` and `trackers` land in `lib/flow.sh`, the GitHub adapter rea
 and the flow reads every adapter named under `adapters.*`. The contract suite follows
 `lib/flow.sh`: with `ready_rules` there, `rank` and `needs` are required and every adapter must
 pass the readiness checks; without it, an adapter whose items carry no `needs` skips them.
+
+### Category and assignees
+
+`ready.categories` and `ready.assignee` say which items the flow may take that it does not hold:
+
+| Key | Takes, one or a list | Default |
+|---|---|---|
+| `ready.categories` | `todo`, `unknown` | `[todo, unknown]` |
+| `ready.assignee` | `none` (no assignee), `me` (what `me` prints), `any` (every item), a login or an email | `[none, me]` |
+
+A key written empty, a category outside the two and an assignee with a space or a comma exit 2,
+naming the key; a key left out takes its default. An item matches `ready.assignee` when it has no
+assignee and the list has `none`, when the list has `any`, or when every assignee is `me` or a name
+in the list, compared lower-cased. So the default hides an item assigned to someone else, or to the
+owner and someone else; `any` takes them as before. `me.sh` runs only for an unheld item with an
+assignee the list does not name while it names `me`, once per adapter per run, so `next.sh` may run
+it under the pick lock; when it fails (offline, no token) `me` stands for no one and the filter says
+so once on stderr, naming the adapter.
+
+The policy judges only an item the flow does not hold. Held means the joined item's `claim` is set,
+or, with no record, the tracker's state has a step: the flow set its card and its assignees. A
+design or plan step holds a claim with no worktree. A claim that names another machine
+(`FLOW_MACHINE`, through a shared `state.dir`) is held elsewhere and never ready. The filter's
+notes say `elsewhere` (with `machine`) first, then `gate`, then `status` (with `category`) and
+`assigned` (with `assignees`), then the rest; `scripts/_ready_policy.py` holds the rule, and
+`next.sh` checks it again on the item it reads, exit 4 for a named item, the next one for a pick.
+
+| Adapter | category |
+|---|---|
+| `github` | `done` when closed; `unknown` with no `github.project`, no card on it or a card with no Status; else the card's Status through `github.status.*`: `backlog` and `ready` are `todo`, `running` `in-progress`, `review` `review`, `gate` `blocked`, and any other Status `blocked` |
+| `local` | `done` when closed; else the item file's `workflow`: `backlog` and `ready` are `todo`, `in-progress` `in-progress`, `in-review` `review`, `needs-you` and any other value `blocked`, none `unknown` |
+| `jira` | a status named in `jira.status.review` or `jira.status.blocked` (a name or a list, any case) is `review` or `blocked`; else the status category: `new` is `todo`, `indeterminate` `in-progress`, `done` `done`, another `unknown` |
+
+A GitHub board whose columns have other names than `Backlog`, `Ready`, `In progress`, `In review`
+and `Needs you` reads every carded item `blocked` and hides it: set `github.status.backlog`,
+`.ready`, `.running`, `.review` and `.gate` to the board's names. After `sync` moves an epic's card
+to In progress, the epic reads `in-progress` until the next `sync`.
 
 ### Jira
 
@@ -240,7 +283,7 @@ the failing call.
 
 ## A new adapter
 
-1. `adapters/<name>/` with `prefix`, `slug.sed` and the nine scripts; the optional ones when the
+1. `adapters/<name>/` with `prefix`, `slug.sed` and the ten scripts; the optional ones when the
    tracker has a board, a type list or a place for the owner's answers.
 2. Its keys under `<name>.*`, commented in the config `skills/init/scripts/init.sh` writes, and
    the name in the console's `ADAPTERS` (`plugins/console/app/daemon/src/plugins/flow/schema.ts`).
@@ -255,7 +298,7 @@ A pick filter narrows the ready list `next --pick <name>` takes (and a next sche
 ```yaml
 pick:
   mine:
-    assignee: me              # me, a login or an email
+    assignee: me              # me, a login or an email, one or a list
     status: [To Do]           # the item's status in its tracker, any of these
     labels: [api]             # any of these
     kinds: [task, bug]        # any of epic, task and bug
@@ -271,7 +314,8 @@ blockers, gates and the priority order apply after the filter. `list` calls `pic
 `FLOW_PICK_ASSIGNEE`, `FLOW_PICK_STATUS`, `FLOW_PICK_LABELS`, `FLOW_PICK_KINDS` and
 `FLOW_PICK_QUERY`, and returns 1 when the filter's `trackers` leave the adapter out (the list is
 then `[]`). A list field keeps an item that matches one of its values; the fields a filter sets
-must all match. Without `--pick`, the list is what it was.
+must all match, and `assignee` keeps an item when any of its assignees is any of the names.
+Without `--pick`, the list is what it was.
 
 `pick-fields` in the adapter folder names, on one line, the fields the adapter maps. A filter with
 a field the adapter does not map is refused, exit 2, naming the ones it does
@@ -281,9 +325,9 @@ name the config does not have (naming the ones it has), a `query` without exactl
 
 | Adapter | assignee | status | labels | kinds | query |
 |---|---|---|---|---|---|
-| `github` | an issue assignee's login, any case; `me` is the `gh` user (`gh api user`) | the issue state, `open` or `closed` | the issue's labels, any case | the issue's kind, matched before `github.limit` counts it | GitHub search qualifiers, sent as `repo:<repo> is:issue is:open <query>` |
-| `local` | the item file's `assignee`, any case; `me` is the git `user.email` or `user.name` | the item file's `status` (`open`, `closed`) | the item file's `labels`, any case | the item file's kind | not mapped |
-| `jira` | JQL `assignee = "<value>"`; `me` is `currentUser()`, the `jira.email` user the token belongs to | JQL `status in (...)`, the status names | JQL `labels in (...)` | JQL `issuetype in (...)` with the `jira.types` names of an epic and a bug, and `issuetype not in (...)` for a task, since every other type is one (a Story is a task) | a JQL condition, sent as `project = "<project>" AND (<query>) AND statusCategory != Done ORDER BY created DESC`, so it takes no `ORDER BY` |
+| `github` | an issue assignee's login, any case; `me` is the `gh` user (`me.sh`) | the issue state, `open` or `closed` | the issue's labels, any case | the issue's kind, matched before `github.limit` counts it | GitHub search qualifiers, sent as `repo:<repo> is:issue is:open <query>` |
+| `local` | the item file's `assignee`, one name or an `[a, b]` list, any case; `me` is the git `user.email` or `user.name` | the item file's `status` (`open`, `closed`) | the item file's `labels`, any case | the item file's kind | not mapped |
+| `jira` | JQL `assignee = "<value>"`, a list one `(... OR ...)` group; `me` is `currentUser()`, the `jira.email` user the token belongs to | JQL `status in (...)`, the status names | JQL `labels in (...)` | JQL `issuetype in (...)` with the `jira.types` names of an epic and a bug, and `issuetype not in (...)` for a task, since every other type is one (a Story is a task) | a JQL condition, sent as `project = "<project>" AND (<query>) AND statusCategory != Done ORDER BY created DESC`, so it takes no `ORDER BY` |
 
 GitHub and local match the filter on what they read; Jira puts it in the search, then counts each
 listed issue's open children with a second search (`parent in (...)`), since the filter can leave
@@ -313,6 +357,7 @@ jira:
 
 A scope takes `assignee`, `status`, `labels` and `kinds`, or `query` alone, the same fields a pick
 filter takes and checked by the same code, and it names no `trackers`: it belongs to its tracker.
+Its `assignee` names one person, never a list.
 An empty field is unset, and a tracker with no scope reads as it did. `list` and `in-scope` call
 `scope_filter <adapter>` from `lib/flow.sh`, which runs `scope_check` and exports the fields
 comma-separated as `FLOW_SCOPE_ASSIGNEE`, `FLOW_SCOPE_STATUS`, `FLOW_SCOPE_LABELS`,

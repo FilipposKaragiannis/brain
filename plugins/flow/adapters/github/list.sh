@@ -3,10 +3,10 @@
 # adapter items. One paged GraphQL query; the state comment is read only for issues that carry a
 # flow label. Stops at github.limit (default 500) and says so. With FLOW_LIST_WHOLE set, a cut list
 # fails. github.scope bounds every list (scope_filter in lib/flow.sh), and --pick keeps the issues
-# the filter pick.<name> matches inside it (pick_filter): the assignee's login (me is the gh user),
-# labels, state and kind, or its query as search qualifiers. A scope goes to GitHub as search
-# qualifiers (_query.py), and its kinds and the pick's fields are matched before github.limit
-# counts an issue, so the limit counts the issues they keep.
+# the filter pick.<name> matches inside it (pick_filter): any of its assignees' logins (me is the
+# gh user), labels, state and kind, or its query as search qualifiers. A scope goes to GitHub as
+# search qualifiers (_query.py), and its kinds and the pick's fields are matched before
+# github.limit counts an issue, so the limit counts the issues they keep.
 . "$(dirname "$0")/_gh.sh"
 ready_rules
 scope_filter github

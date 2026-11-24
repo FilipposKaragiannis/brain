@@ -38,6 +38,7 @@ for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
 field() { "$A/read.sh" "$1" 2>/dev/null | jget "$2"; }
 code_of() { "$@" >/dev/null 2>&1; echo $?; }
+assignees_are() { field "$1" assignees | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin) != json.loads(sys.argv[1]))' "$2"; }
 # listed <id> <script> [args]: the script's JSON array names the id.
 listed() {
   li_id="$1"; shift
@@ -55,7 +56,9 @@ shape() {
 import json, sys
 item = json.load(sys.stdin)
 ITEM = {"id": str, "kind": str, "title": str, "body": str, "status": str, "size": str, "priority": str, "area": str,
-        "labels": list, "blocked_by": list, "parent": str, "open_children": int, "url": str, "state": dict}
+        "labels": list, "blocked_by": list, "parent": str, "open_children": int, "url": str, "state": dict,
+        "category": str, "assignees": list}
+CATEGORIES = ("todo", "in-progress", "review", "blocked", "done", "unknown")
 STATE = {"step": str, "profile": str, "size": str, "worktree": str, "attempts": int, "gate": str, "last_event": str,
          "pr": str, "touches": list}
 OPTIONAL = {"rank": int, "needs": list, "open_blockers": list, "type": str}
@@ -70,6 +73,7 @@ def off(where, data, spec, required):
 off("", item, ITEM, True); off("", item, OPTIONAL, False); off("state.", item.get("state") or {}, STATE, True)
 if item.get("kind") not in ("epic", "task", "bug"): print("kind is %r" % item.get("kind"))
 if item.get("status") not in ("open", "closed"): print("status is %r" % item.get("status"))
+if item.get("category") not in CATEGORIES: print("category is %r" % item.get("category"))
 if not (item.get("state") or {}).get("gate"): print("state.gate is empty, not none")' "$ready_lib"
 }
 
@@ -130,7 +134,7 @@ echo "contract: $name"
 echo " the folder"
 prefix="$(head -n 1 "$A/prefix" 2>/dev/null)"
 check "the prefix file holds one non-empty line" '[ -n "$prefix" ] && [ "$(wc -l < "$A/prefix" | tr -d " ")" = 1 ]'
-for op in list list-ready read in-scope create close comment link-pr write-state; do
+for op in list list-ready read in-scope create close comment link-pr write-state me; do
   check "$op.sh is there and executable" '[ -x "$A/$op.sh" ]'
 done
 for op in sync vocabulary answers; do
@@ -237,6 +241,7 @@ env -u CLAUDECODE CODEX_THREAD_ID=t "$A/link-pr.sh" "$t2" https://example.test/p
 check "link-pr records the host that wrote the PR as pr_host" '[ "$(field "$t2" state.pr_host)" = codex ]'
 "$A/close.sh" "$t1" --comment "closed by the contract" >/dev/null 2>&1
 check "close makes the item closed" '[ "$(field "$t1" status)" = closed ]'
+check "ClosedItem_ReadsCategoryDone: a closed item is in the done category, because closed work is never to do" '[ "$(field "$t1" category)" = done ]'
 check "close --comment lands on the item" '"comments_$name" "$t1" | grep -q "closed by the contract"'
 check "list leaves out a closed item" '! listed "$t1" "$A/list.sh"'
 check "list --all names a closed item" 'listed "$t1" "$A/list.sh" --all'
@@ -325,14 +330,16 @@ open_status_jira() { echo "To Do"; }
 query_github() { echo "label:$1"; }
 query_jira() { echo "labels = \"$1\""; }
 other_tracker() { if [ "$name" = local ]; then echo github; else echo local; fi; }
-pick_config() { write_config 0; printf 'pick:\n%s\n' "$1" >> "$FLOW_HOME/config.yaml"; }
+pick_config() { write_config 0; printf 'ready:\n  assignee: any\npick:\n%s\n' "$1" >> "$FLOW_HOME/config.yaml"; }
 if type "set_$name" >/dev/null 2>&1; then
   pa="$("$A/create.sh" task "Pick: mine, labelled")"
   pb="$("$A/create.sh" bug "Pick: theirs")"
   pc="$("$A/create.sh" task "Pick: nobody's")"
+  pd="$("$A/create.sh" task "Pick: a third person's")"
   "$A/create.sh" task "Pick: the epic's child, unlabelled" --parent "$epic" >/dev/null
   "set_$name" "$pa" assignee "$("me_$name")"; "set_$name" "$pa" label picked
   "set_$name" "$pb" assignee someone@contract.test
+  "set_$name" "$pd" assignee third@contract.test
   "set_$name" "$epic" label picked
   check "pick-fields names only the fields a filter has" '[ -s "$A/pick-fields" ] && for f in $(cat "$A/pick-fields"); do case " assignee status labels kinds query " in *" $f "*) ;; *) exit 1 ;; esac; done'
   pick_config '  mine:
@@ -369,6 +376,11 @@ if type "set_$name" >/dev/null 2>&1; then
   check "a field the adapter does not map exits 2 naming the ones it maps" '[ "$(code_of "$A/list.sh" --pick odd)" = 2 ] && "$A/list.sh" --pick odd 2>&1 | grep -q "pick.odd.sprint: the $name adapter maps .*assignee.*, not sprint"'
   check "a query without exactly one tracker exits 2" '[ "$(code_of "$A/list.sh" --pick loose)" = 2 ]'
   check "a query beside a neutral field exits 2" '[ "$(code_of "$A/list.sh" --pick mixed)" = 2 ]'
+  pick_config '  team:
+    assignee: [me, someone@contract.test]'
+  check "PickAssigneeList_KeepsItemOfMe: a list pick assignee keeps an item assigned to me, because an item matches when any of its assignees is any of the names" 'listed "$pa" "$A/list-ready.sh" --pick team'
+  check "PickAssigneeList_KeepsItemOfNamedLogin: a list pick assignee keeps an item assigned to a login in the list, because every name in the list counts" 'listed "$pb" "$A/list-ready.sh" --pick team'
+  check "PickAssigneeList_DropsItemOfPersonOutsideIt: a list pick assignee leaves out an item assigned to a person the list does not name, because the list only narrows" '! listed "$pd" "$A/list-ready.sh" --pick team'
   pick_config '  own:
     query: '"'$(type "query_$name" >/dev/null 2>&1 && "query_$name" picked || printf %s "label = picked")'"'
     trackers: ['"$name"']'
@@ -380,6 +392,71 @@ if type "set_$name" >/dev/null 2>&1; then
   write_config 0
 else
   skip "no set_$name in this suite to assign or label an item"
+fi
+
+# Category, assignees and me (adapters/README.md, Category and assignees): per backend,
+# set_category_<name> <id> <tracker value> writes the store as the tracker would hold the item's
+# workflow status, category_config_<name> prints the config lines that end the adapter's own
+# section for the mapping, and category_rows_<name> the rows "<tracker value>=<category>" the
+# adapter's table gives, with no_board_<name> the tracker value that reads unknown.
+set_category_local() {
+  python3 -c 'import sys
+path, value = sys.argv[1:]
+text = open(path).read(); end = text.find("\n---\n", 4)
+head = "\n".join(line for line in text[:end].split("\n") if not line.startswith("workflow:"))
+open(path, "w").write(head + ("" if value == "absent" else "\nworkflow: " + value) + text[end:])' "$FLOW_HOME/items/${1#local:}.md" "$2"
+}
+set_category_github() {
+  python3 -c 'import json, sys
+path, number, value = sys.argv[1:]; data = json.load(open(path))
+issue = [i for i in data["issues"] if i["number"] == int(number)][0]
+for key in ("project_item", "project_status"): issue.pop(key, None)
+if value != "no card": issue.update(project_item="PI_" + number, project_status=value)
+json.dump(data, open(path, "w"))' "$FAKE_GH_DIR/issues.json" "${1#gh#}" "$2"
+}
+set_category_jira() {
+  python3 -c 'import json, sys
+path, key, value = sys.argv[1:]; data = json.load(open(path)); status, category = value.split("/")
+data["issues"][key]["fields"]["status"] = {"name": status, "statusCategory": {"key": category}}
+json.dump(data, open(path, "w"))' "$FAKE_JIRA_DIR/jira.json" "${1#jira:}" "$2"
+}
+category_config_local() { :; }
+category_config_github() { printf '  project: 1\n'; }
+category_config_jira() { printf '  status:\n    review: [Code Review]\n    blocked: [On Hold]\n'; }
+category_rows_local() { printf '%s\n' backlog=todo ready=todo in-progress=in-progress in-review=review needs-you=blocked triage=blocked absent=unknown; }
+category_rows_github() { printf '%s\n' Backlog=todo Ready=todo "In progress=in-progress" "In review=review" "Needs you=blocked" Triage=blocked "no card=unknown"; }
+category_rows_jira() { printf '%s\n' "Selected/new=todo" "In Progress/indeterminate=in-progress" "Code Review/indeterminate=review" "Parked/undefined=unknown" "On Hold/indeterminate=blocked"; }
+no_board_local() { echo absent; }
+no_board_github() { echo Backlog; }
+no_board_jira() { echo "Parked/undefined"; }
+if type "set_category_$name" >/dev/null 2>&1 && type "set_$name" >/dev/null 2>&1; then
+  echo " category, assignees and me"
+  check "AssignedItem_ListsItsAssignee: an item assigned to a person names that person under assignees, because readiness reads who holds it" 'assignees_are "$pb" "[\"someone@contract.test\"]"'
+  check "UnassignedItem_ListsNoAssignees: an item nobody is assigned to has an empty assignees list, because none is the ready default" 'assignees_are "$pc" "[]"'
+  board_item="$("$A/create.sh" task "Category: as the tracker holds it")"
+  "set_category_$name" "$board_item" "$("no_board_$name")"
+  check "NoBoardMapping_ReadsCategoryUnknown: a tracker state outside any board the flow reads is the unknown category, because unknown is ready by default" '[ "$(field "$board_item" category)" = unknown ]'
+  write_config 0; "category_config_$name" >> "$FLOW_HOME/config.yaml"
+  category_rows="$("category_rows_$name")"
+  while IFS= read -r row; do
+    tracker_value="${row%=*}"; expected_category="${row##*=}"
+    "set_category_$name" "$board_item" "$tracker_value"
+    check "TrackerState_ReadsTheCategoryItsTableGives ($tracker_value is $expected_category): the item reads the category the adapter's table gives, because readiness filters on it" '[ "$(field "$board_item" category)" = "$expected_category" ]'
+  done <<ROWS
+$category_rows
+ROWS
+  write_config 0
+  check "MeOp_PrintsTheIdentityTheAdapterActsAs: me prints the user me stands for among its lines, because ready.assignee and a pick read it" '"$A/me.sh" 2>/dev/null | grep -qxF "$("me_$name")"'
+  if [ "$name" = local ]; then
+    check "MeOpWithNoGitIdentity_PrintsNothing: me prints no name when git has no user, because me then stands for no one" '[ -z "$(env GIT_CONFIG_COUNT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 "$A/me.sh" 2>/dev/null)" ]'
+    check "MeOpWithNoGitIdentity_ExitsZero: me exits 0 when git has no user, because no identity is no failure" '[ "$(code_of env GIT_CONFIG_COUNT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 "$A/me.sh")" = 0 ]'
+    two_people="$("$A/create.sh" task "Assignees: two people")"
+    set_local "$two_people" assignee "[alice, bob]"
+    "$A/write-state.sh" "$two_people" step=implement >/dev/null 2>&1
+    check "ListAssigneeAfterWriteState_ReadsBackBothPeople: a frontmatter list of assignees still reads as two after a state write, because write-state rewrites the item file" 'assignees_are "$two_people" "[\"alice\", \"bob\"]"'
+  fi
+else
+  skip "no set_category_$name in this suite to place an item on its tracker's board"
 fi
 
 # Tracker scope (adapters/README.md, Tracker scope): <name>.scope bounds every list and list-ready,

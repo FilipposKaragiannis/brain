@@ -11,15 +11,19 @@ Usage (always from the shell scripts):
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
+  _item.py me <home>
 
 A list with --pick keeps the items its filter matches: the item file's assignee (`me` is the git
 user's email or name), status, labels and kind, each compared without case. local.scope
 (scope_filter in lib/flow.sh) is matched the same way, on every list beside the filter, and
-in-scope exits 0 when the item matches it, 1 when not.
+in-scope exits 0 when the item matches it, 1 when not. me prints those names of the git user, one
+per line, and nothing when git has neither.
 
 An item's open_children counts the open items whose parent it is. Its rank places its priority in
 READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
-GitHub adapter's issue_to_item applies the same rule; change both).
+GitHub adapter's issue_to_item applies the same rule; change both). Its assignees are the
+frontmatter assignee, one name or an inline [a, b] list, and its category comes from the
+frontmatter workflow, the set-status name: done when closed, unknown with no workflow.
 """
 import glob
 import json
@@ -37,7 +41,10 @@ LIST_KEYS = {"blocked_by", "labels", "touches", "changes"}
 INT_KEYS = {"attempts"}
 # The rank of an item with no priority: after every ranked one.
 NO_RANK = 999
+WORKFLOW_CATEGORIES = {"backlog": "todo", "ready": "todo", "in-progress": "in-progress", "in-review": "review",
+                       "needs-you": "blocked"}
 OWNER_ONLY_MODE = 0o600
+GIT_CONFIG_TIMEOUT_SECONDS = 10
 
 
 def usage(message):
@@ -169,6 +176,23 @@ def needs(meta):
             if not meta.get(field) and not (field == "size" and meta.get("kind") == "epic")]
 
 
+def category(meta: dict) -> str:
+    if meta.get("status", "open") != "open":
+        return "done"
+    workflow = str(meta.get("workflow", "")).strip().lower()
+    if not workflow:
+        return "unknown"
+    return WORKFLOW_CATEGORIES.get(workflow, "blocked")
+
+
+def assignees(meta: dict) -> list:
+    """parse reads assignee as a scalar, so write-state keeps a list as the owner wrote it."""
+    assignee = str(meta.get("assignee", "")).strip()
+    if assignee.startswith("["):
+        return parse_list(assignee)
+    return [assignee] if assignee else []
+
+
 def to_json(path, meta, body, children=None):
     state = {k: meta.get(k, [] if k in ("touches", "changes") else (0 if k == "attempts" else "")) for k in STATE_KEYS}
     if not state["gate"]:
@@ -179,6 +203,8 @@ def to_json(path, meta, body, children=None):
         "title": meta.get("title", ""),
         "size": meta.get("size", ""),
         "status": meta.get("status", "open"),
+        "category": category(meta),
+        "assignees": assignees(meta),
         "labels": meta.get("labels", []),
         "blocked_by": meta.get("blocked_by", []),
         "parent": meta.get("parent", ""),
@@ -194,36 +220,55 @@ def to_json(path, meta, body, children=None):
 
 
 def git_identity():
-    """The names `me` stands for in a filter: the git user's email and name, lower case."""
-    names = set()
+    """The names `me` stands for in a filter: the git user's email, then name, lower case."""
+    names = []
     for key in ("user.email", "user.name"):
         try:
-            out = subprocess.run(["git", "config", key], capture_output=True, text=True, timeout=10)
+            git_config = subprocess.run(["git", "config", key], capture_output=True, text=True,
+                                        timeout=GIT_CONFIG_TIMEOUT_SECONDS)
         except (OSError, subprocess.SubprocessError):
             continue
-        if out.stdout.strip():
-            names.add(out.stdout.strip().lower())
+        if git_config.stdout.strip():
+            names.append(git_config.stdout.strip().lower())
     return names
 
 
-def pick_rules(prefix):
+def cmd_me(home, args):
+    if args:
+        usage("me takes no arguments")
+    for name in git_identity():
+        print(name)
+
+
+def pick_assignees():
+    """pick.<name>.assignee is a list, which pick_filter in lib/flow.sh joins with commas."""
+    return [name.strip() for name in ready_list("FLOW_PICK_ASSIGNEE") if name.strip()]
+
+
+def scope_assignee():
+    """A scope names one assignee, so a comma in it is part of the name."""
+    assignee = os.environ.get("FLOW_SCOPE_ASSIGNEE", "").strip()
+    return [assignee] if assignee else []
+
+
+def pick_rules(prefix, assignee_names):
     """The filter of `list --pick` (pick_filter in lib/flow.sh, prefix FLOW_PICK_) or the scope
     (scope_filter, prefix FLOW_SCOPE_): each field it sets, as a set of lower-case values an item
-    must match one of."""
+    must match one of. me among the assignee names stands for git_identity()."""
     rules = {}
     for field in ("status", "labels", "kinds"):
         values = {v.strip().lower() for v in ready_list(prefix + field.upper())}
         if values:
             rules[field] = values
-    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
-    if assignee:
-        rules["assignee"] = git_identity() if assignee == "me" else {assignee.lower()}
+    if assignee_names:
+        rules["assignee"] = {identity for name in assignee_names
+                             for identity in (git_identity() if name == "me" else [name.lower()])}
     return rules
 
 
 def picked(meta, rules):
     values = {
-        "assignee": {str(meta.get("assignee", "")).lower()},
+        "assignee": {assignee.lower() for assignee in assignees(meta)},
         "status": {meta.get("status", "open").lower()},
         "labels": {label.lower() for label in meta.get("labels", [])},
         "kinds": {meta.get("kind", "task").lower()},
@@ -243,7 +288,7 @@ def cmd_list(home, args):
         else:
             usage("unknown option %s" % args[i])
     items, children = [], open_children(home)
-    scope, rules = pick_rules("FLOW_SCOPE_"), pick_rules("FLOW_PICK_")
+    scope, rules = pick_rules("FLOW_SCOPE_", scope_assignee()), pick_rules("FLOW_PICK_", pick_assignees())
     for path in sorted(glob.glob(os.path.join(home, "items", "*", "*.md")), key=natural_key):
         meta, body = parse(path)
         if kind and meta.get("kind") != kind:
@@ -271,7 +316,7 @@ def cmd_read(home, args):
 
 
 def cmd_in_scope(home, args):
-    scope = pick_rules("FLOW_SCOPE_")
+    scope = pick_rules("FLOW_SCOPE_", scope_assignee())
     if not scope:
         raise SystemExit(0)
     path = item_path(home, args[0])
@@ -368,7 +413,7 @@ def main():
         raise SystemExit(__doc__)
     cmd, home, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "write-state": cmd_write_state,
-     "comment": cmd_comment, "close": cmd_close, "create": cmd_create}[cmd](home, args)
+     "comment": cmd_comment, "close": cmd_close, "create": cmd_create, "me": cmd_me}[cmd](home, args)
 
 
 if __name__ == "__main__":

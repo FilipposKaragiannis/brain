@@ -147,6 +147,7 @@ picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 end_run 'gh#32'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
+"$P/adapters/github/sync.sh" >/dev/null
 check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
 "$P/scripts/gate.sh" raise 'gh#37' ambiguity "1. Visual only?
    Recommended: yes." >/dev/null 2>&1

@@ -9,7 +9,6 @@ createmeta answers in pages of at most createmeta_page fields (default 50), as J
 search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
 fields.assignee object, as Jira returns one."""
 import json, re, sys
-from functools import reduce
 from urllib.parse import parse_qs, urlsplit
 
 db_path, args = sys.argv[1], sys.argv[2:]
@@ -81,8 +80,18 @@ def assigned(issue, who):
     return who in (person.get("emailAddress"), person.get("accountId"), person.get("displayName"))
 
 
+ASSIGNEE_NAME = r'(?:currentUser\(\)|"(?:[^"\\]|\\.)*")'
+
+
+def assigned_any(issue, group):
+    names = quoted(group) + ([me] if "currentUser()" in group else [])
+    return any(assigned(issue, name) for name in names)
+
+
 # The JQL the adapter and the tests send, each clause with the issues it keeps; the clauses are
 # ANDed, and the search refuses any other text. The login is the user currentUser() stands for.
+# Each clause reads only the text the clauses above it left, so the assignee OR group comes
+# before the single assignee clauses that would read its parts as ANDed.
 signed_in = re.search(r'^user = "([^:"]+):', login, re.M)
 me = signed_in.group(1) if signed_in else ""
 JQL_CLAUSES = [
@@ -91,6 +100,8 @@ JQL_CLAUSES = [
     (re.compile(r"parent = ([A-Z][A-Z0-9_]*-\d+)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") == m.group(1)),
     (re.compile(r"parent in \(([^)]*)\)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") in [k.strip() for k in m.group(1).split(",")]),
     (re.compile(r"statusCategory != Done"), lambda i, m: status_of(i)["statusCategory"]["key"] != "done"),
+    (re.compile(r"\(assignee = %s(?: OR assignee = %s)+\)" % (ASSIGNEE_NAME, ASSIGNEE_NAME)),
+     lambda issue, match: assigned_any(issue, match.group(0))),
     (re.compile(r"assignee = currentUser\(\)"), lambda i, m: assigned(i, me)),
     (re.compile(r'assignee = ("(?:[^"\\]|\\.)*")'), lambda i, m: assigned(i, quoted(m.group(1))[0])),
     (re.compile(r'status (?:in \(([^)]*)\)|= ("(?:[^"\\]|\\.)*"))'),
@@ -155,7 +166,8 @@ if path == "/rest/api/3/search/jql" and method == "POST":
     for clause in JQL_CLAUSES:
         for m in clause[0].finditer(where):
             rows = [i for i in rows if clause[1](i, m)]
-    leftover = re.sub(r"\bAND\b|[()\s]", "", reduce(lambda text, clause: clause[0].sub("", text), JQL_CLAUSES, where))
+        where = clause[0].sub("", where)
+    leftover = re.sub(r"\bAND\b|[()\s]", "", where)
     if leftover:
         refuse(400, "fake jira: unknown JQL in %s" % jql)
     start = int(body.get("nextPageToken") or 0)
