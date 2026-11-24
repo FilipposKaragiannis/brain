@@ -185,6 +185,8 @@ cp "$FAKE_GH_DIR/issues.json" "$work/scope-issues.saved"; cp .flow/config.yaml "
 python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
 import json, sys
 path = sys.argv[1]; data = json.load(open(path))
+for taken_issue in data["issues"]:
+    taken_issue["assignees"] = []
 data["issues"] += [{"number": 50, "title": "Team A's, mine", "state": "OPEN", "labels": ["team-a"], "assignees": ["owner"]},
                    {"number": 51, "title": "Team B's", "state": "OPEN", "labels": ["team-b"]}]
 json.dump(data, open(path, "w"))
