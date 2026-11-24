@@ -205,7 +205,7 @@ notes say `elsewhere` (with `machine`) first, then `gate`, then `status` (with `
 
 | Adapter | category |
 |---|---|
-| `github` | `done` when closed; `unknown` with no `github.project`, no card on it or a card with no Status; else the card's Status through `github.status.*`: `backlog` and `ready` are `todo`, `running` `in-progress`, `review` `review`, `gate` `blocked`, and any other Status `blocked` |
+| `github` | `done` when closed; without `github.project`, `in-progress` when the issue has the `github.claim_label` label; `unknown` with no `github.project`, no card on it or a card with no Status; else the card's Status through `github.status.*`: `backlog` and `ready` are `todo`, `running` `in-progress`, `review` `review`, `gate` `blocked`, and any other Status `blocked` |
 | `local` | `done` when closed; else the item file's `workflow`: `backlog` and `ready` are `todo`, `in-progress` `in-progress`, `in-review` `review`, `needs-you` and any other value `blocked`, none `unknown` |
 | `jira` | a status named in `jira.status.review` or `jira.status.blocked` (a name or a list, any case) is `review` or `blocked`; else the status category: `new` is `todo`, `indeterminate` `in-progress`, `done` `done`, another `unknown` |
 
@@ -213,6 +213,17 @@ A GitHub board whose columns have other names than `Backlog`, `Ready`, `In progr
 and `Needs you` reads every carded item `blocked` and hides it: set `github.status.backlog`,
 `.ready`, `.running`, `.review` and `.gate` to the board's names. After `sync` moves an epic's card
 to In progress, the epic reads `in-progress` until the next `sync`.
+
+GitHub's `set-status` moves the issue's card on `github.project` to the Status of
+`github.status.<key>`: `backlog` and `ready` by their own keys, `in-progress` by `running`,
+`needs-you` by `gate` and `in-review` by `review`. An issue with no card is added to the project
+first; a card already at the Status costs no write; a project with no such Status says so and
+exits 1. Without `github.project` there is no board, and `set-status` calls nothing, unless
+`github.claim_label` (opt-in, unset by default) names a label: `in-progress` puts that label on the
+issue, printing `<id> <label>`, any other status takes it off, printing `<id> <status>`, and the
+issue reads `in-progress` while it has it. `assign` adds or removes the `gh` login (`me.sh`) through
+`gh issue edit --add-assignee` or `--remove-assignee`, after it reads the issue's assignees, so a
+repeat call writes nothing.
 
 ### Jira
 

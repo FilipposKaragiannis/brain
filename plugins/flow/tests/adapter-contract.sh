@@ -474,6 +474,8 @@ fi
 # category_config_<name> gives set-status its place for the status.
 in_progress_native_local() { echo in-progress; }
 many_assignees_local() { :; }
+in_progress_native_github() { echo "In progress"; }
+many_assignees_github() { :; }
 assignees_hold() {
   field "$1" assignees | python3 -c 'import json,sys; sys.exit(sys.argv[1].lower() not in [assignee.lower() for assignee in json.load(sys.stdin)])' "$2"
 }

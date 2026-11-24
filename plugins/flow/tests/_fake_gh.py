@@ -23,7 +23,12 @@ elif args[:2] == ["issue", "view"]:
     i = issue(args[2]); fields = args[args.index("--json") + 1].split(",")
     if "-q" in args:
         q = args[args.index("-q") + 1]
-        print("\n".join(i["labels"]) if "labels" in q else i.get("node", "I_%d" % i["number"]))
+        if "labels" in q:
+            print("\n".join(i["labels"]))
+        elif "assignees" in q:
+            print("\n".join(i.get("assignees", [])))
+        else:
+            print(i.get("node", "I_%d" % i["number"]))
     else: print(json.dumps(pick(i, fields)))
 elif args[:2] == ["issue", "create"]:
     n = max(i["number"] for i in data["issues"]) + 1
@@ -37,6 +42,12 @@ elif args[:2] == ["issue", "edit"]:
     while k < len(args):
         if args[k] == "--add-label": i["labels"].append(args[k + 1]); k += 2
         elif args[k] == "--remove-label": i["labels"] = [l for l in i["labels"] if l != args[k + 1]]; k += 2
+        elif args[k] == "--add-assignee":
+            i["assignees"] = i.get("assignees", []) + [args[k + 1]]
+            k += 2
+        elif args[k] == "--remove-assignee":
+            i["assignees"] = [assignee for assignee in i.get("assignees", []) if assignee != args[k + 1]]
+            k += 2
         else: k += 1
     save()
 elif args[:2] == ["issue", "comment"]:

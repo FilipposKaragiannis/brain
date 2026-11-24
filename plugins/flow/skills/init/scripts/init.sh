@@ -158,6 +158,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   area: Area                # the area intake files a note under, from its section"
         echo "  # scope:                      # every list keeps only these: assignee, status, labels, kinds, or query alone"
         echo "  # project: 1                  # the project whose Status follows the flow state"
+        echo "  # claim_label: in-progress    # without a project, the label an item in progress carries (off)"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
         echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
