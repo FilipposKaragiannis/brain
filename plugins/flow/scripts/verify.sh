@@ -69,7 +69,7 @@ cd "$root" || exit 1
 export GIT_NO_REPLACE_OBJECTS=1 # a replace ref made in the worktree could forge the base commit's tree
 main_worktree_resolve
 [ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
-item_state="$(item_read "$item" 2>/dev/null)" || item_state='{}'
+item_state="$(item_read "$item" 2>/dev/null)" || item_state=''
 reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
 log="$reports/verify.log"; run_out="$reports/verify.out"
 # The checks the run failed so far, one name per line, so a run stopped before its report still

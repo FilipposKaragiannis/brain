@@ -20,10 +20,11 @@
 #                                           `--` (step=implement ...) go into the one record write
 #                                           that records the gate, so no reader sees the one
 #                                           without the other. A write the tracker refuses raises
-#                                           nothing, exit 1, unless the tracker shows the gate
-#                                           after it (labels that landed before the state comment
-#                                           or property failed): that gate stands, with a warning,
-#                                           and its record takes the gate from notify.sh.
+#                                           nothing, exit 1, unless tracker_state is labels and the
+#                                           tracker shows the gate after it (labels that landed
+#                                           before the state comment or property failed): that
+#                                           gate stands, with a warning, and its record takes the
+#                                           gate from notify.sh.
 #                                           A comment or notification that fails after the write
 #                                           is said on stderr and the gate stands
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
@@ -163,7 +164,7 @@ case "${1:-}" in
     footer="$(gate_footer "$condition" "$(carrier_field "$carrier" "$FIELD_HOW_TO_CLEAR")")"
     condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
     if ! record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null; then
-      [ "$(json_get "$( (adapter read "$item") </dev/null 2>/dev/null)" state.gate)" = "$gate" ] \
+      [ "$(tracker_state)" = labels ] && [ "$(json_get "$( (adapter read "$item") </dev/null 2>/dev/null)" state.gate)" = "$gate" ] \
         || die "cannot record the $gate gate on $item, and its tracker does not show it: nothing raised, its run stays"
       echo "flow: the write of the $gate gate on $item failed part way, but its tracker shows the gate, so it stands; the rest of its state may lag until the next write" >&2
       record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null \

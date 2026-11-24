@@ -100,4 +100,10 @@ scoped_source_change "$worktree"
 verify >/dev/null 2>&1
 check "OlderEpicSliceWithNoCommitsYetAndNoRecordedBase_FailsOnItsScopedTestAlone because its claim names the parent's branch, which holds HEAD" \
   '[ "$(failed_checks)" = "tests scoped" ]'
+
+changed_source_item unreadable-item '{"test":[]}' committed
+item_no_adapter_holds=local:task/999
+(cd "$worktree" && "$plugin/scripts/verify.sh" "$item_no_adapter_holds" >/dev/null 2> "$work/unreadable-item.err")
+check "ItemItsAdapterCannotRead_PrintsNoStateGuardLine because a failed read has no state for the guard to refuse" \
+  '! grep -qF "asked of an item read from its adapter alone" "$work/unreadable-item.err"'
 exit "$((fails > 0))"

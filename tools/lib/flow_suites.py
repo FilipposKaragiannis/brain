@@ -4,7 +4,8 @@
 FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. FLOW_SUITE_TIME_LIMIT_SECONDS
 sets how long one suite may run, 1800 when unset. FLOW_SUITE_STOP_GRACE_SECONDS sets the grace
 time a stopped suite gets to clean up, 5 when unset: below the 10 seconds Flow's verify gives the
-whole run on a stop before it kills the runner. Each suite runs in a process group of its own.
+whole run on a stop before it kills the runner. FLOW_TRACKER_STATE, when set, reaches every suite,
+so a run can prove Flow under either tracker mode. Each suite runs in a process group of its own.
 The runner prints a line when a suite starts, and the suite's output with its result when it
 ends. A suite still running at the limit has its process group ended, what is left of the group
 killed once the grace time passes, its output so far printed, and fails. A TERM, INT or HUP ends
@@ -107,7 +108,7 @@ def _arguments(command: SuiteCommand) -> "list[str]":
 
 def _run_suite(name: SuiteName, command: SuiteCommand, settings: Settings, lanes: _Lanes) -> _SuiteOutcome:
     started = settings.clock.now()
-    environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
+    environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG", "FLOW_TRACKER_STATE") if key in os.environ}
     _announce(lanes, f"flow: {name.text} started")
     with (lanes.directory / name.text).open("wb") as output:
         with subprocess.Popen(_arguments(command), env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track_or_kill_after_the_close(LedGroup(process, ProcessGroupId(process.pid)), settings.time_limit) as admitted:

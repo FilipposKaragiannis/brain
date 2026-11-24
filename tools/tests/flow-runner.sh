@@ -30,6 +30,10 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
+printf '%s\n' 'echo "tracker mode ${FLOW_TRACKER_STATE:-unset}"' > "$suite/sessions.sh"
+FLOW_TRACKER_STATE=none python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 || true
+expect 'RunGivenATrackerMode_HandsItToItsSuites because the none pass proves nothing if its suites run under labels' "$(grep -cFx '[sessions] tracker mode none' "$work/output")" 1
+git restore plugins/flow/tests/sessions.sh
 limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=5; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"

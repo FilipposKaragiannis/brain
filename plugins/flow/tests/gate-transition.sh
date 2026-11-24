@@ -10,7 +10,8 @@
 # once. A refused write of the touches, the plan's changes or hold, a failed step's attempt, a
 # re-size or the step done keeps the run, and the retry applies the step as the first try would
 # have. A failing notifier or comment leaves the gate standing and says so. next.sh runs no step
-# for an item with a gate record on this host that its tracker does not show.
+# for an item with a gate record on this host that its tracker does not show. Under tracker_state
+# none a failed record write raises nothing, whatever gate the tracker's labels show.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -413,6 +414,21 @@ check "PickWithAGateRecordTheTrackerLacks_StartsNoRun: no step runs behind the r
   '[ -z "$(state "$stray" run)" ]'
 check "PickWithAGateRecordTheTrackerLacks_NamesTheRecord: the owner learns why the item was passed over" \
   'grep -qF "$(gate_record "$stray")" "$work/stray-pick.err"'
+
+echo "gate transition: a failed record write under tracker_state none, with a stale gate label"
+new_repo untracked
+printf 'tracker_state: none\n' >> .flow/config.yaml
+stale="$(new_task "Stale gate label")"
+"$local_adapter/write-state.sh" "$stale" step=plan profile=task-M size=M gate=plan-approval
+stale_record="$("$stubbed/scripts/state.sh" path "$stale")"; mkdir -p "$(dirname "$stale_record")"
+printf 'not a record\n' > "$stale_record"
+"$stubbed/scripts/gate.sh" raise "$stale" plan-approval "Approve the plan." > "$work/stale.out" 2> "$work/stale.err"
+# shellcheck disable=SC2034 # the check's condition reads it
+stale_code=$?
+check "FailedRecordWriteWithAStaleGateLabelUnderNone_DiesUnrecorded: under none the tracker gets no writes, so its label proves nothing" \
+  '[ "$stale_code" -ne 0 ] && grep -qF "cannot record the plan-approval gate on $stale" "$work/stale.err"'
+check "FailedRecordWriteWithAStaleGateLabelUnderNone_PostsNoGateComment: the owner is not asked a question no record holds" \
+  '[ "$(gate_comments "$stale")" -eq 0 ]'
 
 echo "gate transition: GitHub refuses the gate labels"
 new_repo github
