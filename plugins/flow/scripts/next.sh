@@ -117,8 +117,10 @@ data="$(item_read "$item")" || die "cannot read $item"
 FLOW_MACHINE="$(flow_machine)"; export FLOW_MACHINE
 policy="$(printf '%s' "$data" | cached_python3 -I "$FLOW_PLUGIN/scripts/_ready_policy.py" "$FLOW_PLUGIN" "$(adapter_for "$item")")" \
   || die "cannot check $item against the ready: policy"
-policy_detail="$(printf '%s\n' "$policy" | sed -n 2p)"
-case "$(printf '%s\n' "$policy" | sed -n 1p)" in
+{ read -r policy_why; read -r policy_detail; } <<EOF
+$policy
+EOF
+case "$policy_why" in
   elsewhere) pass_over "$item is held on $policy_detail, which claimed it in the shared state.dir; it runs there" "$EXIT_HELD_BACK" ;;
   status) pass_over "$item is $policy_detail on its tracker, and ready.categories in .flow/config.yaml takes $(printf '%s' "$READY_CATEGORIES" | sed 's/,/, /g')" "$EXIT_HELD_BACK" ;;
   assigned) pass_over "$item is assigned to $policy_detail, and ready.assignee in .flow/config.yaml takes $(printf '%s' "$READY_ASSIGNEE" | sed 's/,/, /g')" "$EXIT_HELD_BACK" ;;

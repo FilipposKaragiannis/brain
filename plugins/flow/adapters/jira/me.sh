@@ -3,5 +3,5 @@
 # the API token belongs to, then jira.email.
 set -u
 . "$(dirname "$0")/_jira.sh"
-[ $# -eq 0 ] || die "usage: me" 2
+[ $# -eq 0 ] || die "usage: me" "$EXIT_USAGE"
 jira me

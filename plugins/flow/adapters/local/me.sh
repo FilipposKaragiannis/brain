@@ -3,5 +3,5 @@
 # git user's email, then name, lower case. Nothing, and exit 0, when git has neither.
 set -u
 . "$(dirname "$0")/../../lib/flow.sh"
-[ $# -eq 0 ] || die "usage: me" 2
+[ $# -eq 0 ] || die "usage: me" "$EXIT_USAGE"
 cached_python3 -I "$FLOW_PLUGIN/adapters/local/_item.py" me "$(flow_home)"

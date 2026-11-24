@@ -20,8 +20,6 @@ GATE_THAT_HOLDS_CHILDREN = "decomposition"
 gates = {i["id"]: i.get("state", {}).get("gate", "none") for i in items if i.get("status", "open") == "open"}
 listed = {i["id"]: i for i in items}
 cache = {}
-POLICY = ready_policy.policy_from(os.environ)
-ME = ready_policy.MeNames(plugin, functools.partial(print, file=sys.stderr))
 
 def read_prefix(name):
     try:
@@ -213,20 +211,22 @@ def epic_without_branch(item):
         return None
     return epics[0]
 
-def policy_holds(item: dict) -> ready_policy.NotReady:
+def policy_verdict(item: dict, policy: ready_policy.ReadyPolicy,
+                   me: ready_policy.MeNames) -> ready_policy.NotReady:
     """Why the ready: policy keeps the item back (lib/ready.sh), with its detail, or READY."""
-    return ready_policy.not_ready(item, POLICY, functools.partial(ME.read_names, adapter_for(item["id"])))
+    me_names = functools.partial(me.read_names, adapter_for(item["id"]))
+    return ready_policy.not_ready(item, policy, me_names)
 
-def held_back(item: dict) -> Optional[str]:
-    """Why an open item is not ready, in one word, or None when it is ready."""
+def held_back(item: dict, verdict: ready_policy.NotReady) -> Optional[str]:
+    """Why an open item is not ready, in one word, or None when it is ready. The verdict is the
+    ready: policy's on the item, whose elsewhere comes before the gate and the rest after it."""
     state = item.get("state", {})
-    if ready_policy.held_elsewhere(item, POLICY.machine):
-        return ready_policy.ELSEWHERE
+    if verdict.why == ready_policy.ELSEWHERE:
+        return verdict.why
     if state.get("gate", "none") not in ("", "none"):
         return "gate"
-    policy_why = policy_holds(item).why
-    if policy_why:
-        return policy_why
+    if verdict.why:
+        return verdict.why
     if item.get("needs") and not state.get("step"):
         return "needs"
     if item.get("open_children"):
@@ -249,14 +249,11 @@ def number_ending_the_id(item):
     digits = item["id"][len(item["id"].rstrip("0123456789")):]
     return int(digits) if digits else AFTER_EVERY_NUMBERED_ITEM
 
-ready, notes = [], []
-for item in items:
-    if item.get("status", "open") != "open":
-        continue
-    why = held_back(item)
-    if why is None:
-        ready.append(item)
-        continue
+# Where an item with no rank sorts: after every rank a priority order gives.
+RANK_WITHOUT_PRIORITY = 999
+
+def note_of(item: dict, why: str, verdict: ready_policy.NotReady) -> dict:
+    """The note of an open item held back: its id, worktree and why, with what the why names."""
     state = item.get("state", {})
     note = {"id": item["id"], "worktree": state.get("worktree", ""), "why": why}
     if why == "held":
@@ -267,13 +264,31 @@ for item in items:
         epic_id = epic_without_branch(item)
         note.update(epic=epic_id, branch=epic_branch(epic_id))
     elif why in ready_policy.WORDS:
-        note.update(policy_holds(item).detail)
-    notes.append(note)
-ready.sort(key=lambda i: (i.get("rank", 999), number_ending_the_id(i)))
-print(json.dumps(ready))
-# FLOW_READY_NOTES names a file that gets one JSON line per open item held back, with why: next.sh
-# reads them to say why a pick found nothing, at no extra tracker call.
-if os.environ.get("FLOW_READY_NOTES"):
-    with open(os.environ["FLOW_READY_NOTES"], "a", encoding="utf-8") as f:
-        for note in notes:
-            f.write(json.dumps(note) + "\n")
+        note.update(verdict.detail)
+    return note
+
+def write_notes(notes: list, path: str) -> None:
+    with open(path, "a", encoding="utf-8") as notes_file:
+        notes_file.writelines(json.dumps(note) + "\n" for note in notes)
+
+def main() -> None:
+    policy = ready_policy.policy_from(os.environ)
+    me = ready_policy.MeNames(plugin, functools.partial(print, file=sys.stderr))
+    ready, notes = [], []
+    for item in (item for item in items if item.get("status", "open") == "open"):
+        verdict = policy_verdict(item, policy, me)
+        why = held_back(item, verdict)
+        if why is None:
+            ready.append(item)
+        else:
+            notes.append(note_of(item, why, verdict))
+    ready.sort(key=lambda ready_item: (ready_item.get("rank", RANK_WITHOUT_PRIORITY),
+                                       number_ending_the_id(ready_item)))
+    print(json.dumps(ready))
+    # FLOW_READY_NOTES names a file that gets one JSON line per open item held back, with why:
+    # next.sh reads them to say why a pick found nothing, at no extra tracker call.
+    if os.environ.get("FLOW_READY_NOTES"):
+        write_notes(notes, os.environ["FLOW_READY_NOTES"])
+
+if __name__ == "__main__":
+    main()

@@ -73,10 +73,6 @@ def held(item: Mapping) -> bool:
     return item.get(join.STATE_FROM_FIELD) == join.FROM_TRACKER and started
 
 
-def held_elsewhere(item: Mapping, machine: str) -> bool:
-    return schema.claimed_elsewhere(item, machine)
-
-
 def category_of(item: Mapping) -> str:
     return item.get("category") or CATEGORY_UNKNOWN
 
@@ -99,7 +95,7 @@ def not_ready(item: Mapping, policy: ReadyPolicy, me_names: Callable[[], frozens
     """Why the policy keeps the item back, elsewhere before status before assigned, or READY. me_names
     gives what me stands for on the item's adapter; it is asked only for an assignee the policy
     does not name."""
-    if held_elsewhere(item, policy.machine):
+    if schema.claimed_elsewhere(item, policy.machine):
         return NotReady(ELSEWHERE, MappingProxyType({"machine": item[join.CLAIM_FIELD]["machine"]}))
     if held(item):
         return READY
