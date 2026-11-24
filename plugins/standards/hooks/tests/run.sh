@@ -249,6 +249,11 @@ sh "$here/gate-git-env.sh" > "$work/gate-git-env.out" 2>&1; code=$?
 check "GateGitEnvSuite_Passes: every check in gate-git-env.sh passed ($(tail -n 1 "$work/gate-git-env.out"))" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-git-env.out"
 
+echo "non-commit calls: hook cost (tests/non-commit-cost.sh)"
+sh "$here/non-commit-cost.sh" > "$work/non-commit-cost.out" 2>&1; code=$?
+check "NonCommitCostSuite_Passes: every check in non-commit-cost.sh passed ($(tail -n 1 "$work/non-commit-cost.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/non-commit-cost.out"
+
 echo "an agent's commit runs the gates once"
 python3 - "$work/count.log" <<'PY'
 import json, sys
