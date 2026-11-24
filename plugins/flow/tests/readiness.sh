@@ -16,7 +16,7 @@ this_machine=this-machine; other_machine=other-machine
 export FLOW_MACHINE="$this_machine"
 exit_usage=2; exit_waiting=4; exit_step_ready=0
 new_repo readiness
-git_identity_email=t@t
+git_identity_email="$(git config user.email)"
 printf 'state:\n  dir: %s\n' "$work/shared-state" >> .flow/config.yaml
 cp .flow/config.yaml "$work/base-config.yaml"
 
@@ -41,6 +41,13 @@ for line in open(sys.argv[1]):
 }
 take_on_machine() { env FLOW_MACHINE="$1" sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "$1"' take "$2"; }
 list_code() { "$local_adapter/list.sh" >/dev/null 2>&1; echo $?; }
+filter_code_with_exported_policy() { printf '[]' | env READY_ASSIGNEE=none,me READY_CATEGORIES=todo,unknown "$plugin/scripts/filter-ready.sh" >/dev/null 2>&1; echo $?; }
+end_runs_and_close_every_open_item() {
+  for open_item in $("$local_adapter/list.sh" | python3 -c 'import json,sys; print("\n".join(item["id"] for item in json.load(sys.stdin)))'); do
+    "$plugin/scripts/state.sh" set "$open_item" run:=null >/dev/null 2>&1
+    "$local_adapter/close.sh" "$open_item" >/dev/null 2>&1
+  done
+}
 next_code() { "$plugin/scripts/next.sh" "$1" >/dev/null 2>&1; echo $?; }
 
 unassigned="$(new_task "Nobody holds this")"
@@ -74,6 +81,7 @@ config_with_lines 'ready:
   categories: [todo, in-progress]'
 check "UnknownCategory_ListExitsTwo: a category outside todo and unknown stops the list, because a bad policy is refused at the boundary" '[ "$(list_code)" = "$exit_usage" ]'
 check "UnknownCategory_NamesTheKey: the refusal names ready.categories, because that is the key to change" '"$local_adapter/list.sh" 2>&1 >/dev/null | grep -qF ready.categories'
+check "BadCategoryWithThePolicyExported_FilterExitsTwo: filter-ready refuses a bad ready.categories though its caller exported a good policy, because the config is checked on every read" '[ "$(filter_code_with_exported_policy)" = "$exit_usage" ]'
 config_with_lines 'ready:
   assignee: [bob smith]'
 check "AssigneeWithASpace_ListExitsTwo: an assignee with a space stops the list, because no login holds one" '[ "$(list_code)" = "$exit_usage" ]'
@@ -127,11 +135,9 @@ check "MeFails_TheWarningNamesTheAdapter: the failure names the github adapter, 
 echo "readiness: next.sh checks the fresh read"
 check "NamedItemAssignedToSomeoneElse_NextExitsFour: next.sh passes over a named item a person holds, because the policy applies to a named item too" '[ "$(next_code "$theirs")" = "$exit_waiting" ]'
 check "NamedHeldItemAtALaterStep_NextRunsIt: next.sh runs the flow's own item though it is assigned and in progress, because a held item is judged by its record" '[ "$(next_code "$held")" = "$exit_step_ready" ]'
-"$plugin/scripts/state.sh" set "$held" run:=null >/dev/null 2>&1
-"$local_adapter/close.sh" "$held" >/dev/null 2>&1
+end_runs_and_close_every_open_item
 taken_since="$(new_task "First in the list")"
 still_free="$(new_task "Second in the list")"
-for earlier_item in "$unassigned" "$mine" "$queued" "$seeded"; do "$local_adapter/close.sh" "$earlier_item" >/dev/null 2>&1; done
 stale="$("$local_adapter/list-ready.sh")"
 write_frontmatter "$taken_since" assignee bob
 picked="$(stale_pick "$stale" 2>/dev/null | json_value item)"

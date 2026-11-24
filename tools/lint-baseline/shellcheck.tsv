@@ -112,7 +112,7 @@ plugins/flow/tests/prune-sweep.sh	SC2154	2
 plugins/flow/tests/prune-sweep.sh	SC2164	1
 plugins/flow/tests/python-cache.sh	SC2034	1
 plugins/flow/tests/python-cache.sh	SC2154	4
-plugins/flow/tests/readiness.sh	SC2034	5
+plugins/flow/tests/readiness.sh	SC2034	6
 plugins/flow/tests/readiness.sh	SC2154	4
 plugins/flow/tests/sessions.sh	SC2034	1
 plugins/flow/tests/sessions.sh	SC2154	3
