@@ -34,7 +34,7 @@ fetch_fresh() {
 
 open_pull_request() {
   on_github pr list --head "$1" --state open --json url 2>/dev/null \
-    | python3 -I -c 'import json, sys; listed = json.load(sys.stdin); print(listed[0]["url"] if listed else "")' 2>/dev/null
+    | cached_python3 -I -c 'import json, sys; listed = json.load(sys.stdin); print(listed[0]["url"] if listed else "")' 2>/dev/null
 }
 
 pull_request_body() {

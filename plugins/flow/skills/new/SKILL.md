@@ -20,7 +20,9 @@ the path `codex plugin list` prints for `flow`).
    `task`: everything else. The size is `S` (one sitting, no design), `M` (a design and a plan)
    or `L` (a plan with phases); leave it out when the flow should size it. Where the tracker has
    issue types (`github.types: true`), the kind sets the type and `--type Feature` or
-   `--type Chore` names another; a size goes to the size field when `github.fields.size` is set.
+   `--type Chore` names another; a size goes to the size field when `github.fields.size` is set,
+   a priority to the priority field when `github.fields.priority` is set, else to a `priority:`
+   label.
 3. **Write the body** in the item shape, short enough to read in one pass. For an epic, the
    first two sections only.
    ```markdown

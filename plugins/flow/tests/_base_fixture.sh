@@ -29,6 +29,9 @@ local_adapter="$plugin/adapters/local"
 slug() { printf '%s' "$1" | tr ':/#' '---'; }
 # state <item> <key>: the key of the item's flow record, through state.sh get.
 state() { "$plugin/scripts/state.sh" get "$1" "$2"; }
+# archived_state <item> <record path>: the value at the path in the item's archived flow record,
+# where the record of a closed item goes once its worktree is released.
+archived_state() { archived_open_record="$("$plugin/scripts/state.sh" path "$1")" && json_value "$2" < "$(dirname "$archived_open_record")/closed/$(basename "$archived_open_record")"; }
 # end_run <item>: the item's run in flight ends, so a step can start on it again.
 end_run() { "$plugin/scripts/state.sh" set "$1" run:=null; }
 # start_step <item>: next.sh on the named item; its exit code is the function's.

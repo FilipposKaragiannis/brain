@@ -41,7 +41,7 @@ prefix="com.$(basename "$main" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n-' '-').flow"
 scheduler="${FLOW_SCHEDULER:-$([ "$(uname)" = Darwin ] && echo launchd || echo cron)}"
 host="$(cfg_or jobs.host claude)"
 domain="gui/$(id -u)"
-py() { python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" "$@"; }
+py() { cached_python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" "$@"; }
 spec() { cfg "jobs.schedule.$1"; }
 # job_of <name>: the job a schedule runs (next for next-codex).
 job_of() { printf '%s' "${1%%-*}"; }

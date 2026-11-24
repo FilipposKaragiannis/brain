@@ -1,7 +1,8 @@
 #!/bin/sh
 # Human gates.
 #   gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>]
-#                 [--raised-by <who>]       record the gate, notify, stop the run;
+#                 [--raised-by <who>] [-- <key=value>...]
+#                                           record the gate, notify, stop the run;
 #                                           notify.sh writes the gate's record into the flow
 #                                           record (its view: scripts/_state_views.py);
 #                                           <from step> is the step whose work the gate judges
@@ -15,7 +16,18 @@
 #                                           with a warning and the gate still raises. The record
 #                                           keeps who carries the answer out and a footer with the
 #                                           command, which the tracker comment and the notification
-#                                           carry under the message
+#                                           carry under the message. Trailing state pairs after a
+#                                           `--` (step=implement ...) go into the one record write
+#                                           that records the gate, so no reader sees the one
+#                                           without the other. A write the tracker refuses raises
+#                                           nothing, exit 1, unless tracker_state is labels and the
+#                                           tracker shows the gate after it (labels that landed
+#                                           before the state comment or property failed): then
+#                                           the flow record alone takes the whole write and the
+#                                           gate stands, with a warning that the tracker lags; a
+#                                           record that cannot take it raises nothing, exit 1.
+#                                           A comment or notification that fails after the write
+#                                           is said on stderr and the gate stands
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
 #                                           children are all closed, the plan step runs again;
@@ -74,18 +86,19 @@ gates_json() {
     item="$(json_get "$record" item)"; worktree=""
     [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null)"
     if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else json_set "$record" worktree null; fi
-  done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
+  done | cached_python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
-RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
+refused_gate_name_limit=60
+RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>] [-- <key=value>...]"
 OPTION_AND_BACK="gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step"
 CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <condition>"
 
-# parse_raise_flags <flag> <value> ...: sets options_given, condition_given and raised_by_given
-# from raise's --options, --condition and --raised-by; dies, exit 2, on anything else.
+# parse_raise_flags <flag> <value> ... [-- ...]: sets options_given, condition_given and raised_by_given
+# from raise's --options, --condition and --raised-by up to a `--`; dies, exit 2, on anything else.
 parse_raise_flags() {
   options_given=""; condition_given=""; raised_by_given=""
-  while [ $# -gt 0 ]; do
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do
     [ $# -ge 2 ] || die "$RAISE_USAGE" 2
     case "$1" in
       --options) options_given="$2" ;;
@@ -138,9 +151,12 @@ case "${1:-}" in
     item="$2"; gate="$3"; message="$4"; from=""; shift 4
     case "${1:-}" in --*) ;; *) [ $# -eq 0 ] || { from="$1"; shift; } ;; esac
     parse_raise_flags "$@"
-    json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "gates.$gate" >/dev/null 2>&1 || true
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do shift 2; done
+    [ $# -eq 0 ] || shift
+    gate_known "$gate" || die "unknown gate '$(printf '%s' "$gate" | tr -cd '[:print:]' | head -c "$refused_gate_name_limit")': nothing raised; the gates are $(cached_python3 -I -c 'import json, sys; print(", ".join(json.load(open(sys.argv[1]))["gates"]))' "$FLOW_PLUGIN/profiles.json")" 2
     data="$(item_read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
     [ -n "$from" ] || from="$step"
+    for state_pair in "$@"; do case "$state_pair" in step=*) step="${state_pair#step=}" ;; esac; done
     options="$(raise_options "$item" "$options_given")"
     condition="$(raise_condition "$item" "$condition_given")"
     raised_by="$(raised_by_default "$raised_by_given" "$item" "$step")"
@@ -148,16 +164,23 @@ case "${1:-}" in
     answered_by="$(carrier_field "$carrier" "$FIELD_ANSWERED_BY")"
     footer="$(gate_footer "$condition" "$(carrier_field "$carrier" "$FIELD_HOW_TO_CLEAR")")"
     condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
-    record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
+    if ! record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null; then
+      [ "$(tracker_state)" = labels ] && [ "$(json_get "$( (adapter read "$item") </dev/null 2>/dev/null)" state.gate)" = "$gate" ] \
+        || die "cannot record the $gate gate on $item, and its tracker does not show it: nothing raised, its run stays"
+      record_set_unmirrored "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null \
+        || die "its tracker shows the $gate gate on $item, but its flow record could not take it: nothing raised, its run stays"
+      echo "flow: the tracker write of the $gate gate on $item failed part way; the gate stands in its flow record, and its tracker's state may lag until the next write" >&2
+    fi
     adapter comment "$item" --body "**Gate: $gate**
 
 $message
 
-$footer" >/dev/null
+$footer" >/dev/null || echo "flow: the $gate gate on $item is recorded, but its comment could not be posted" >&2
     record_set "$item" "run:=null"
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
-      "answered_by=$answered_by" "$condition_field" "footer=$footer" ;;
+      "answered_by=$answered_by" "$condition_field" "footer=$footer" \
+      || echo "flow: the $gate gate on $item is recorded, but notify.sh failed" >&2 ;;
   clear)
     [ $# -ge 2 ] || die "$CLEAR_USAGE" 2
     item="$2"; mode=answer; option_number=""

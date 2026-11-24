@@ -14,8 +14,32 @@ export FLOW_PLUGIN
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
 # ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one.
-if ! command git --version >/dev/null 2>&1 && [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/git ]; then
-  git() { /Applications/Xcode.app/Contents/Developer/usr/bin/git "$@"; }
+_flow_xcode_git=/Applications/Xcode.app/Contents/Developer/usr/bin/git
+case "${FLOW_GIT_PROGRAM:-}" in
+  git|"$_flow_xcode_git") [ "${FLOW_GIT_SEARCH_PATH:-}" = "$PATH" ] || FLOW_GIT_PROGRAM="" ;;
+  *) FLOW_GIT_PROGRAM="" ;;
+esac
+if [ -z "$FLOW_GIT_PROGRAM" ]; then
+  FLOW_GIT_PROGRAM=git
+  if ! command git --version >/dev/null 2>&1 && [ -x "$_flow_xcode_git" ]; then FLOW_GIT_PROGRAM="$_flow_xcode_git"; fi
+fi
+FLOW_GIT_SEARCH_PATH="$PATH"
+export FLOW_GIT_PROGRAM FLOW_GIT_SEARCH_PATH
+[ "$FLOW_GIT_PROGRAM" = git ] || git() { "$_flow_xcode_git" "$@"; }
+
+_flow_owner_only_umask=077
+_flow_python_cache_folder=""
+case "${XDG_CACHE_HOME:-}" in
+  /*) _flow_python_cache_folder="$XDG_CACHE_HOME/flow/python" ;;
+  *) case "${HOME:-}" in /*) _flow_python_cache_folder="$HOME/.cache/flow/python" ;; esac ;;
+esac
+if [ -n "$_flow_python_cache_folder" ]; then
+  cached_python3() {
+    [ -d "$_flow_python_cache_folder" ] || (umask "$_flow_owner_only_umask" && mkdir -p "$_flow_python_cache_folder") 2>/dev/null || true
+    python3 -X "pycache_prefix=$_flow_python_cache_folder" "$@"
+  }
+else
+  cached_python3() { python3 "$@"; }
 fi
 
 die() { echo "flow: $1" >&2; exit "${2:-1}"; }
@@ -70,7 +94,25 @@ flow_install_set() {
 }
 flow_source_hash() { hash_files $(flow_install_set "$1"); }
 
-main_worktree() { git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'; }
+# main_worktree: the main worktree of the repository at the working folder, nothing outside one.
+main_worktree() {
+  if main_worktree_handed_down; then printf '%s\n' "$FLOW_MAIN_WORKTREE"; return; fi
+  git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'
+}
+# main_worktree_handed_down: FLOW_MAIN_WORKTREE was found here on this PATH, with no git override.
+main_worktree_handed_down() {
+  [ "${FLOW_MAIN_WORKTREE_FOLDER:-}" = "$PWD" ] && [ "${FLOW_MAIN_WORKTREE_SEARCH_PATH:-}" = "$PATH" ] &&
+    [ -n "${FLOW_MAIN_WORKTREE+set}" ] && ! git_repository_overridden
+}
+# git_repository_overridden: GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR points git at a repository.
+git_repository_overridden() { [ -n "${GIT_DIR:-}${GIT_WORK_TREE:-}${GIT_COMMON_DIR:-}" ]; }
+# main_worktree_resolve: finds the main worktree for this folder, unless handed down, and exports it.
+main_worktree_resolve() {
+  if main_worktree_handed_down || git_repository_overridden; then return 0; fi
+  FLOW_MAIN_WORKTREE="$(main_worktree)"; FLOW_MAIN_WORKTREE_FOLDER="$PWD"; FLOW_MAIN_WORKTREE_SEARCH_PATH="$PATH"
+  export FLOW_MAIN_WORKTREE FLOW_MAIN_WORKTREE_FOLDER FLOW_MAIN_WORKTREE_SEARCH_PATH
+}
+main_worktree_resolve
 
 # The flow home holds the project config, the local items and the gate records. It is the main
 # worktree's .flow, found from any linked worktree. FLOW_HOME overrides it (tests).
@@ -156,7 +198,7 @@ yaml_get() {
 
 cfg() { yaml_get "$(config_file)" "$1"; }
 
-mkdir_exclusive() { python3 -I -c 'import os, sys; os.mkdir(sys.argv[1])' "$1" 2>/dev/null; }
+mkdir_exclusive() { cached_python3 -I -c 'import os, sys; os.mkdir(sys.argv[1])' "$1" 2>/dev/null; }
 
 # flow_lock <name>: one holder at a time across sessions and unattended runs: a directory
 # <flow home>/<name>.lock with the holder's pid. Waits up to FLOW_LOCK_WAIT seconds (default 60),
@@ -513,6 +555,7 @@ profile_select() {
   esac
 }
 
+gate_known() { cached_python3 -I -c 'import json, sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["gates"] else 1)' "$FLOW_PLUGIN/profiles.json" "$1"; }
 profile_steps() { json_list "$(cat "$FLOW_PLUGIN/profiles.json")" "profiles.$1"; }
 
 step_field() { json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1.$2"; }
@@ -595,7 +638,7 @@ json_set() {
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$1" | jq -c --arg k "$2" --argjson v "$3" '.[$k] = $v'
   else
-    printf '%s' "$1" | python3 -c '
+    printf '%s' "$1" | cached_python3 -c '
 import json, sys
 d = json.load(sys.stdin); d[sys.argv[1]] = json.loads(sys.argv[2]); print(json.dumps(d))' "$2" "$3"
   fi
