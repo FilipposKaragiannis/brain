@@ -32,6 +32,10 @@ health_line_holds() {
   for health_line_text in "$@"; do health_line_matches="$(printf '%s\n' "$health_line_matches" | grep -Fw -- "$health_line_text")"; done
   [ -n "$health_line_matches" ]
 }
+health_count_holds() {
+  health_count_file="$1"; health_count_branch="$2"; health_count_expected="$3"
+  grep -F -- "$health_count_branch" "$health_count_file" | sed "s|$health_count_branch||g" | grep -qFw -- "$health_count_expected"
+}
 parent_of() { git -C "$root/origin.git" rev-parse -q --verify "$1^$2" 2>/dev/null; }
 first_parent=1
 second_parent=2
@@ -57,7 +61,7 @@ check "HealthDryRunOnAnEpicBranchBehind_SaysItWouldMergeIntoTheEpicBranch: the o
 check "HealthDryRunOnAnEpicBranchBehind_NamesTheBase: the owner sees which branch the real run would merge in" \
   'health_line_holds "$work/behind-dry.out" "$(epic_of "$at_old_main")" main'
 check "HealthDryRunOnAnEpicBranchBehind_SaysHowFarBehind: the owner sees how many base commits the epic branch lacks" \
-  'health_line_holds "$work/behind-dry.out" "$(epic_of "$at_old_main")" "$main_commits_ahead"'
+  'health_count_holds "$work/behind-dry.out" "$(epic_of "$at_old_main")" "$main_commits_ahead"'
 health_pass > "$work/behind.out"
 check "EpicBranchPastBehindBaseWithACleanMerge_HasTheBaseMergedInAndPushed: the children start from an epic branch that holds the default branch's newest commits" \
   '[ -n "$(remote_tip main)" ] && git -C "$root/origin.git" merge-base --is-ancestor "$(remote_tip main)" "$(remote_tip "$(epic_of "$at_old_main")")"'
@@ -164,7 +168,7 @@ check "EpicBranchWhoseMergeConflicts_LeavesTheRemoteAsItWas: a conflicted merge 
 check "EpicBranchWhoseMergeConflicts_NamesTheEpicBranch: the owner learns which branch to merge by hand" \
   'health_line_holds "$work/conflict.out" "clash.txt" "$clashing_branch"'
 check "EpicBranchWhoseMergeConflicts_SaysHowFarBehind: the owner learns how many base commits the epic branch lacks" \
-  'health_line_holds "$work/conflict.out" "$clashing_branch" "$main_commits_ahead"'
+  'health_count_holds "$work/conflict.out" "$clashing_branch" "$main_commits_ahead"'
 check "EpicBranchWhoseMergeConflicts_NamesTheConflictedFiles: the owner learns which files to merge by hand" \
   'health_line_holds "$work/conflict.out" "$clashing:" "clash.txt"'
 check "EpicBranchWhoseMergeConflicts_Notifies: a conflict waits on the owner, so it reaches them away from the terminal" \
