@@ -187,16 +187,15 @@ def svg_session(plugins):
     return "\n".join(out)
 
 
-def cmd_text(spec, host):
-    """The command as typed: Claude /plugin:skill args, Codex $skill args."""
-    name, args = spec
-    skill = name.split(":", 1)[1]
-    return ("/%s" % name if host == "claude" else "$%s" % skill) + ((" " + args) if args else "")
+def command_text(command, host):
+    """The command as typed: Claude /plugin:skill arguments, Codex $skill arguments."""
+    bare_skill = command.skill.split(":", 1)[1]
+    return ("/%s" % command.skill if host == "claude" else "$%s" % bare_skill) + ((" " + command.arguments) if command.arguments else "")
 
 
-def cmd_html(spec, ask=""):
+def command_html(command, ask=""):
     return ('<span class="c-claude">%s</span><span class="c-codex">%s</span><span class="c-say">%s</span>'
-            % (esc(cmd_text(spec, "claude")), esc(cmd_text(spec, "codex")), esc(ask or cmd_text(spec, "claude"))))
+            % (esc(command_text(command, "claude")), esc(command_text(command, "codex")), esc(ask or command_text(command, "claude"))))
 
 
 def sh_html(command, ask=""):
@@ -207,7 +206,7 @@ def sh_html(command, ask=""):
 
 def step_box_html(step):
     if step.get("command"):
-        return '<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % cmd_html(step["command"], step["ask"])
+        return '<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % command_html(step["command"], step["ask"])
     if step.get("shell"):
         return '<div class="cmd sh"><span class="p" aria-hidden="true">$</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % sh_html(step["shell"], step["ask"])
     return '<div class="act">%s</div>' % esc(step["action"])
@@ -234,9 +233,14 @@ def stations_html(stations):
         '<div><code class="station">%s</code><p>%s</p></div>' % (esc(station), esc(STATIONS[station])) for station in stations)
 
 
+def gate_ask_text(name, gate):
+    hint = GATE_HINTS.get(name, "")
+    return gate["asks"] + " " + hint if hint else gate["asks"]
+
+
 def gates_html(gates):
     return '<div class="gates">%s</div>' % "".join(
-        '<div class="stop"><b>%s</b><span>%s</span></div>' % (esc(name), esc(" ".join(filter(None, [gate["asks"], GATE_HINTS.get(name, "")])))) for name, gate in gates.items())
+        '<div class="stop"><b>%s</b><span>%s</span></div>' % (esc(name), esc(gate_ask_text(name, gate))) for name, gate in gates.items())
 
 
 CSS = """
@@ -385,7 +389,7 @@ def flows_section_html(profiles, agent_plugin):
     for run in RUNS:
         out.append('<div><h3 class="kicker">%s</h3><p class="sub">%s</p>%s</div>' % (esc(run["title"]), esc(run["lede"]), steps_html(run["steps"], agent_plugin)))
     out.append('<div><h3 class="kicker">Also at hand</h3><div class="also">%s</div></div>' % "".join(
-        '<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code></div><p>%s</p></div>' % (cmd_html(extra["command"], extra["ask"]), esc(extra["says"])) for extra in EXTRAS))
+        '<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code></div><p>%s</p></div>' % (command_html(extra["command"], extra["ask"]), esc(extra["says"])) for extra in EXTRAS))
     out.append("</div></section>")
     return "\n".join(out)
 

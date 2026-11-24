@@ -4,7 +4,7 @@ Hand-written, because it is a teaching order and not a listing. tools/test.sh (m
 checks that every skill, agent and script a step names exists, so a rename cannot leave a stale example.
 
 A step is a dict:
-  command  (plugin:skill, arguments)  what you type; Claude shows /plugin:skill arguments, Codex $skill arguments
+  command  FlowCommand    plugin:skill and its arguments, what you type; Claude shows /plugin:skill arguments, Codex $skill arguments
   shell    text           a shell command, in a terminal or a scheduler; {host} becomes claude or codex
   action   text           something you do outside the session (edit a config, set a field)
   says     text           what happens, in one line
@@ -12,6 +12,14 @@ A step is a dict:
   result   text           what you get back
   ask      text           a command or shell step in plain words, what you can say to the flow:do skill
 """
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FlowCommand:
+    skill: str
+    arguments: str
+
 
 STATIONS = {
     "reproduce": "Writes one failing test that pins the bug, runs it red and commits it. The fix comes after.",
@@ -38,26 +46,26 @@ GATE_HINTS = {
 }
 
 DRIVE = [
-    {"command": ("flow:new", 'bug "Bots stall at the net after a restart"'),
+    {"command": FlowCommand("flow:new", 'bug "Bots stall at the net after a restart"'),
      "says": "Files a bug, a task or an epic in the tracker the config names, local files under .flow/items by default. A bug is matched against the open items first, and a match becomes a comment; otherwise it is filed with the steps to see it. An epic gets a problem and an outcome, no size and no tasks yet.",
      "result": "gh#340",
      "ask": "File a bug: bots stall at the net after a restart"},
-    {"command": ("flow:board", ""),
+    {"command": FlowCommand("flow:board", ""),
      "says": "Which items are ready, which are blocked, which worktrees are free, which gates wait on you. For an epic, its dependency graph: waves, what can run in parallel, the critical path.",
      "ask": "What is ready, blocked and waiting?"},
-    {"command": ("flow:next", "gh#340"),
+    {"command": FlowCommand("flow:next", "gh#340"),
      "says": "Runs the item along its line to the next diamond. Without an id it takes the first ready item in list order. Open a second session and run it again to work two items at once.",
      "ask": "Start on gh#340"},
-    {"command": ("flow:gate", 'gh#340 "plan approved"'),
+    {"command": FlowCommand("flow:gate", 'gh#340 "plan approved"'),
      "says": "Records your answer at the diamond; a change you ask for goes to the next step. flow:next goes on from there. Without arguments it lists the gates waiting on you.",
      "ask": "Plan approved"},
-    {"command": ("flow:gate", 'gh#340 "merged"'),
+    {"command": FlowCommand("flow:gate", 'gh#340 "merged"'),
      "says": "After you merge the PR: closes the gate. The merge clears the blockers of the tasks behind it.",
      "ask": "gh#340 is merged"},
-    {"command": ("flow:steward", "release gh#340"),
+    {"command": FlowCommand("flow:steward", "release gh#340"),
      "says": "Frees the worktree for the next item, and the task branch with it. Refuses while anything is uncommitted.",
      "ask": "Free the worktree for gh#340"},
-    {"command": ("flow:comments", "gh#340"),
+    {"command": FlowCommand("flow:comments", "gh#340"),
      "says": "When a reviewer comments: grades each thread, fixes the valid ones, replies.",
      "agents": ["comment-addresser"],
      "ask": "Address the review comments on gh#340"},
@@ -100,8 +108,8 @@ RUNS = [{
 }]
 
 EXTRAS = [
-    {"command": ("flow:help", ""), "says": "The manual: every skill, the lines, the gates.", "ask": "What can the flow do?"},
-    {"command": ("craft:improve", ""), "says": "Find refactors worth an epic, as a report with diagrams.", "ask": "Find refactors worth an epic"},
-    {"command": ("standards:review", ""), "says": "Review a branch or PR without an item (standards).", "ask": "Review this branch"},
-    {"command": ("meta:retro", ""), "says": "Turn the flow's lessons into changes to rules and skills.", "ask": "Run a retro"},
+    {"command": FlowCommand("flow:help", ""), "says": "The manual: every skill, the lines, the gates.", "ask": "What can the flow do?"},
+    {"command": FlowCommand("craft:improve", ""), "says": "Find refactors worth an epic, as a report with diagrams.", "ask": "Find refactors worth an epic"},
+    {"command": FlowCommand("standards:review", ""), "says": "Review a branch or PR without an item (standards).", "ask": "Review this branch"},
+    {"command": FlowCommand("meta:retro", ""), "says": "Turn the flow's lessons into changes to rules and skills.", "ask": "Run a retro"},
 ]
