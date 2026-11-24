@@ -60,7 +60,9 @@
 #                                                holds and name old ones, say when the
 #                                                pool is stuck, discard a free worktree's changes
 #                                                the base's history already holds, say once when
-#                                                a step got slower (lib/slow_steps.sh)
+#                                                a step got slower (lib/slow_steps.sh), merge the
+#                                                base into an approved epic's branch more than
+#                                                behind_base commits behind it (lib/epic_base.sh)
 #   steward.sh sessions [--stale]                list the claude and codex sessions working in the
 #                                                main worktree and the pool: pid, host, worktree,
 #                                                item, busy or idle and for how long; a stale one
@@ -125,6 +127,7 @@
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
 . "$FLOW_PLUGIN/lib/slow_steps.sh"
+. "$FLOW_PLUGIN/lib/epic_base.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -1536,10 +1539,12 @@ health_make_epic_branch() {
   fi
 }
 
-# health_epic_branch <epic>: an approved epic with no epic branch gets one; --dry-run only says so.
+# health_epic_branch <epic>: an approved epic with no epic branch gets one, and one that has it
+# gets its base merged in once it is more than behind_base commits behind (health_epic_base in
+# lib/epic_base.sh); --dry-run only says so.
 health_epic_branch() {
   branchless_key="epic-branch-$(item_slug "$1")"; missing_epic_branch="$(epic_branch "$1")"
-  if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; return 0; fi
+  if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; health_epic_base "$1"; return 0; fi
   if [ "$dry" -eq 1 ]; then health_say "$1" "would make its epic branch $missing_epic_branch"; return 0; fi
   branchless_epic_json="$(adapter read "$1" 2>/dev/null)"
   [ -z "$branchless_epic_json" ] || health_make_epic_branch "$1" "$branchless_epic_json"
@@ -1547,7 +1552,8 @@ health_epic_branch() {
 
 # health_epic_branches: an open epic with an open child and an approved split gets its epic
 # branch when it has none: one approved before the flow made the branch at the gate, one whose
-# branch could not be made then, or one whose children the owner made by hand.
+# branch could not be made then, or one whose children the owner made by hand. An existing epic
+# branch more than behind_base commits behind its base gets the base merged in.
 health_epic_branches() {
   for branchless_epic in $(approved_epics_with_children); do   # no pipe: health_say counts a finding in this shell
     health_epic_branch "$branchless_epic"
