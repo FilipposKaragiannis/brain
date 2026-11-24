@@ -14,7 +14,8 @@
 # call other than add, or add option other than -A, -u or -f) records nothing. Untracked files
 # are not in the key: hashing them would write their blobs on every commit. The record lives in
 # the worktree's git dir, in its own file, so hook copies from before this rule never read its
-# lines.
+# lines. An index copy keeps the index's time (cp -p): git rehashes an entry no older than its
+# index, so a copy stamped later trusts a same-size edit made in the second the entry was written.
 
 standards_start_folder="$(pwd)"
 passed_window_seconds=600
@@ -158,8 +159,8 @@ write_commit_index() {
   # Fails when git cannot stage it.
   staging_mode="$(printf '%s\n' "$2" | head -n 1)"
   staged_paths="$(printf '%s\n' "$2" | sed '1d')"
-  cp "$(source_index_path)" "$1" 2>/dev/null && add_to_index "$1" "$3" || return 1
-  { cp "$(worktree_index_path)" "$1.tracked" 2>/dev/null && add_to_index "$1.tracked" "$3"; } || rm -f "$1.tracked"
+  cp -p "$(source_index_path)" "$1" 2>/dev/null && add_to_index "$1" "$3" || return 1
+  { cp -p "$(worktree_index_path)" "$1.tracked" 2>/dev/null && add_to_index "$1.tracked" "$3"; } || rm -f "$1.tracked"
   [ "$staging_mode" != all ] || git_on_index "$1" add -u || return 1
   case "$staging_mode" in only|include) ;; *) return 0 ;; esac
   (
@@ -220,7 +221,7 @@ commit_key() {
 working_files_tree() {
   # $1 index file. Prints the tree of the working files that index tracks. Fails when git cannot.
   working_index="$1.working"
-  cp "$1" "$working_index" 2>/dev/null && git_on_index "$working_index" add -u \
+  cp -p "$1" "$working_index" 2>/dev/null && git_on_index "$working_index" add -u \
     && git_on_index "$working_index" write-tree
   working_status=$?
   rm -f "$working_index"
