@@ -21,8 +21,6 @@ printf 'state:\n  dir: %s\n' "$work/shared-state" >> .flow/config.yaml
 cp .flow/config.yaml "$work/base-config.yaml"
 
 config_with_lines() { cp "$work/base-config.yaml" .flow/config.yaml && printf '%s\n' "$1" >> .flow/config.yaml; }
-# write_frontmatter <item> <key> <value>: the item file's frontmatter holds key: value, as a person
-# editing the file would leave it, in place of any line of that key.
 write_frontmatter() {
   python3 -c 'import sys
 path, key, value = sys.argv[1:]

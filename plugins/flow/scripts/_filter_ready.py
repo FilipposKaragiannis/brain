@@ -244,13 +244,11 @@ def held_back(item: dict, verdict: ready_policy.NotReady) -> Optional[str]:
     return None
 
 AFTER_EVERY_NUMBERED_ITEM = float("inf")
+RANK_WITHOUT_PRIORITY = 999
 
 def number_ending_the_id(item):
     digits = item["id"][len(item["id"].rstrip("0123456789")):]
     return int(digits) if digits else AFTER_EVERY_NUMBERED_ITEM
-
-# Where an item with no rank sorts: after every rank a priority order gives.
-RANK_WITHOUT_PRIORITY = 999
 
 def note_of(item: dict, why: str, verdict: ready_policy.NotReady) -> dict:
     """The note of an open item held back: its id, worktree and why, with what the why names."""
@@ -285,8 +283,6 @@ def main() -> None:
     ready.sort(key=lambda ready_item: (ready_item.get("rank", RANK_WITHOUT_PRIORITY),
                                        number_ending_the_id(ready_item)))
     print(json.dumps(ready))
-    # FLOW_READY_NOTES names a file that gets one JSON line per open item held back, with why:
-    # next.sh reads them to say why a pick found nothing, at no extra tracker call.
     if os.environ.get("FLOW_READY_NOTES"):
         write_notes(notes, os.environ["FLOW_READY_NOTES"])
 

@@ -37,7 +37,6 @@ ASSIGNEES_DETAIL = "assignees"
 MACHINE_VARIABLE = "FLOW_MACHINE"
 CATEGORIES_VARIABLE = "READY_CATEGORIES"
 ASSIGNEE_VARIABLE = "READY_ASSIGNEE"
-# How long one adapter's me.sh may take (a gh or Jira call) before me stands for no one.
 ME_TIMEOUT_SECONDS = 60
 
 
