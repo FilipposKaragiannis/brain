@@ -103,8 +103,6 @@ ROLES = (("raised_by", "raised by"), ("answered_by", "answered by"), ("condition
 def roles_of(g):
     said = ["%s %s" % (label, g[key]) for key, label in ROLES if g.get(key)]
     return " (%s)" % ", ".join(said) if said else ""
-# The owner opens the board to see what needs them, so the sections run in the order they act:
-# the gates, what went stale, what cannot be trusted, then the items, the pool and the spend.
 print("## Waiting on you" if gates else "## Waiting on you: nothing")
 for gate in gates:
     print("- **%s** on %s (%s): %s%s" % (gate["gate"], gate["item"], gate["time"], str(gate["message"]).splitlines()[0] if gate["message"] != "" else "", roles_of(gate)))
@@ -140,11 +138,10 @@ def print_table_heading(title, columns, rows, empty_note):
     print("\n## %s" % title)
     print("| %s |" % " | ".join(columns))
     print("|" + "---|" * len(columns))
-# Past every ranked item; the console sorts by the same default, so both list the items alike.
-UNRANKED = 999
+RANK_AFTER_EVERY_RANKED_ITEM = 999
 TITLE_WIDTH = 50
 print_table_heading("Items", ("item", "kind", "priority", "size", "title", "step", "gate", "worktree", "blocked by"), items, "none open")
-for item in sorted(items, key=lambda item: item.get("rank", UNRANKED)):
+for item in sorted(items, key=lambda item: item.get("rank", RANK_AFTER_EVERY_RANKED_ITEM)):
     state = item["state"]
     print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (item["id"], item["kind"], item.get("priority", ""), item.get("size") or state.get("size", ""), item["title"][:TITLE_WIDTH],
           step_of(item), gate_of(item), worktree_of(item), ", ".join(item["open_blockers"]) or "-"))
