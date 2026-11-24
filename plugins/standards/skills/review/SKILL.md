@@ -52,7 +52,8 @@ the rule index; they do not search for it.
 Always: the `standards-reviewer` and, when a spec exists, the `spec-reviewer`.
 When the diff touches them: `test-reviewer` for test files, `security-reviewer` for files under
 `review.security_paths` or any file handling input, auth, storage or network, and
-`performance-reviewer` for files under `hot_paths` or `review.performance_paths`.
+`performance-reviewer` for files under `hot_paths` or `review.performance_paths`, or when the
+diff, a commit message or the PR body claims a measured number.
 
 **Project reviewers.** When `.standards/config.json` names `project.roster`, read that roster:
 every agent with `"step": "review"` and a `paths` list is spawned too when any file in the diff
