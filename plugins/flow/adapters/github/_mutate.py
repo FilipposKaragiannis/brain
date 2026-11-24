@@ -9,14 +9,16 @@ sync moves each open item's card in the project to the Status its flow state imp
 gate is the gate status (the merge gate is the review status), a started step or an item with
 open sub-issues is the running status, an unstarted item with no missing field and no open blocker is the ready status, any
 other is the backlog status. Closed items are left to the project's own workflows. The status
-names come from GH_STATUS_<KEY>; an item already at its status costs no write."""
+names come from GH_STATUS_<KEY>, which _gh.sh exports with their defaults; an item already at its
+status costs no write."""
 import json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _call  # noqa: E402
 
-STATUS = {key: os.environ.get("GH_STATUS_" + key.upper(), default) for key, default in (
-    ("backlog", "Backlog"), ("ready", "Ready"), ("gate", "Needs you"), ("running", "In progress"), ("review", "In review"))}
+
+def status_name(key: str) -> str:
+    return os.environ["GH_STATUS_" + key.upper()]
 
 
 def graphql(query, **variables):
@@ -77,14 +79,14 @@ def desired(item):
     state = item.get("state", {})
     gate, step = state.get("gate") or "none", state.get("step") or ""
     if gate == "merge" or step == "done":
-        return STATUS["review"]
+        return status_name("review")
     if gate != "none":
-        return STATUS["gate"]
+        return status_name("gate")
     if step or item.get("open_children"):
-        return STATUS["running"]
+        return status_name("running")
     if not item.get("needs") and not item.get("open_blockers"):
-        return STATUS["ready"]
-    return STATUS["backlog"]
+        return status_name("ready")
+    return status_name("backlog")
 
 
 def sync(owner, name, project):

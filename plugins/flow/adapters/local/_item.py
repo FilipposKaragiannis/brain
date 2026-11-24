@@ -19,7 +19,9 @@ in-scope exits 0 when the item matches it, 1 when not.
 
 An item's open_children counts the open items whose parent it is. Its rank places its priority in
 READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
-GitHub adapter's issue_to_item applies the same rule; change both).
+GitHub adapter's issue_to_item applies the same rule; change both). Its assignees are the
+frontmatter assignee, one name or an inline [a, b] list, and its category comes from the
+frontmatter workflow, the set-status name: done when closed, unknown with no workflow.
 """
 import glob
 import json
@@ -37,6 +39,8 @@ LIST_KEYS = {"blocked_by", "labels", "touches", "changes"}
 INT_KEYS = {"attempts"}
 # The rank of an item with no priority: after every ranked one.
 NO_RANK = 999
+WORKFLOW_CATEGORIES = {"backlog": "todo", "ready": "todo", "in-progress": "in-progress", "in-review": "review",
+                       "needs-you": "blocked"}
 OWNER_ONLY_MODE = 0o600
 
 
@@ -169,6 +173,23 @@ def needs(meta):
             if not meta.get(field) and not (field == "size" and meta.get("kind") == "epic")]
 
 
+def category(meta: dict) -> str:
+    if meta.get("status", "open") != "open":
+        return "done"
+    workflow = str(meta.get("workflow", "")).strip().lower()
+    if not workflow:
+        return "unknown"
+    return WORKFLOW_CATEGORIES.get(workflow, "blocked")
+
+
+def assignees(meta: dict) -> list:
+    """parse reads assignee as a scalar, so write-state keeps a list as the owner wrote it."""
+    assignee = str(meta.get("assignee", "")).strip()
+    if assignee.startswith("["):
+        return parse_list(assignee)
+    return [assignee] if assignee else []
+
+
 def to_json(path, meta, body, children=None):
     state = {k: meta.get(k, [] if k in ("touches", "changes") else (0 if k == "attempts" else "")) for k in STATE_KEYS}
     if not state["gate"]:
@@ -179,6 +200,8 @@ def to_json(path, meta, body, children=None):
         "title": meta.get("title", ""),
         "size": meta.get("size", ""),
         "status": meta.get("status", "open"),
+        "category": category(meta),
+        "assignees": assignees(meta),
         "labels": meta.get("labels", []),
         "blocked_by": meta.get("blocked_by", []),
         "parent": meta.get("parent", ""),

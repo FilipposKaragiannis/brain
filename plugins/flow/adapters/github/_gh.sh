@@ -28,15 +28,16 @@ assignee_login() {
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
 # name org issue fields (each replaces its size: or priority: labels), github.project numbers the
-# project whose Status the adapter keeps in step. The readiness rules are every tracker's
-# (ready_rules in lib/flow.sh); list and read take them before they build items.
+# project whose Status the adapter keeps in step and reads an item's category from, through the
+# Status names github.status.<key> renames. The readiness rules are every tracker's (ready_rules in
+# lib/flow.sh); list and read take them before they build items.
 GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
 GH_PROJECT="$(cfg github.project)"; GH_PRIORITY_LABEL="priority:"
-export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL
-for _key in backlog ready gate running review; do
-  _v="$(cfg "github.status.$_key")"
-  [ -n "$_v" ] && export "GH_STATUS_$(printf '%s' "$_key" | tr a-z A-Z)=$_v"
-done
+GH_STATUS_BACKLOG="$(cfg_or github.status.backlog Backlog)"; GH_STATUS_READY="$(cfg_or github.status.ready Ready)"
+GH_STATUS_GATE="$(cfg_or github.status.gate "Needs you")"; GH_STATUS_RUNNING="$(cfg_or github.status.running "In progress")"
+GH_STATUS_REVIEW="$(cfg_or github.status.review "In review")"
+export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL \
+  GH_STATUS_BACKLOG GH_STATUS_READY GH_STATUS_GATE GH_STATUS_RUNNING GH_STATUS_REVIEW
 
 # project_sync [item JSON lines on stdin]: move the project cards to the Status the flow state
 # implies. A no-op without github.project.
@@ -52,7 +53,10 @@ project_sync() {
 # READY_PRIORITY_ORDER when there are two; priority_labels lists the priority: labels that decided
 # it, empty with the field set. rank orders ready items (lower first) by READY_PRIORITY_ORDER;
 # needs lists the READY_NEEDS fields an unstarted item still lacks, the same rule as the local
-# adapter's _item.py (change both); open_children counts its open native sub-issues.
+# adapter's _item.py (change both); open_children counts its open native sub-issues. assignees are
+# the logins as GitHub gives them. category: done when closed, unknown with no github.project card
+# or a card with no Status, else the card's Status read back through the GH_STATUS_* names, and
+# blocked for a Status outside them.
 issue_to_item() {
   cached_python3 -I -c '
 import json, os, re, sys
@@ -101,10 +105,19 @@ if is_open and not state["step"]:
         if need == "size" and not size and kind != "epic": needs.append(need)
 project = os.environ.get("GH_PROJECT", "")
 item = next((p for p in raw.get("project_items", []) if project and str(p["project"]) == project), None)
+STATUS_CATEGORIES = {os.environ["GH_STATUS_BACKLOG"]: "todo", os.environ["GH_STATUS_READY"]: "todo",
+                     os.environ["GH_STATUS_RUNNING"]: "in-progress", os.environ["GH_STATUS_REVIEW"]: "review",
+                     os.environ["GH_STATUS_GATE"]: "blocked"}
+def category_of(is_open: bool, card: dict) -> str:
+    if not is_open:
+        return "done"
+    if not card.get("status"):
+        return "unknown"
+    return STATUS_CATEGORIES.get(card["status"], "blocked")
 print(json.dumps({
     "id": "gh#%d" % raw["number"], "kind": kind, "type": raw.get("type") or "", "title": raw.get("title", ""), "size": size,
     "priority": priority, "priority_labels": priority_labels, "area": area, "rank": rank, "needs": needs,
-    "status": "open" if is_open else "closed",
+    "status": "open" if is_open else "closed", "category": category_of(is_open, item or {}), "assignees": raw.get("assignees", []),
     "labels": labels, "blocked_by": ["gh#%d" % b["number"] for b in raw.get("blocked_by", [])],
     "open_blockers": ["gh#%d" % b["number"] for b in raw.get("blocked_by", []) if b.get("state", "open") != "closed"],
     "open_children": raw.get("open_children", 0), "parent": parent, "state": state, "url": raw.get("url", ""), "body": raw.get("body", ""),

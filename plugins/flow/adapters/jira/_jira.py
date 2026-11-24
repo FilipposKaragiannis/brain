@@ -41,7 +41,8 @@ STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_e
               "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from",
               "base", "branch"]
 LABEL_PREFIXES = {"step": "step:", "gate": "gate:", "worktree": "wt:", "profile": "flow:", "size": "size:"}
-FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks"]
+FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks", "assignee"]
+STATUS_CATEGORY_KEYS = {"new": "todo", "indeterminate": "in-progress", "done": "done"}
 FOREIGN_BLOCKERS = re.compile(r"(?m)^Blocked by: (.+)$")
 NO_RANK = 999
 PAGE_SIZE = 100
@@ -94,6 +95,26 @@ def flow_state(issue, labels, fields):
     return state
 
 
+def status_names(name: str) -> set:
+    return {status.strip().lower() for status in setting(name).split(",") if status.strip()}
+
+
+def category_of(status: dict) -> str:
+    name = status.get("name", "").lower()
+    if name in status_names("STATUS_REVIEW"):
+        return "review"
+    if name in status_names("STATUS_BLOCKED"):
+        return "blocked"
+    return STATUS_CATEGORY_KEYS.get((status.get("statusCategory") or {}).get("key", ""), "unknown")
+
+
+def assignees_of(issue_fields: dict) -> list:
+    """A user's privacy setting can hide the email, so the account id stands in for it."""
+    person = issue_fields.get("assignee") or {}
+    identity = person.get("emailAddress") or person.get("accountId") or ""
+    return [identity] if identity else []
+
+
 def kind_of(issue_fields):
     """The flow kind of an issue's fields, as jira.types maps the issue types; any other type is a task."""
     type_name = (issue_fields.get("issuetype") or {}).get("name", "")
@@ -115,7 +136,8 @@ def to_item(issue, fields, open_children):
     linked_ids = [PREFIX + l["inwardIssue"]["key"] for l in links]
     item = {
         "id": PREFIX + issue["key"], "kind": kind, "type": type_name, "title": data.get("summary", ""), "body": body,
-        "status": "open" if is_open else "closed", "size": state["size"],
+        "status": "open" if is_open else "closed", "category": category_of(data.get("status") or {}),
+        "assignees": assignees_of(data), "size": state["size"],
         "priority": (data.get("priority") or {}).get("name", ""),
         "area": field_text(data.get(fields["area"]["id"])) if "area" in fields else "",
         "labels": labels, "blocked_by": linked_ids + [b for b in foreign if b not in linked_ids],

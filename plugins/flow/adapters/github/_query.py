@@ -225,6 +225,7 @@ def raw(repo, node, marker, always=False):
         "number": node["number"], "title": node["title"], "body": node["body"] or "",
         "state": node["state"], "url": node["url"],
         "labels": [{"name": l["name"]} for l in node["labels"]["nodes"]],
+        "assignees": [assignee["login"] for assignee in node["assignees"]["nodes"]],
         "type": (node.get("issueType") or {}).get("name", ""), "kind": kind_of(node),
         "parent": node.get("parent"),
         "blocked_by": [{"number": b["number"], "state": b["state"].lower()} for b in node["blockedBy"]["nodes"]],
