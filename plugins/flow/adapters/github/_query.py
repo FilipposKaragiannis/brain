@@ -63,20 +63,28 @@ def filter_values(prefix, name):
     return {value.strip().lower() for value in os.environ.get(prefix + name, "").split(",") if value.strip()}
 
 
-def filter_rules(prefix):
+def scope_assignee():
+    """github.scope names one login: its search ANDs two assignee: qualifiers, so a list there would
+    mean every one of them."""
+    assignee = os.environ.get("FLOW_SCOPE_ASSIGNEE", "").strip().lower()
+    return {assignee} if assignee else set()
+
+
+def filter_rules(prefix, assignees):
     """The neutral fields of a filter (FLOW_PICK_ for `list --pick`, pick_filter in lib/flow.sh;
-    FLOW_SCOPE_ for github.scope, scope_filter; list.sh turns `me` into the gh user's login): a
-    login, label names and issue states (open, closed), compared without case as GitHub does, and
-    the kinds (kind_of)."""
-    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip().lower()
-    return {"assignee": {assignee} if assignee else set(),
+    FLOW_SCOPE_ for github.scope, scope_filter; list.sh turns `me` into the gh user's login): the
+    assignees' logins, label names and issue states (open, closed), compared without case as GitHub
+    does, and the kinds (kind_of)."""
+    return {"assignee": assignees,
             "labels": filter_values(prefix, "LABELS"), "status": filter_values(prefix, "STATUS"),
             "kinds": filter_values(prefix, "KINDS")}
 
 
 # A query is GitHub search qualifiers, sent as written within the repository's issues.
-PICK_RULES, PICK_QUERY = filter_rules("FLOW_PICK_"), os.environ.get("FLOW_PICK_QUERY", "").strip()
-SCOPE_RULES, SCOPE_QUERY = filter_rules("FLOW_SCOPE_"), os.environ.get("FLOW_SCOPE_QUERY", "").strip()
+PICK_RULES = filter_rules("FLOW_PICK_", filter_values("FLOW_PICK_", "ASSIGNEE"))
+PICK_QUERY = os.environ.get("FLOW_PICK_QUERY", "").strip()
+SCOPE_RULES = filter_rules("FLOW_SCOPE_", scope_assignee())
+SCOPE_QUERY = os.environ.get("FLOW_SCOPE_QUERY", "").strip()
 ISSUE_STATES = {"open", "closed"}
 PAGE_SIZE = int(os.environ.get("FLOW_GH_PAGE", "50"))
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3

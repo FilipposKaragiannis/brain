@@ -181,18 +181,22 @@ def pick_values(prefix, name):
     return [v.strip() for v in os.environ.get(prefix + name, "").split(",") if v.strip()]
 
 
-def pick_conditions(prefix):
+def assignee_condition(assignee_names):
+    """One JQL condition an issue assigned to any of the names meets. `assignee in (...)` takes no
+    currentUser(), so a list is an OR group."""
+    clauses = ["assignee = %s" % ("currentUser()" if name == "me" else jql_text(name)) for name in assignee_names]
+    return clauses[0] if len(clauses) == 1 else "(%s)" % " OR ".join(clauses)
+
+
+def pick_conditions(prefix, assignee_names):
     """The JQL conditions of `list --pick` (pick_filter in lib/flow.sh, prefix FLOW_PICK_) or of
-    jira.scope (scope_filter, prefix FLOW_SCOPE_): its query as written, else the assignee (me is
+    jira.scope (scope_filter, prefix FLOW_SCOPE_): its query as written, else the assignees (me is
     currentUser(), the jira.email login the token belongs to), the statuses, the labels and the
     kinds (kind_condition), so jira.limit counts only the issues the filter keeps."""
     query = os.environ.get(prefix + "QUERY", "").strip()
     if query:
         return ["(%s)" % query]
-    conditions = []
-    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
-    if assignee:
-        conditions.append("assignee = %s" % ("currentUser()" if assignee == "me" else jql_text(assignee)))
+    conditions = [assignee_condition(assignee_names)] if assignee_names else []
     for field, name in (("status", "STATUS"), ("labels", "LABELS")):
         if pick_values(prefix, name):
             conditions.append("%s in (%s)" % (field, ", ".join(jql_text(v) for v in pick_values(prefix, name))))
@@ -215,7 +219,9 @@ def kind_condition(kinds):
 
 
 def scope_conditions():
-    return pick_conditions(SCOPE)
+    """jira.scope names one assignee, so a comma in it is part of the name."""
+    assignee = os.environ.get(SCOPE + "ASSIGNEE", "").strip()
+    return pick_conditions(SCOPE, [assignee] if assignee else [])
 
 
 def children_of(issues, scope, narrowed):
@@ -246,7 +252,7 @@ def cmd_list(args):
         else:
             fail("unknown option %s" % args[i], 2)
     fields, limit = custom_fields(), int(setting("LIMIT", "500"))
-    scope, picked = scope_conditions(), pick_conditions(PICK)
+    scope, picked = scope_conditions(), pick_conditions(PICK, pick_values(PICK, "ASSIGNEE"))
     conditions = ["project = %s" % jql_text(setting("PROJECT"))] + scope + picked + ([] if want_all else ["statusCategory != Done"])
     issues, cut = search(" AND ".join(conditions) + " ORDER BY created DESC", field_list(fields), limit)
     if cut:

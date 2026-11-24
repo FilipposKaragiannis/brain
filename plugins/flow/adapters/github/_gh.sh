@@ -17,11 +17,12 @@ issue_number() {
   case "$1" in gh#*) printf '%s' "${1#gh#}" ;; *) die "not a GitHub item id: $1" 2 ;; esac
 }
 
-# assignee_login <assignee>: the login a pick or github.scope names as its assignee, with me read
-# as the gh user (me.sh).
+# assignee_login <assignees>: the logins a pick (comma-separated) or github.scope names as its
+# assignees, with me read as the gh user (me.sh), which costs a gh call only when me is named.
 assignee_login() {
-  [ "$1" = me ] || { printf '%s' "$1"; return 0; }
-  "$FLOW_PLUGIN/adapters/github/me.sh"
+  case ",$1," in *,me,*) ;; *) printf '%s' "$1"; return 0 ;; esac
+  _me_login="$("$FLOW_PLUGIN/adapters/github/me.sh")" || return
+  printf '%s\n' "$1" | tr ',' '\n' | awk -v me_login="$_me_login" '{ print ($0 == "me" ? me_login : $0) }' | paste -sd, -
 }
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority

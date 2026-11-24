@@ -240,24 +240,35 @@ def cmd_me(home, args):
         print(name)
 
 
-def pick_rules(prefix):
+def pick_assignees():
+    """pick.<name>.assignee is a list, which pick_filter in lib/flow.sh joins with commas."""
+    return [name.strip() for name in ready_list("FLOW_PICK_ASSIGNEE") if name.strip()]
+
+
+def scope_assignee():
+    """A scope names one assignee, so a comma in it is part of the name."""
+    assignee = os.environ.get("FLOW_SCOPE_ASSIGNEE", "").strip()
+    return [assignee] if assignee else []
+
+
+def pick_rules(prefix, assignee_names):
     """The filter of `list --pick` (pick_filter in lib/flow.sh, prefix FLOW_PICK_) or the scope
     (scope_filter, prefix FLOW_SCOPE_): each field it sets, as a set of lower-case values an item
-    must match one of."""
+    must match one of. me among the assignee names stands for git_identity()."""
     rules = {}
     for field in ("status", "labels", "kinds"):
         values = {v.strip().lower() for v in ready_list(prefix + field.upper())}
         if values:
             rules[field] = values
-    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
-    if assignee:
-        rules["assignee"] = set(git_identity()) if assignee == "me" else {assignee.lower()}
+    if assignee_names:
+        rules["assignee"] = {identity for name in assignee_names
+                             for identity in (git_identity() if name == "me" else [name.lower()])}
     return rules
 
 
 def picked(meta, rules):
     values = {
-        "assignee": {str(meta.get("assignee", "")).lower()},
+        "assignee": {assignee.lower() for assignee in assignees(meta)},
         "status": {meta.get("status", "open").lower()},
         "labels": {label.lower() for label in meta.get("labels", [])},
         "kinds": {meta.get("kind", "task").lower()},
@@ -277,7 +288,7 @@ def cmd_list(home, args):
         else:
             usage("unknown option %s" % args[i])
     items, children = [], open_children(home)
-    scope, rules = pick_rules("FLOW_SCOPE_"), pick_rules("FLOW_PICK_")
+    scope, rules = pick_rules("FLOW_SCOPE_", scope_assignee()), pick_rules("FLOW_PICK_", pick_assignees())
     for path in sorted(glob.glob(os.path.join(home, "items", "*", "*.md")), key=natural_key):
         meta, body = parse(path)
         if kind and meta.get("kind") != kind:
@@ -305,7 +316,7 @@ def cmd_read(home, args):
 
 
 def cmd_in_scope(home, args):
-    scope = pick_rules("FLOW_SCOPE_")
+    scope = pick_rules("FLOW_SCOPE_", scope_assignee())
     if not scope:
         raise SystemExit(0)
     path = item_path(home, args[0])
