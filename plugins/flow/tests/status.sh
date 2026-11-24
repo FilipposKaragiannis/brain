@@ -96,6 +96,11 @@ check "GateSentBack_SetsInProgress: the item reads category in-progress, because
 met="$(gated "Cleared by its condition")"; clear_gate "$met" --met "$gate_condition"
 check "GateClearedByItsCondition_SetsInProgress: the item reads category in-progress, because the flow works it again" \
   '[ "$(category "$met")" = in-progress ]'
+merge_sent_back="$(taken_at_implement "Merge sent back")"
+"$plugin/scripts/gate.sh" raise "$merge_sent_back" merge "**Merge the pull request.**" pr -- step="done" >/dev/null 2>&1
+clear_gate "$merge_sent_back" --back "Split the PR in two."
+check "MergeGateSentBack_SetsInProgress: the item reads category in-progress, because its pr step runs again" \
+  '[ "$(category "$merge_sent_back")" = in-progress ]'
 
 echo "status: the last step"
 finished="$(new_task "Every step ran")"; take "$finished"
