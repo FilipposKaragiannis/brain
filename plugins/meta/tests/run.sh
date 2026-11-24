@@ -41,23 +41,25 @@ map="$(python3 "$root/tools/lib/map.py" --root "$root")"
 check "map renders every skill" sh -c "for s in \$(ls -d '$root'/plugins/*/skills/*/ | xargs -n1 basename | sort -u); do printf '%s' \"\$0\" | grep -q \"<code>\$s</code>\" || exit 1; done" "$map"
 check "map renders every agent" sh -c "for a in \$(python3 -c \"import json; print(' '.join(json.load(open('$root/roster/agents.json'))['agents']))\"); do printf '%s' \"\$0\" | grep -q \"<code>\$a</code>\" || exit 1; done" "$map"
 check "map draws the profiles and the hooks" sh -c "printf '%s' \"\$0\" | grep -q 'task-L' && printf '%s' \"\$0\" | grep -q 'delivery gate'" "$map"
-check "the flows guide names only real skills, agents and scripts" python3 -I -c "
-import sys; sys.path.insert(0, '$root/tools/lib')
-import map as m, flow_guide as guide
-plugins, agents, _ = m.load('$root')
+bad_references="$(python3 -I -c "
+import os, sys; sys.path.insert(0, '$root/tools/lib')
+import map as brain_map, flow_guide as guide
+plugins, agents, _ = brain_map.load('$root')
 skills = {plugin['name'] + ':' + skill['name'] for plugin in plugins for skill in plugin['skills']}
 names = {agent['name'] for agent in agents}
 steps = guide.DRIVE + guide.EXTRAS + [step for run in guide.RUNS for step in run['steps']]
 bad = [step['command'][0] for step in steps if step.get('command') and step['command'][0] not in skills]
 bad += [agent for step in steps for agent in step.get('agents', []) if agent not in names]
-import os
 flow = '$root/plugins/flow'
 for step in steps:
     if step.get('shell'):
         script = step['shell'].split()[0].split('.flow/')[-1]
         if not (os.path.exists(os.path.join(flow, script)) or os.path.exists(os.path.join(flow, 'templates', os.path.basename(script)))):
             bad.append(step['shell'])
-sys.exit(1 if bad else 0)"
+print(', '.join(bad))
+sys.exit(1 if bad else 0)" 2>&1)"; guide_status=$?
+check "FlowsGuide_NamesOnlyRealSkillsAgentsAndScripts: every skill, agent and script the flows guide names exists, because a reader who copies a command must find it" [ "$guide_status" -eq 0 ]
+[ "$guide_status" -eq 0 ] || echo "       not found: $bad_references"
 flows_section="$(printf '%s' "$map" | python3 -I -c "import re, sys; found = re.search(r'<section id=\"flows\".*?</section>', sys.stdin.read(), re.S); print(found.group(0) if found else '')")"
 check "MapPage_HasAFlowsSection: the page keeps one section for the flows, because a new reader finds them there" [ -n "$flows_section" ]
 check "MapPage_HasNoPlaybooksSection: no element carries a playbooks id, because each flow is said once, in Flows" sh -c "! printf '%s' \"\$0\" | grep -qi 'id=\"[^\"]*playbook'" "$map"
@@ -66,17 +68,17 @@ import re, sys
 page = sys.argv[1]
 targets = set(re.findall(r'href=\"#([^\"]+)\"', page))
 ids = set(re.findall(r'id=\"([^\"]+)\"', page))
-sys.exit(1 if targets - ids else 0)" "$map"
-check "Repository_NoFileLinksToPlaybooks: no doc or plugin file links a playbooks anchor, because that section is gone" sh -c "! grep -rIil --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=changelog.d --exclude=CHANGELOG.md '#playbook' '$root/docs' '$root/plugins' '$root/README.md'"
+sys.exit(1 if not targets or targets - ids else 0)" "$map"
+check "Repository_NoFileLinksToPlaybooks: no file links the map's playbooks anchor, because that section is gone" sh -c "grep -rIiqs --exclude-dir=node_modules 'map[.]html#playbook' '$root/README.md' '$root/docs' '$root/plugins' '$root/tools'; [ \$? -eq 1 ]"
 check "FlowsSection_NamesEveryGate: each gate the flow profiles define is named in Flows, because the diamonds the playbooks explained now live there" python3 -I -c "
 import json, sys
 gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
-sys.exit(1 if [gate for gate in gates if gate not in sys.argv[1]] else 0)" "$flows_section"
+sys.exit(1 if not gates or [gate for gate in gates if gate not in sys.argv[1]] else 0)" "$flows_section"
 check "FlowsSection_SaysWhatEachGateAsks: each gate's ask from the flow profiles shows in Flows, because the reader learns there how to answer a diamond" python3 -I -c "
 import html, json, sys
 gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
 section = html.unescape(sys.argv[1])
-sys.exit(1 if [name for name, gate in gates.items() if gate['asks'] not in section] else 0)" "$flows_section"
+sys.exit(1 if not gates or [name for name, gate in gates.items() if gate['asks'] not in section] else 0)" "$flows_section"
 check "FlowsSection_ShowsTheGateCommand: Flows shows the flow:gate command, because it is how the reader answers a diamond" sh -c "printf '%s' \"\$0\" | grep -q '/flow:gate'" "$flows_section"
 check "CommittedPage_HasNoDrift: tools/generate.sh --check finds every generated file fresh, because the committed map must match what the sources render" "$root/tools/generate.sh" --check
 printf '{"agents":{"physics-reviewer":{"tier":"read-only","model":"opus","effort":"high","description":"Reviews physics. Use when src/Physics changes."}}}\n' > "$work/project-roster.json"
