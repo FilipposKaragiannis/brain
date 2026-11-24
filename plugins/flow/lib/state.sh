@@ -28,6 +28,11 @@
 #   record_set_with_claim <claim file> <item> <pair>...
 #                               record_set for a caller that knows the item's claim.json, or empty
 #                               when the item holds no pool worktree
+#   record_set_unmirrored <item> <pair>...
+#                               record_set with no tracker write, under either tracker_state: for
+#                               a caller whose tracker took part of a write that then failed, so
+#                               the record still takes the whole of it. Exit codes as record_set's,
+#                               less the adapter's
 #   item_claim_file <item>      the claim.json of the item's pool worktree; nothing when it holds
 #                               none
 #   take_item <item>            this machine holds the item: claim.machine, claim.host and
@@ -117,6 +122,17 @@ record_set_with_claim() (
     tracker_mirror "$flow_record_item" "$@" || exit
   fi
   record_seeded set "$flow_record_item" "$flow_record_dir" "$flow_record_home" \
+    --claim-file "$flow_record_claim_file" -- "$@"
+)
+
+record_set_unmirrored() (
+  [ $# -ge 2 ] || die "usage: record_set_unmirrored <item> <key=value>..." "$EXIT_USAGE"
+  item_shape_required "$1"
+  flow_record_claim_file="$(record_claim_file "$@")"
+  flow_record_item="$1"; shift
+  record_pairs_kind "$@" >/dev/null || exit "$EXIT_USAGE"
+  flow_record_dir="$(record_ensured_dir)" || exit "$EXIT_USAGE"
+  record_seeded set "$flow_record_item" "$flow_record_dir" "$(flow_home)" \
     --claim-file "$flow_record_claim_file" -- "$@"
 )
 

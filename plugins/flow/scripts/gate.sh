@@ -22,9 +22,10 @@
 #                                           without the other. A write the tracker refuses raises
 #                                           nothing, exit 1, unless tracker_state is labels and the
 #                                           tracker shows the gate after it (labels that landed
-#                                           before the state comment or property failed): that
-#                                           gate stands, with a warning, and its record takes the
-#                                           gate from notify.sh.
+#                                           before the state comment or property failed): then
+#                                           the flow record alone takes the whole write and the
+#                                           gate stands, with a warning that the tracker lags; a
+#                                           record that cannot take it raises nothing, exit 1.
 #                                           A comment or notification that fails after the write
 #                                           is said on stderr and the gate stands
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
@@ -166,9 +167,9 @@ case "${1:-}" in
     if ! record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null; then
       [ "$(tracker_state)" = labels ] && [ "$(json_get "$( (adapter read "$item") </dev/null 2>/dev/null)" state.gate)" = "$gate" ] \
         || die "cannot record the $gate gate on $item, and its tracker does not show it: nothing raised, its run stays"
-      echo "flow: the write of the $gate gate on $item failed part way, but its tracker shows the gate, so it stands; the rest of its state may lag until the next write" >&2
-      record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null \
-        || echo "flow: the flow record of $item does not hold the $gate gate yet; its gate record holds the item until the gate is answered" >&2
+      record_set_unmirrored "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" "$@" >/dev/null \
+        || die "its tracker shows the $gate gate on $item, but its flow record could not take it: nothing raised, its run stays"
+      echo "flow: the tracker write of the $gate gate on $item failed part way; the gate stands in its flow record, and its tracker's state may lag until the next write" >&2
     fi
     adapter comment "$item" --body "**Gate: $gate**
 

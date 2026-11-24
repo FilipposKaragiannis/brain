@@ -1,13 +1,14 @@
 #!/bin/sh
 # gate-transition.sh: an item never moves past a human gate the tracker has not recorded, and a
 # state write advance.sh cannot make leaves the step to apply again, on the local adapter with a
-# stand-in write-state that refuses or dies on the write that records a gate or refuses any write
-# with a named pair, a stand-in comment that refuses or kills gate.sh after the gate write and a
-# stand-in notify.sh that kills advance.sh once a gate is raised, and on the GitHub and Jira
-# adapters with their fakes, where the labels can land and the state write after them fail.
-# advance.sh moves the step and records the gate in one tracker write; a refused or killed write
-# leaves the item at its step with its run, exits 1 with the reason, and a retry raises the gate
-# once. A refused write of the touches, the plan's changes or hold, a failed step's attempt, a
+# stand-in write-state that refuses, dies on or takes and then fails the write that records a gate
+# or refuses any write with a named pair, a stand-in comment that refuses or kills gate.sh after
+# the gate write and a stand-in notify.sh that kills advance.sh once a gate is raised, and on the
+# GitHub and Jira adapters with their fakes, where the labels can land and the state write after
+# them fail. advance.sh moves the step and records the gate in one tracker write; a refused or
+# killed write leaves the item at its step with its run, exits 1 with the reason, and a retry
+# raises the gate once. A gate write the tracker takes but fails on every try stands, with the
+# whole transition in the flow record. A refused write of the touches, the plan's changes or hold, a failed step's attempt, a
 # re-size or the step done keeps the run, and the retry applies the step as the first try would
 # have. A failing notifier or comment leaves the gate standing and says so. next.sh runs no step
 # for an item with a gate record on this host that its tracker does not show. Under tracker_state
@@ -34,6 +35,7 @@ for pair in "$@"; do
       case "$(cat "$GATE_WRITE_MODE" 2>/dev/null)" in
         refused) echo "flow: the tracker refused the write: API rate limit exceeded" >&2; exit 1 ;;
         killed) kill -9 "$$" ;;
+        landed) "$(dirname "$0")/write-state-tracker.sh" "$@"; echo "flow: the tracker took the labels, then refused the state write: API rate limit exceeded" >&2; exit 1 ;;
       esac ;;
   esac
 done
@@ -190,6 +192,22 @@ check "RetryAfterAKilledGateWrite_RaisesOneGateComment: the owner is asked once"
   '[ "$(gate_comments "$killed")" -eq "$once" ]'
 check "RetryAfterAKilledGateWrite_LogsOneGateRaise: the board shows one raise of the gate" \
   '[ "$(gate_events "$killed")" -eq "$once" ]'
+
+echo "gate transition: the gate write lands on the tracker and fails on every try"
+mirror_lags="$(planned_task "Mirror lags")"
+echo landed > "$GATE_WRITE_MODE"
+advance "$mirror_lags"
+# shellcheck disable=SC2034 # the check's condition reads it
+mirror_lags_code=$?
+rm -f "$GATE_WRITE_MODE"
+check "GateWriteLandingOnTheTrackerAndFailingOnEveryTry_WaitsAtTheGate: the tracker shows the gate and the record takes it, so it stands" \
+  '[ "$mirror_lags_code" -eq "$gate_wait_status" ]'
+check "GateWriteLandingOnTheTrackerAndFailingOnEveryTry_RecordsTheStepAfterTheGate: the record wins whole, so a step it lacks would run the plan again" \
+  '[ "$(state "$mirror_lags" step)" = implement ]'
+check "GateWriteLandingOnTheTrackerAndFailingOnEveryTry_RecordsTheStepTheGateWasRaisedFrom: the answer goes back to the step that asked" \
+  '[ "$(state "$mirror_lags" gate_from)" = plan ]'
+check "GateWriteLandingOnTheTrackerAndFailingOnEveryTry_SaysTheTrackerLags: the owner learns the tracker is behind the record" \
+  'grep "plan-approval" "$work/advance.err" | grep -qi "lag"'
 
 echo "gate transition: gate.sh dies after the gate write"
 stopped="$(planned_task "Stopped after the write")"; stopped_reports="$(reports_of "$stopped")"
