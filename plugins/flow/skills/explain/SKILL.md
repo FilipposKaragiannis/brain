@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Explain an item's change in plain language as a self-contained HTML page with diagrams, plus a short quiz the owner takes in the console before merge. Optional step, on by default for L tasks. Use when the user asks to explain a change or when the next step of an item is explain.
+description: Explain an item's change in plain language as a self-contained HTML page that opens with the verify verdict and shows one diagram, plus a short quiz the owner takes in the console before merge. Optional step, on by default for L tasks. Use when the user asks to explain a change or when the next step of an item is explain.
 disable-model-invocation: true
 ---
 
@@ -15,16 +15,30 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 ## The page (`explain.html`)
 
 Self-contained: inline CSS, Mermaid from `https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs`
-for graph-shaped diagrams, no other network. Plain English: one idea per sentence, the
-project's glossary words, no code in prose. Sections:
+for the diagram, no other network. Plain English: one idea per sentence, the project's glossary
+words, no code in prose. Nothing on it repeats the PR body: no summary view, no verify table, no
+file list. Sections, in this order:
 
-1. **What changed, in one paragraph.** The user-visible effect first.
+1. **What changed, and is it verified.** The first lines of the page: the user-visible change
+   in one or two sentences, then the verdict from the first line of `verify.md`. With no
+   `verify.md`, the verdict line says the change is not verified yet.
 2. **Why.** The problem from the item, in two or three sentences.
-3. **How it works.** One picture per moving part: a call tree, a state diagram or a sequence
-   diagram (Mermaid), each with a two-sentence caption. The key decision from `design.md` and
-   the rejected alternative with its reason.
-4. **What to look at by hand.** The feel-test list from `verify.md` when there is one.
-5. **Where it lives.** A shallow file tree of the touched files with a five-word job each.
+3. **One example.** One concrete case traced through the change, step by step: what the user
+   does, what happens at each step, what the user sees at the end, and what they saw before.
+4. **How it works.** One diagram (Mermaid): a call tree, a state diagram or a sequence diagram,
+   whichever makes the point, with a two-sentence caption. A second diagram only when the
+   change has a part the first cannot show, and its caption states that reason. The key
+   decision from `design.md` and the rejected alternative with its reason.
+5. **What to check by hand.** What no test or live run proved: the Not checked list in
+   `verify.md` and the feel-test when there is one, each as one thing the owner does and what
+   they should see. "Nothing" when every line is proven.
+
+Every diagram keeps these rules:
+
+- A box or arrow is labelled with what the reader sees: a screen, a button, a step, a message.
+  Variable, field, function and class names stay out.
+- About 20 arrows at most. Past that, merge boxes or drop the minor steps.
+- One line under it says what it hides (e.g. "Left out: the error paths and the config read").
 
 Inputs: the diff (`git diff <base>...HEAD`), `plan.md`, `design.md`, `verify.md`, the item.
 
