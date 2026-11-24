@@ -38,6 +38,7 @@ for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
 field() { "$A/read.sh" "$1" 2>/dev/null | jget "$2"; }
 code_of() { "$@" >/dev/null 2>&1; echo $?; }
+assignees_are() { field "$1" assignees | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin) != json.loads(sys.argv[1]))' "$2"; }
 # listed <id> <script> [args]: the script's JSON array names the id.
 listed() {
   li_id="$1"; shift
@@ -421,17 +422,17 @@ json.dump(data, open(path, "w"))' "$FAKE_JIRA_DIR/jira.json" "${1#jira:}" "$2"
 }
 category_config_local() { :; }
 category_config_github() { printf '  project: 1\n'; }
-category_config_jira() { printf '  status:\n    review: [Code Review]\n'; }
+category_config_jira() { printf '  status:\n    review: [Code Review]\n    blocked: [On Hold]\n'; }
 category_rows_local() { printf '%s\n' backlog=todo ready=todo in-progress=in-progress in-review=review needs-you=blocked triage=blocked absent=unknown; }
 category_rows_github() { printf '%s\n' Backlog=todo Ready=todo "In progress=in-progress" "In review=review" "Needs you=blocked" Triage=blocked "no card=unknown"; }
-category_rows_jira() { printf '%s\n' "Selected/new=todo" "In Progress/indeterminate=in-progress" "Code Review/indeterminate=review" "Parked/undefined=unknown"; }
+category_rows_jira() { printf '%s\n' "Selected/new=todo" "In Progress/indeterminate=in-progress" "Code Review/indeterminate=review" "Parked/undefined=unknown" "On Hold/indeterminate=blocked"; }
 no_board_local() { echo absent; }
 no_board_github() { echo Backlog; }
 no_board_jira() { echo "Parked/undefined"; }
 if type "set_category_$name" >/dev/null 2>&1 && type "set_$name" >/dev/null 2>&1; then
   echo " category, assignees and me"
-  check "AssignedItem_ListsItsAssignee: an item assigned to a person names that person under assignees, because readiness reads who holds it" '[ "$(field "$pb" assignees)" = "[\"someone@contract.test\"]" ]'
-  check "UnassignedItem_ListsNoAssignees: an item nobody is assigned to has an empty assignees list, because none is the ready default" '[ "$(field "$pc" assignees)" = "[]" ]'
+  check "AssignedItem_ListsItsAssignee: an item assigned to a person names that person under assignees, because readiness reads who holds it" 'assignees_are "$pb" "[\"someone@contract.test\"]"'
+  check "UnassignedItem_ListsNoAssignees: an item nobody is assigned to has an empty assignees list, because none is the ready default" 'assignees_are "$pc" "[]"'
   board_item="$("$A/create.sh" task "Category: as the tracker holds it")"
   "set_category_$name" "$board_item" "$("no_board_$name")"
   check "NoBoardMapping_ReadsCategoryUnknown: a tracker state outside any board the flow reads is the unknown category, because unknown is ready by default" '[ "$(field "$board_item" category)" = unknown ]'
@@ -452,7 +453,7 @@ ROWS
     two_people="$("$A/create.sh" task "Assignees: two people")"
     set_local "$two_people" assignee "[alice, bob]"
     "$A/write-state.sh" "$two_people" step=implement >/dev/null 2>&1
-    check "ListAssigneeAfterWriteState_ReadsBackBothPeople: a frontmatter list of assignees still reads as two after a state write, because write-state rewrites the item file" '[ "$(field "$two_people" assignees)" = "[\"alice\", \"bob\"]" ]'
+    check "ListAssigneeAfterWriteState_ReadsBackBothPeople: a frontmatter list of assignees still reads as two after a state write, because write-state rewrites the item file" 'assignees_are "$two_people" "[\"alice\", \"bob\"]"'
   fi
 else
   skip "no set_category_$name in this suite to place an item on its tracker's board"

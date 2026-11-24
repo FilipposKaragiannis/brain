@@ -10,6 +10,7 @@
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
+. "$(dirname "$0")/_stale_pick_fixture.sh"
 unset FLOW_TRACKER_STATE
 this_machine=this-machine; other_machine=other-machine
 export FLOW_MACHINE="$this_machine"
@@ -19,7 +20,6 @@ git_identity_email=t@t
 printf 'state:\n  dir: %s\n' "$work/shared-state" >> .flow/config.yaml
 cp .flow/config.yaml "$work/base-config.yaml"
 
-# config_with_lines <yaml lines>: the repo's config is the base config with the lines appended.
 config_with_lines() { cp "$work/base-config.yaml" .flow/config.yaml && printf '%s\n' "$1" >> .flow/config.yaml; }
 # write_frontmatter <item> <key> <value>: the item file's frontmatter holds key: value, as a person
 # editing the file would leave it, in place of any line of that key.
@@ -30,9 +30,7 @@ text = open(path).read(); end = text.find("\n---\n", 4)
 head = "\n".join(line for line in text[:end].split("\n") if not line.startswith(key + ":"))
 open(path, "w").write(head + "\n" + key + ": " + value + text[end:])' ".flow/items/${1#local:}.md" "$2" "$3"
 }
-# is_ready <item>: list-ready names the item.
 is_ready() { ready_ids | grep -qxF "$1"; }
-# held_back_why <item>: the why list-ready notes for the item it holds back, through FLOW_READY_NOTES.
 held_back_why() {
   held_back_notes="$(mktemp "$work/notes.XXXXXX")"
   FLOW_READY_NOTES="$held_back_notes" "$local_adapter/list-ready.sh" >/dev/null 2>&1
@@ -41,7 +39,6 @@ for line in open(sys.argv[1]):
     note = json.loads(line)
     if note["id"] == sys.argv[2]: print(note["why"])' "$held_back_notes" "$1"
 }
-# take_on_machine <machine> <item>: the item's flow record is claimed by the machine.
 take_on_machine() { env FLOW_MACHINE="$1" sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "$1"' take "$2"; }
 list_code() { "$local_adapter/list.sh" >/dev/null 2>&1; echo $?; }
 next_code() { "$plugin/scripts/next.sh" "$1" >/dev/null 2>&1; echo $?; }
@@ -71,7 +68,8 @@ check "AssigneeSingleLogin_ThatPersonsItemIsReady: one login as a value takes th
 check "AssigneeSingleLogin_UnassignedItemIsNotReady: one login without none leaves out an item nobody holds, because the value replaces the default" '! is_ready "$unassigned"'
 config_with_lines 'ready:
   assignee: [none, bob]'
-check "AssigneeList_EachNamedKindIsReady: a list takes an unassigned item and the named person's, because an item matches any entry" 'is_ready "$unassigned" && is_ready "$theirs"'
+check "AssigneeListWithNone_UnassignedItemIsReady: a list holding none takes an item nobody holds, because an item matches any entry" 'is_ready "$unassigned"'
+check "AssigneeListWithALogin_ThatPersonsItemIsReady: a list holding a login takes that person's item, because an item matches any entry" 'is_ready "$theirs"'
 config_with_lines 'ready:
   categories: [todo, in-progress]'
 check "UnknownCategory_ListExitsTwo: a category outside todo and unknown stops the list, because a bad policy is refused at the boundary" '[ "$(list_code)" = "$exit_usage" ]'
@@ -123,7 +121,8 @@ printf '[%s,%s,%s]' \
 "$plugin/scripts/filter-ready.sh" < "$work/offline-items.json" > "$work/offline-ready.json" 2> "$work/offline-ready.err"
 check "MeFails_UnassignedItemStaysReady: an item nobody holds is ready while me cannot be read, because none needs no identity" 'grep -qF "\"gh#701\"" "$work/offline-ready.json"'
 check "MeFails_AssignedItemIsNotReady: an assigned item is held back while me cannot be read, because a failed me stands for no one" '! grep -qF "\"gh#702\"" "$work/offline-ready.json"'
-check "MeFails_IsSaidOnceForTheAdapter: the failure is one stderr line for two assigned items, because me is read once per adapter" '[ "$(grep -c "me failed" "$work/offline-ready.err")" = 1 ]'
+check "MeFailsForTwoAssignedItems_IsOneStderrLine: the failure is said on one line for two assigned items, because me is read once per adapter" '[ "$(grep -c . "$work/offline-ready.err")" = 1 ]'
+check "MeFails_TheWarningNamesTheAdapter: the failure names the github adapter, because the owner must know which tracker's me to fix" 'grep -qw github "$work/offline-ready.err"'
 
 echo "readiness: next.sh checks the fresh read"
 check "NamedItemAssignedToSomeoneElse_NextExitsFour: next.sh passes over a named item a person holds, because the policy applies to a named item too" '[ "$(next_code "$theirs")" = "$exit_waiting" ]'
@@ -135,7 +134,7 @@ still_free="$(new_task "Second in the list")"
 for earlier_item in "$unassigned" "$mine" "$queued" "$seeded"; do "$local_adapter/close.sh" "$earlier_item" >/dev/null 2>&1; done
 stale="$("$local_adapter/list-ready.sh")"
 write_frontmatter "$taken_since" assignee bob
-picked="$(sh -c 'mkdir -p .flow/tmp && printf "%s\n" "$2" > ".flow/tmp/.ready.$$"; FLOW_NEXT_PID=$$ exec "$1" --json' _ "$plugin/scripts/next.sh" "$stale" 2>/dev/null | json_value item)"
+picked="$(stale_pick "$stale" 2>/dev/null | json_value item)"
 check "StaleListItemAPersonTookSince_PickTakesTheNextOne: a pick from an older ready list passes over the item a person took and takes the next, because the fresh read wins" '[ "$picked" = "$still_free" ]'
 
 [ "$fails" -eq 0 ] && { echo "readiness: ok"; exit 0; }

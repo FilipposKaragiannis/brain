@@ -11,6 +11,7 @@ trap 'sandbox_close $?' EXIT
 . "$here/_flow_setup.sh"
 . "$here/_github_fixture.sh"
 . "$here/_jobs_fixture.sh"
+. "$here/_stale_pick_fixture.sh"
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
@@ -75,11 +76,10 @@ out="$("$P/scripts/next.sh" --json 2>"$work/pass.err")"; code=$?
 check "a pick leaves the item whose every step ran to the owner and takes the next" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb"
 end_run "$pb"
 # The ready list a pick reads can be older than the item's state: here a gate raised in between.
-stale_pick() { sh -c 'printf "%s\n" "$2" > ".flow/tmp/.ready.$$"; FLOW_NEXT_PID=$$ exec "$1" --json' _ "$P/scripts/next.sh" "$stale"; }
 record set "$pa" step=implement gate=plan-approval
-out="$(stale_pick 2>"$work/pass.err")"; code=$?
+out="$(stale_pick "$stale" 2>"$work/pass.err")"; code=$?
 check "a pick passes over an item its ready list holds that waits at a gate, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 waits at gate .plan-approval." "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
-stale_pick >/dev/null 2>"$work/pass.err"; code=$?
+stale_pick "$stale" >/dev/null 2>"$work/pass.err"; code=$?
 check "a pass-over with nothing left is nothing ready (exit 5), not a full pool (exit 3)" sh -c "[ $code -eq 5 ] && grep -q 'nothing ready' '$work/pass.err'"
 check "a pass-over leaves no cached ready list behind" sh -c '! ls .flow/tmp/.ready.* >/dev/null 2>&1'
 "$P/scripts/next.sh" "$pa" >/dev/null 2>&1; code=$?
@@ -88,7 +88,7 @@ record set "$pa" step=done gate=none
 "$P/scripts/next.sh" "$pa" >/dev/null 2>&1; code=$?
 check "a named item whose every step ran still exits 6" [ "$code" -eq 6 ]
 end_run "$pb"
-out="$(stale_pick 2>"$work/pass.err")"; code=$?
+out="$(stale_pick "$stale" 2>"$work/pass.err")"; code=$?
 check "a pick passes over an item its ready list holds whose every step ran, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 is done (every step ran)" "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
 # The pool is full (pb holds its one worktree) and pc needs one: a pass-over and a full-pool skip
 # in one pick end in exit 3, as the pool is what stops the work.
@@ -98,7 +98,7 @@ pc="$("$P/scripts/new.sh" task "Needs a worktree" --size S --priority P2 --body 
 record set "$pa" step=implement
 stale="$("$P/adapters/local/list-ready.sh")"
 record set "$pa" step=done
-stale_pick >/dev/null 2>"$work/pass.err"; code=$?
+stale_pick "$stale" >/dev/null 2>"$work/pass.err"; code=$?
 check "a pass-over and a full-pool skip in one pick: exit 3, the pool is what stops the work" sh -c "[ $code -eq 3 ] && grep -q '$pa is done' '$work/pass.err' && grep -q 'no free worktree' '$work/pass.err'"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out" 2>&1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out2" 2>&1
@@ -143,7 +143,7 @@ out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
 check "a pick leaves the held item, though it is listed first, and takes its holder" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$ha"
 "$P/scripts/next.sh" >/dev/null 2>"$work/hold.err"; code=$?
 check "nothing ready names the held item and its holder" sh -c "[ $code -eq 5 ] && grep -qx 'nothing ready: 1 running, 1 held ($hb behind $ha)' '$work/hold.err'"
-stale_pick >/dev/null 2>"$work/hold.err"; code=$?
+stale_pick "$stale" >/dev/null 2>"$work/hold.err"; code=$?
 check "a pick whose ready list is older than the hold passes the held item over, and says so" sh -c "[ $code -eq 5 ] && grep -q '^$hb is held behind $ha: ' '$work/hold.err' && tail -n 1 '$work/hold.err' | grep -qx 'nothing ready: 1 running, 1 passed over (said above)'"
 check "next job: a named held item is a quiet run that says who it waits behind" sh -c "'$P/jobs/next.sh' claude '$hb' | grep -q 'quiet: $hb is held behind $ha: changes src/a.c'"
 "$P/adapters/local/close.sh" "$ha" --comment done
