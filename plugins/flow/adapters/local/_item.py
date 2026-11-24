@@ -12,12 +12,18 @@ Usage (always from the shell scripts):
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
   _item.py me <home>
+  _item.py set-status <home> <id> <backlog|ready|in-progress|needs-you|in-review>
+  _item.py assign <home> <id> <me|none>
 
 A list with --pick keeps the items its filter matches: the item file's assignee (`me` is the git
 user's email or name), status, labels and kind, each compared without case. local.scope
 (scope_filter in lib/flow.sh) is matched the same way, on every list beside the filter, and
 in-scope exits 0 when the item matches it, 1 when not. me prints those names of the git user, one
 per line, and nothing when git has neither.
+
+set-status writes the frontmatter workflow and assign adds or removes the first name of me in the
+frontmatter assignee. Each prints "<id> <value>" when it changed the file and nothing when the file
+already said so.
 
 An item's open_children counts the open items whose parent it is. Its rank places its priority in
 READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
@@ -45,6 +51,7 @@ WORKFLOW_CATEGORIES = {"backlog": "todo", "ready": "todo", "in-progress": "in-pr
                        "needs-you": "blocked"}
 OWNER_ONLY_MODE = 0o600
 GIT_CONFIG_TIMEOUT_SECONDS = 10
+ASSIGN_TARGETS = ("me", "none")
 
 
 def usage(message):
@@ -345,6 +352,77 @@ def cmd_write_state(home, args):
     dump(path, meta, body)
 
 
+def cmd_set_status(home: str, args: list) -> str:
+    if len(args) != 2:
+        usage("usage: set-status <id> <%s>" % "|".join(WORKFLOW_CATEGORIES))
+    item_id, status = args
+    if status not in WORKFLOW_CATEGORIES:
+        usage("set-status: no status %s; the statuses are %s" % (status, ", ".join(WORKFLOW_CATEGORIES)))
+    path = existing_item_path(home, item_id)
+    meta, body = parse(path)
+    if str(meta.get("workflow", "")).strip().lower() == status:
+        return ""
+    write_item(path, {**meta, "workflow": status}, body)
+    return "%s %s" % (item_id, status)
+
+
+def cmd_assign(home: str, args: list) -> str:
+    if len(args) != 2:
+        usage("usage: assign <id> <%s>" % "|".join(ASSIGN_TARGETS))
+    item_id, target = args
+    if target not in ASSIGN_TARGETS:
+        usage("assign: no target %s; the targets are %s" % (target, ", ".join(ASSIGN_TARGETS)))
+    path = existing_item_path(home, item_id)
+    me = first_me()
+    meta, body = parse(path)
+    held = assignees(meta)
+    wanted = assignees_after(held, me, target)
+    if wanted == held:
+        return ""
+    write_item(path, with_assignees(meta, wanted), body)
+    return "%s %s" % (item_id, me)
+
+
+def first_me() -> str:
+    identity = git_identity()
+    if not identity:
+        raise SystemExit("flow: assign: git has no user.email or user.name for me to stand for")
+    return identity[0]
+
+
+def assignees_after(held: list, me: str, target: str) -> list:
+    others = [name for name in held if name.lower() != me]
+    if target == "none":
+        return others
+    return held if len(others) < len(held) else held + [me]
+
+
+def with_assignees(meta: dict, names: list) -> dict:
+    """An assignee the owner wrote as a list stays a list, and a second name needs one."""
+    updated = dict(meta)
+    if str(meta.get("assignee", "")).strip().startswith("[") or len(names) > 1:
+        updated["assignee"] = dump_list(names)
+    elif names:
+        updated["assignee"] = names[0]
+    else:
+        updated.pop("assignee", None)
+    return updated
+
+
+def existing_item_path(home: str, item_id: str) -> str:
+    path = item_path(home, item_id)
+    if not os.path.exists(path):
+        raise SystemExit("flow: no such item %s" % item_id)
+    return path
+
+
+def write_item(path: str, meta: dict, body: str) -> None:
+    try:
+        dump(path, meta, body)
+    except OSError as error:
+        raise SystemExit("flow: cannot write %s: %s" % (path, error.strerror or error)) from error
+
+
 def cmd_comment(home, args):
     path = item_path(home, args[0])
     meta, body = parse(path)
@@ -412,8 +490,11 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     cmd, home, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "write-state": cmd_write_state,
-     "comment": cmd_comment, "close": cmd_close, "create": cmd_create, "me": cmd_me}[cmd](home, args)
+    printed = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "write-state": cmd_write_state,
+               "comment": cmd_comment, "close": cmd_close, "create": cmd_create, "me": cmd_me,
+               "set-status": cmd_set_status, "assign": cmd_assign}[cmd](home, args)
+    if printed:
+        print(printed)
 
 
 if __name__ == "__main__":

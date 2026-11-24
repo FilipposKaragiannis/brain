@@ -131,6 +131,9 @@ write_config() {
 "setup_$name"; write_config 0
 
 echo "contract: $name"
+# Required of every adapter once the GitHub and Jira adapters have them too; until then the checks
+# run for an adapter that has them.
+status_ops="set-status assign"
 echo " the folder"
 prefix="$(head -n 1 "$A/prefix" 2>/dev/null)"
 check "the prefix file holds one non-empty line" '[ -n "$prefix" ] && [ "$(wc -l < "$A/prefix" | tr -d " ")" = 1 ]'
@@ -139,6 +142,9 @@ for op in list list-ready read in-scope create close comment link-pr write-state
 done
 for op in sync vocabulary answers; do
   if [ -e "$A/$op.sh" ]; then check "the optional $op.sh is executable" '[ -x "$A/$op.sh" ]'; fi
+done
+for op in $status_ops; do
+  if [ -e "$A/$op.sh" ]; then check "$op.sh is there and executable" '[ -x "$A/$op.sh" ]'; else skip "$op.sh: the $name adapter has none yet"; fi
 done
 check "slug.sed is there" '[ -f "$A/slug.sed" ]'
 check "no other adapter's prefix starts this one or is started by it" '! for f in "$P"/adapters/*/prefix; do
@@ -149,6 +155,9 @@ done | grep -q clash'
 echo " usage"
 for op in read create close comment link-pr write-state; do
   check "$op with no arguments exits 2" '[ "$(code_of "$A/$op.sh")" = 2 ]'
+done
+for op in $status_ops; do
+  if [ -x "$A/$op.sh" ]; then check "$op with no arguments exits 2" '[ "$(code_of "$A/$op.sh")" = 2 ]'; fi
 done
 check "list with an unknown option exits 2" '[ "$(code_of "$A/list.sh" --no-such-option)" = 2 ]'
 check "read of an id another adapter owns exits 2" '[ "$(code_of "$A/read.sh" "nobody:1")" = 2 ]'
@@ -457,6 +466,51 @@ ROWS
   fi
 else
   skip "no set_category_$name in this suite to place an item on its tracker's board"
+fi
+
+# set-status and assign (adapters/README.md, Operations): per backend, in_progress_native_<name>
+# prints the tracker's own name for in-progress, which a set-status that moves the item prints, and
+# many_assignees_<name> is there when the tracker holds more than one assignee. The adapter's
+# category_config_<name> gives set-status its place for the status.
+in_progress_native_local() { echo in-progress; }
+many_assignees_local() { :; }
+assignees_hold() {
+  field "$1" assignees | python3 -c 'import json,sys; sys.exit(sys.argv[1].lower() not in [assignee.lower() for assignee in json.load(sys.stdin)])' "$2"
+}
+if [ -x "$A/set-status.sh" ] && [ -x "$A/assign.sh" ]; then
+  echo " set-status and assign"
+  write_config 0; "category_config_$name" >> "$FLOW_HOME/config.yaml"
+  moved="$("$A/create.sh" task "Status: moved by the flow")"
+  check "SetStatusUnknownName_ExitsTwo: set-status of a name outside the five exits 2, because done belongs to close and no status may stand in for it" '[ "$(code_of "$A/set-status.sh" "$moved" done)" = 2 ]'
+  check "SetStatusForeignId_ExitsTwo: set-status of an id another adapter owns exits 2, because the adapter moves only its own items" '[ "$(code_of "$A/set-status.sh" "nobody:1" ready)" = 2 ]'
+  check "SetStatusMissingItem_ExitsOne: set-status of an id that names no item exits 1, because the tracker has nothing to move" '[ "$(code_of "$A/set-status.sh" "$missing" ready)" = 1 ]'
+  "$A/set-status.sh" "$moved" in-progress > "$work/set-status.out" 2>/dev/null
+  check "SetStatusThatMoves_PrintsIdAndNativeName: a set-status that moves the item prints its id and the tracker's name for the status, because the caller says what moved" '[ "$(cat "$work/set-status.out")" = "$moved $("in_progress_native_$name")" ]'
+  check "SetStatusInProgress_ReadsCategoryInProgress: an item set in-progress reads category in-progress, because readiness reads back what the flow set" '[ "$(field "$moved" category)" = in-progress ]'
+  check "SetStatusRepeated_PrintsNothing: a second set-status to the same status prints nothing, because nothing moved" '[ -z "$("$A/set-status.sh" "$moved" in-progress 2>/dev/null)" ]'
+  check "SetStatusRepeated_ExitsZero: a second set-status to the same status exits 0, because an item already there is no failure" '[ "$(code_of "$A/set-status.sh" "$moved" in-progress)" = 0 ]'
+  check "AssignUnknownTarget_ExitsTwo: assign to anyone but me or none exits 2, because the flow assigns only the user it acts as" '[ "$(code_of "$A/assign.sh" "$moved" nobody)" = 2 ]'
+  check "AssignMissingItem_ExitsOne: assign of an id that names no item exits 1, because the tracker has nothing to assign" '[ "$(code_of "$A/assign.sh" "$missing" me)" = 1 ]'
+  "$A/assign.sh" "$moved" me > "$work/assign.out" 2>/dev/null
+  check "AssignMe_PrintsIdAndFirstMeName: an assign that changes the item prints its id and the first name me prints, because that is the name it assigned" '[ "$(cat "$work/assign.out")" = "$moved $("$A/me.sh" 2>/dev/null | head -n 1)" ]'
+  check "AssignMe_AssigneesHoldMe: after assign me the item's assignees hold the user me stands for, because readiness reads who holds it" 'assignees_hold "$moved" "$("me_$name")"'
+  check "AssignMeRepeated_PrintsNothing: a second assign me prints nothing, because nothing changed" '[ -z "$("$A/assign.sh" "$moved" me 2>/dev/null)" ]'
+  check "AssignMeRepeated_ExitsZero: a second assign me exits 0, because an item already assigned is no failure" '[ "$(code_of "$A/assign.sh" "$moved" me)" = 0 ]'
+  "$A/assign.sh" "$moved" none >/dev/null 2>&1
+  check "AssignNone_TakesMeOff: after assign none the item's assignees no longer hold the user me stands for, because none gives the item back" '! assignees_hold "$moved" "$("me_$name")"'
+  check "AssignNoneRepeated_PrintsNothing: a second assign none prints nothing, because nothing changed" '[ -z "$("$A/assign.sh" "$moved" none 2>/dev/null)" ]'
+  held_elsewhere="$("$A/create.sh" task "Assign: held by someone else")"
+  "set_$name" "$held_elsewhere" assignee someone@contract.test
+  check "AssignNoneOnOthersItem_PrintsNothing: assign none on an item only someone else holds prints nothing, because none takes off only me" '[ -z "$("$A/assign.sh" "$held_elsewhere" none 2>/dev/null)" ]'
+  check "AssignNoneOnOthersItem_KeepsTheirAssignee: assign none leaves someone else's assignment, because the flow never unassigns a person" 'assignees_hold "$held_elsewhere" someone@contract.test'
+  if type "many_assignees_$name" >/dev/null 2>&1; then
+    "$A/assign.sh" "$held_elsewhere" me >/dev/null 2>&1
+    check "AssignMeOnOthersItem_KeepsTheirAssignee: assign me beside another assignee keeps theirs, because me is added, never swapped in" 'assignees_hold "$held_elsewhere" someone@contract.test'
+    check "AssignMeOnOthersItem_AddsMe: assign me beside another assignee adds the user me stands for, because the tracker holds both" 'assignees_hold "$held_elsewhere" "$("me_$name")"'
+    "$A/assign.sh" "$held_elsewhere" none >/dev/null 2>&1
+    check "AssignNoneBesideOthers_KeepsTheirAssignee: assign none beside another assignee keeps theirs, because none takes off only me" 'assignees_hold "$held_elsewhere" someone@contract.test'
+  fi
+  write_config 0
 fi
 
 # Tracker scope (adapters/README.md, Tracker scope): <name>.scope bounds every list and list-ready,
