@@ -24,6 +24,8 @@ check() { name="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else fai
 format_log="$work/format.log"
 unmarked_log="$work/unmarked.log"
 marked_log="$work/marked.log"
+format_fails="$work/format-fails"
+gate_fails="$work/gate-fails"
 once=1
 twice=2
 
@@ -36,12 +38,12 @@ cat > .standards/config.json <<JSON
   "version": "0.1.0",
   "languages": [
     { "name": "text", "extensions": [".txt"],
-      "format": [ { "prefix": "", "command": "echo {files} >> '$format_log'" } ] }
+      "format": [ { "prefix": "", "command": "echo {files} >> '$format_log' && test ! -f '$format_fails'" } ] }
   ],
   "build": "true",
   "protected": [],
   "gates": [
-    {"name": "unmarked", "command": "echo ran >> '$unmarked_log'"},
+    {"name": "unmarked", "command": "echo ran >> '$unmarked_log' && test ! -f '$gate_fails'"},
     {"name": "marked", "command": "echo ran >> '$marked_log'", "marker": "[skip-marked]"}
   ]
 }
@@ -61,10 +63,14 @@ start_case() {
 
 agent_hooks() {
   # $1 command text. Feeds the agent host payload to the format and gates checks.
-  payload="$(printf '{"tool_input":{"command":%s}}' "$(printf '%s' "$1" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')")"
-  printf '%s' "$payload" | "$hooks/check-format.sh" >/dev/null 2>&1 \
-    && printf '%s' "$payload" | "$hooks/check-gates.sh" >/dev/null 2>&1 \
+  agent_check_alone check-format.sh "$1" && agent_check_alone check-gates.sh "$1" \
     || fail "$case_name: the agent hook blocked $1"
+}
+
+agent_check_alone() {
+  # $1 check script, $2 command text. Feeds the agent host payload to that one check, which may block.
+  payload="$(printf '{"tool_input":{"command":%s}}' "$(printf '%s' "$2" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')")"
+  printf '%s' "$payload" | "$hooks/$1" >/dev/null 2>&1
 }
 
 run_commit() {
@@ -153,6 +159,31 @@ run_commit 'git add g.txt && echo x >> a.txt && git commit -a -m "feat: add g"'
 expect_runs AddThenEditThenCommitAll_RunsFormatAgain "$format_log" "$twice" "the commit holds a.txt as the command left it, which no hook formatted"
 expect_runs AddThenEditThenCommitAll_RunsTheUnmarkedGateAgain "$unmarked_log" "$twice" "the commit holds a.txt as the command left it, which no gate saw"
 expect_runs AddThenEditThenCommitAll_RunsTheMarkedGateAgain "$marked_log" "$twice" "the commit holds a.txt as the command left it, which no gate saw"
+
+start_case AnotherCommitThanTheAgentHookSaw
+printf 'c4\n' > c.txt; printf 'd4\n' > d.txt
+agent_hooks 'git commit -m "feat: change c" c.txt'
+run_commit 'git commit -a -m "feat: change c and d"'
+expect_runs AnotherCommitThanTheAgentHookSaw_RunsFormatAgain "$format_log" "$twice" "the commit holds d.txt, which the agent hook left out of the commit it predicted"
+expect_runs AnotherCommitThanTheAgentHookSaw_RunsTheUnmarkedGateAgain "$unmarked_log" "$twice" "the commit holds d.txt, which the agent hook left out of the commit it predicted"
+expect_runs AnotherCommitThanTheAgentHookSaw_RunsTheMarkedGateAgain "$marked_log" "$twice" "the commit holds d.txt, which the agent hook left out of the commit it predicted"
+
+echo "a check the agent hook failed records no pass"
+start_case FormatFailsInTheAgentHook
+printf 'a7\n' > a.txt
+: > "$format_fails"
+agent_check_alone check-format.sh 'git commit -a -m "feat: change a"'
+rm -f "$format_fails"
+run_commit 'git commit -a -m "feat: change a"'
+expect_runs FormatFailsInTheAgentHook_RunsFormatAgain "$format_log" "$twice" "a format check that failed passed no content, so pre-commit runs it again"
+
+start_case GateFailsInTheAgentHook
+printf 'a8\n' > a.txt
+: > "$gate_fails"
+agent_check_alone check-gates.sh 'git commit -a -m "feat: change a"'
+rm -f "$gate_fails"
+run_commit 'git commit -a -m "feat: change a"'
+expect_runs GateFailsInTheAgentHook_RunsTheGateAgain "$unmarked_log" "$twice" "a gate that failed passed no content, so pre-commit runs it again"
 
 echo "throwaway indexes"
 leftovers="$(find "$TMPDIR" "$(git rev-parse --git-dir)" -name 'standards-index*' 2>/dev/null)"
