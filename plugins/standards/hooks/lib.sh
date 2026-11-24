@@ -4,8 +4,10 @@
 # exits 0 otherwise. The project config lives in <repo>/.standards/config.json.
 
 # The git hooks live one level down (hooks/git/) and init.sh elsewhere (it sets STANDARDS_HOOKS).
-for _d in "${STANDARDS_HOOKS:-}" "$(dirname "$0")" "$(dirname "$0")/.."; do
-  [ -n "$_d" ] && [ -f "$_d/json.sh" ] && { . "$_d/json.sh"; . "$_d/stamp.sh"; break; }
+for standards_hooks_folder in "${STANDARDS_HOOKS:-}" "$(dirname "$0")" "$(dirname "$0")/.."; do
+  [ -n "$standards_hooks_folder" ] && [ -f "$standards_hooks_folder/json.sh" ] || continue
+  . "$standards_hooks_folder/json.sh"; . "$standards_hooks_folder/stamp.sh"; . "$standards_hooks_folder/commit-index.sh"
+  break
 done
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
@@ -261,38 +263,12 @@ code_runs() {
     END { exit !found }'
 }
 
-# The agent hook and git's own hooks both see an agent's commit. When a check passes in the agent
-# hook for a plain `git commit` of the index, it records the index tree; git's pre-commit and
-# commit-msg (STANDARDS_FROM_GIT=1) skip that check when the index they see is the same tree,
-# recorded in the last 10 minutes. Any other index (a `git add` in the same command, -a, a
-# pathspec, a later edit) runs the check again. The record lives in the worktree's git dir.
-passed_file() { printf '%s/standards-passed' "$(git rev-parse --git-dir 2>/dev/null)"; }
-
-passed_mark() {
-  # $1 check name, $2 commit segment. Records the pass when the commit takes the index as it is.
-  [ -z "${STANDARDS_FROM_GIT:-}${STANDARDS_STAGE:-}${STANDARDS_GATES:-}" ] || return 0
-  [ "$(commit_diff_args "$2")" = "--cached" ] || return 0
-  tree="$(git write-tree 2>/dev/null)" || return 0
-  f="$(passed_file)"
-  { tail -n 19 "$f" 2>/dev/null; printf '%s %s %s\n' "$1" "$tree" "$(date +%s)"; } > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f" 2>/dev/null
-  return 0
-}
-
-passed_seen() {
-  # $1 check name. True in a git hook when the agent hook passed this check for the same index.
-  [ -n "${STANDARDS_FROM_GIT:-}" ] || return 1
-  tree="$(git write-tree 2>/dev/null)" || return 1
-  now="$(date +%s)"
-  awk -v c="$1" -v t="$tree" -v now="$now" '$1 == c && $2 == t && now - $3 <= 600 { ok = 1 } END { exit !ok }' "$(passed_file)" 2>/dev/null
-}
-
 commit_diff_args() {
   # $1 segment. Prints the git diff arguments that mirror what this commit will stage:
   # -a/--all or a pathspec reads the working tree against HEAD, otherwise the index.
   seg="$1"
   if commit_has_flag "$seg" "all" "a"; then printf 'HEAD'; return; fi
-  stripped="$(printf '%s' "$seg" | sed -E \
-    's/(-m|--message|-F|--file|-c|-C|--reuse-message|--fixup|--squash|--author|--date|--gpg-sign|-S)(=|[[:space:]]+)("[^"]*"|'\''[^'\'']*'\''|[^[:space:]]+)//g')"
+  stripped="$(commit_operands_removed "$1")"
   positional="$(printf '%s' "$stripped" | sed -E 's/^.*[[:space:]]commit([[:space:]]|$)/ /' \
     | tr ' \t' '\n\n' | grep -vE '^-' | grep -vE '^$' || true)"
   if [ -n "$positional" ]; then printf 'HEAD'; else printf -- '--cached'; fi
