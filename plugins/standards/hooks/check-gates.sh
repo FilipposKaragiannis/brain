@@ -43,7 +43,6 @@ use_working_git
 cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
-# Off a commit or a push only a forbid gate can block.
 [ -n "$stage" ] || case "$config" in *'"forbid'*) ;; *) exit 0 ;; esac
 [ -n "$commit_seg" ] && passed_seen check-gates && exit 0   # the agent hook already passed this index
 gates="$(json_list "$config" gates)"
