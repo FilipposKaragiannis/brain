@@ -238,6 +238,7 @@ The `jira` adapter reaches Jira Cloud through its REST API v3 with `curl`. Name 
 | `jira.types.epic`, `.task`, `.bug` | `Epic`, `Task`, `Bug` | the issue type each kind is created as and read back from; any other type reads as a task |
 | `jira.fields.size`, `jira.fields.area` | unset | a custom field, by id (`customfield_10040`) or name, for the size and the area; unset, the size is a label and the area is not kept |
 | `jira.transitions.done` | the first transition named `Done` | the transition `close` takes |
+| `jira.transitions.backlog`, `.ready`, `.in-progress`, `.needs-you`, `.in-review` | `ready`: the first transition into the status category `new`; `in-progress`: the first into `indeterminate`; the others: none | the transition `set-status` takes to each status, by name |
 | `jira.limit` | `500` | the most issues `list` reads, inside `jira.scope` |
 | `jira.scope` | unset | the issues every search keeps (Tracker scope, below) |
 | `jira.answer_from` | the token's user | the account ids or emails whose `/answer` comments clear a gate |
@@ -251,6 +252,15 @@ whose link Jira refused, is a `Blocked by: <id>, <id>` line in the description, 
 carries no `open_blockers`.
 `link-pr` adds the PR as a remote link and a comment.
 
+`set-status` reads the issue's transitions (`GET .../issue/<KEY>/transitions`) and takes the one
+`jira.transitions.<name>` names, and exits 1 when the issue has none of that name. Unset, `ready`
+and `in-progress` take the first transition into their status category, and an issue already in
+that category stays where it is; any other status, or one no transition leads to, is a no-op that
+`events.log` says once (`no transition for <name>: set jira.transitions.<name>`). It prints the
+status the issue moved to. `assign` sets the assignee (`PUT .../issue/<KEY>/assignee`) to the
+token's user and prints its account id; Jira holds one assignee, so `me` leaves an issue someone
+else holds with them, and `none` clears only the token's user.
+
 `answers` reads the comments of each open issue at a gate (`GET .../issue/<KEY>/comment`) and
 takes an `/answer` by the token's own user (`GET /rest/api/3/myself`) or by an account id or email
 in `jira.answer_from`; Jira's REST API has no reactions, so the `Gate cleared: ...` comment
@@ -259,9 +269,9 @@ in `jira.answer_from`; Jira's REST API has no reactions, so the `Gate cleared: .
 task may pick (`GET /rest/api/3/issue/createmeta/<KEY>/issuetypes/<id>`); a free-text area field
 has none. There is no `sync`: GitHub's moves a card on a Projects board, a second place that does
 not follow the issue, while a Jira board's columns are the issues' own workflow statuses, whose
-transitions each project shapes (with screens and conditions) and which no flow key maps. The flow
-state shows on the card as the `step:` and `gate:` labels, which a board's quick filters and
-swimlanes can use, and `close` takes the item to Done.
+transitions each project shapes (with screens and conditions) and `jira.transitions.<name>`
+maps. The flow state shows on the card as the `step:` and `gate:` labels, which a board's quick
+filters and swimlanes can use, and `close` takes the item to Done.
 
 ## Where the two adapters differed
 

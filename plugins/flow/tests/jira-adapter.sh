@@ -152,6 +152,36 @@ jira_query_ids="$(jira_run "$P/adapters/jira/list.sh" --pick mine | python3 -c '
 check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match, because the scope and the pick compose" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
 check_all "JiraScopeQueryAndPickQuery_DropsScopeOnly: the list leaves out an issue only the scope matches, because the pick applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_scope "*) false ;; *) true ;; esac'
 check_all "JiraScopeQueryAndPickQuery_DropsPickOnly: the list leaves out an issue only the pick matches, because the scope applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_pick "*) false ;; *) true ;; esac'
+echo "jira set-status and assign (fake curl)"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+d["transitions"] = [{"id": "21", "name": "In Progress", "category": "indeterminate"}, {"id": "12", "name": "Selected for Development", "category": "new"},
+  {"id": "11", "name": "To Do", "category": "new"}, {"id": "61", "name": "Code Review", "category": "indeterminate"}, {"id": "31", "name": "Done", "category": "done"}]
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+jira_config https://acme.atlassian.net
+printf '    in-review: Code Review\n    backlog: Parked\n' >> .flow/config.yaml
+jira_status_name() { jira_db "d[\"issues\"][\"${1#jira:}\"][\"fields\"][\"status\"][\"name\"]"; }
+jira_named="$(jira_run "$P/adapters/jira/create.sh" task "Moved by a named transition")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_named" in-review >/dev/null 2>&1
+check "JiraSetStatusNamedTransition_TakesIt: set-status in-review lands on the status jira.transitions.in-review names, because a named transition wins over the category" [ "$(jira_status_name "$jira_named")" = "Code Review" ]
+check "JiraSetStatusNamedTransitionMissing_ExitsOne: set-status backlog exits 1 when the issue has no transition jira.transitions.backlog names, because the setting points nowhere" [ "$(jira_run "$P/adapters/jira/set-status.sh" "$jira_named" backlog >/dev/null 2>&1; echo $?)" = 1 ]
+jira_fallback="$(jira_run "$P/adapters/jira/create.sh" task "Moved by its category")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_fallback" in-progress >/dev/null 2>&1
+check "JiraSetStatusInProgressUnset_TakesFirstIndeterminate: set-status in-progress with no jira.transitions.in-progress takes the first transition into indeterminate, because that category is in progress" [ "$(jira_status_name "$jira_fallback")" = "In Progress" ]
+jira_run "$P/adapters/jira/set-status.sh" "$jira_fallback" ready >/dev/null 2>&1
+check "JiraSetStatusReadyUnset_TakesFirstNew: set-status ready with no jira.transitions.ready takes the first transition into new, because that category is to do" [ "$(jira_status_name "$jira_fallback")" = "Selected for Development" ]
+jira_unplaced="$(jira_run "$P/adapters/jira/create.sh" task "No place for needs-you")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_unplaced" needs-you >/dev/null 2>&1
+jira_run "$P/adapters/jira/set-status.sh" "$jira_unplaced" needs-you >/dev/null 2>&1; jira_unplaced_code=$?
+check "JiraSetStatusNoTransition_ExitsZero: set-status needs-you with no jira.transitions.needs-you exits 0, because a status the tracker has no place for is no failure" [ "$jira_unplaced_code" = 0 ]
+check "JiraSetStatusNoTransition_SaidOnce: two set-status needs-you with no transition leave one events.log line, because the owner needs telling once, not on every gate" [ "$(grep -c "no transition for needs-you: set jira.transitions.needs-you" "$(flow_home)/events.log")" = 1 ]
+jira_assigned="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to me")"
+jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" me >/dev/null 2>&1
+check "JiraAssignMe_AssigneesHoldTokenUser: after assign me the issue's assignees hold the token's user, because me is the account the token belongs to" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = '["flow@acme.test"]' ]
+jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" none >/dev/null 2>&1
+check "JiraAssignNone_ClearsAssignee: after assign none the issue has no assignee, because the token's user held it" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = "[]" ]
+jira_theirs="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to someone else")"; jira_set "$jira_theirs" assignee someone@acme.test
+jira_run "$P/adapters/jira/assign.sh" "$jira_theirs" me >/dev/null 2>&1
+check "JiraAssignMeOnOthersIssue_KeepsTheirs: assign me leaves an issue someone else holds with them, because Jira holds one assignee and the flow never takes it" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_theirs" | jget assignees)" = '["someone@acme.test"]' ]
 cp "$work/config.gh" .flow/config.yaml
 
 [ "$fails" -eq 0 ] && { echo "jira-adapter: ok"; exit 0; }

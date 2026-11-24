@@ -9,6 +9,8 @@
   _jira.py comment <id> <text>
   _jira.py close <id> [<text>]
   _jira.py remote-link <id> <url>
+  _jira.py set-status <id> <backlog|ready|in-progress|needs-you|in-review> <events log> <time>
+  _jira.py assign <id> <me|none>
   _jira.py answers
   _jira.py me
   _jira.py vocabulary
@@ -26,11 +28,18 @@ account id of the token's user, then jira.email. jira.scope (scope_filter in lib
 FLOW_SCOPE_*) is ANDed into every search: list, its children counts, read's children count and
 answers; in-scope exits 0 when the issue is inside it, 1 when not. vocabulary prints the
 project's issue types and the options of the jira.fields.area field.
+
+set-status moves the issue through the transition jira.transitions.<name> names
+(FLOW_JIRA_TRANSITION_*); unset, ready takes the first transition into the status category new and
+in-progress the first into indeterminate. A status with no transition is a no-op that the events
+log says once. assign sets the assignee to the token's user, or clears it when that user holds it.
+Each prints "<id> <name>" when it changed the issue and nothing when the issue already said so.
 """
 import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _fields import custom_fields, field_input, field_text, from_document, setting, to_document  # noqa: E402
@@ -55,6 +64,13 @@ ANSWER_WORD = "/answer"
 UNANSWERABLE_GATES = ("none", "merge")
 PICK = "FLOW_PICK_"
 SCOPE = "FLOW_SCOPE_"
+STATUS_NAMES = ("backlog", "ready", "in-progress", "needs-you", "in-review")
+FALLBACK_CATEGORIES = {"ready": "new", "in-progress": "indeterminate"}
+ASSIGN_TARGETS = ("me", "none")
+SET_STATUS_ARGUMENTS = ("id", "status", "events log", "time")
+ASSIGN_ARGUMENTS = ("id", "target")
+EXIT_USAGE = 2
+NOT_FOUND = 404
 
 
 def key_of(item_id):
@@ -423,6 +439,139 @@ def cmd_remote_link(args):
     expect(status, answer, "link the PR to %s%s" % (PREFIX, key))
 
 
+# --- the status and the assignee the flow sets
+
+
+@dataclass(frozen=True)
+class IssueStatus:
+    name: str
+    category: str
+
+
+@dataclass(frozen=True)
+class Transition:
+    transition_id: str
+    name: str
+    to_name: str
+    to_category: str
+
+
+def issue_fields(key: str, names: list) -> dict:
+    status, issue = call("GET", "/rest/api/3/issue/" + key, query={"fields": ",".join(names)})
+    if status == NOT_FOUND:
+        fail("no such item %s%s" % (PREFIX, key))
+    expect(status, issue, "read %s%s" % (PREFIX, key))
+    return issue.get("fields") or {}
+
+
+def issue_status(key: str) -> IssueStatus:
+    found = issue_fields(key, ["status"]).get("status") or {}
+    return IssueStatus(found.get("name", ""), (found.get("statusCategory") or {}).get("key", ""))
+
+
+def transitions_of(key: str) -> list:
+    status, answer = call("GET", "/rest/api/3/issue/%s/transitions" % key)
+    expect(status, answer, "read the transitions of %s%s" % (PREFIX, key))
+    return [transition_of(listed) for listed in answer.get("transitions") or []]
+
+
+def transition_of(listed: dict) -> Transition:
+    target = listed.get("to") or {}
+    return Transition(str(listed.get("id", "")), listed.get("name") or "", target.get("name") or "",
+                      (target.get("statusCategory") or {}).get("key", ""))
+
+
+def transition_setting(status_name: str) -> str:
+    return "TRANSITION_" + status_name.upper().replace("-", "_")
+
+
+def moved(key: str, transition: Transition) -> str:
+    status, answer = call("POST", "/rest/api/3/issue/%s/transitions" % key,
+                          {"transition": {"id": transition.transition_id}}, once=True)
+    expect(status, answer, "move %s%s to %s" % (PREFIX, key, transition.to_name))
+    return "%s%s %s" % (PREFIX, key, transition.to_name)
+
+
+def moved_by_name(key: str, status_name: str, transition_name: str, current: IssueStatus) -> str:
+    """Jira lists only the transitions out of the current status, so an issue already in a status
+    named as the transition is there."""
+    if current.name.lower() == transition_name.lower():
+        return ""
+    transition = next((listed for listed in transitions_of(key) if listed.name == transition_name), None)
+    if transition is None:
+        fail("%s%s has no transition named %s; check jira.transitions.%s" % (PREFIX, key, transition_name, status_name))
+    return "" if transition.to_name == current.name else moved(key, transition)
+
+
+def moved_by_category(key: str, status_name: str, current: IssueStatus, events_log: str, now: str) -> str:
+    """An issue already in the category stays where it is: In Review is indeterminate too, and must
+    not fall back to In Progress."""
+    category = FALLBACK_CATEGORIES.get(status_name, "")
+    if category and current.category == category:
+        return ""
+    transition = next((listed for listed in transitions_of(key) if category and listed.to_category == category), None)
+    if transition is None:
+        log_missing_transition_once(events_log, now, status_name)
+        return ""
+    return moved(key, transition)
+
+
+def log_missing_transition_once(events_log: str, now: str, status_name: str) -> None:
+    message = "no transition for %s: set jira.transitions.%s" % (status_name, status_name)
+    said = "-\tjira\t" + message
+    if logged(events_log, said):
+        return
+    sys.stderr.write("flow: jira: %s\n" % message)
+    with open(events_log, "a") as log:
+        log.write("%s\t%s\n" % (now, said))
+
+
+def logged(events_log: str, said: str) -> bool:
+    if not os.path.exists(events_log):
+        return False
+    with open(events_log) as log:
+        return any(line.rstrip("\n").endswith("\t" + said) for line in log)
+
+
+def cmd_set_status(args: list) -> str:
+    if len(args) != len(SET_STATUS_ARGUMENTS):
+        fail("usage: set-status <id> <%s> <events log> <time>" % "|".join(STATUS_NAMES), EXIT_USAGE)
+    item_id, status_name, events_log, now = args
+    if status_name not in STATUS_NAMES:
+        fail("set-status: no status %s; the statuses are %s" % (status_name, ", ".join(STATUS_NAMES)), EXIT_USAGE)
+    key = key_of(item_id)
+    current = issue_status(key)
+    transition_name = setting(transition_setting(status_name))
+    if transition_name:
+        return moved_by_name(key, status_name, transition_name, current)
+    return moved_by_category(key, status_name, current, events_log, now)
+
+
+def assignee_after(holder: str, me: str, target: str) -> str:
+    """Jira holds one assignee, so me leaves an issue someone else holds with them, and none takes
+    off only me."""
+    if target == "me":
+        return holder or me
+    return "" if holder == me else holder
+
+
+def cmd_assign(args: list) -> str:
+    if len(args) != len(ASSIGN_ARGUMENTS):
+        fail("usage: assign <id> <%s>" % "|".join(ASSIGN_TARGETS), EXIT_USAGE)
+    item_id, target = args
+    if target not in ASSIGN_TARGETS:
+        fail("assign: no target %s; the targets are %s" % (target, ", ".join(ASSIGN_TARGETS)), EXIT_USAGE)
+    key = key_of(item_id)
+    holder = (issue_fields(key, ["assignee"]).get("assignee") or {}).get("accountId", "")
+    me = myself().get("accountId", "")
+    wanted = assignee_after(holder, me, target)
+    if wanted == holder:
+        return ""
+    status, answer = call("PUT", "/rest/api/3/issue/%s/assignee" % key, {"accountId": wanted or None})
+    expect(status, answer, "assign %s%s" % (PREFIX, key))
+    return "%s%s %s" % (PREFIX, key, me)
+
+
 # --- the owner's answers and the names a new item may use
 
 
@@ -536,10 +685,13 @@ def main():
     command, args = sys.argv[1], sys.argv[2:]
     commands = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "create": cmd_create, "write-state": cmd_write_state,
                 "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
-                "answers": cmd_answers, "me": cmd_me, "vocabulary": cmd_vocabulary}
+                "answers": cmd_answers, "me": cmd_me, "vocabulary": cmd_vocabulary,
+                "set-status": cmd_set_status, "assign": cmd_assign}
     if command not in commands:
         fail("unknown command %s" % command, 2)
-    commands[command](args)
+    printed = commands[command](args)
+    if printed:
+        print(printed)
 
 
 main()

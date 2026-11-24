@@ -473,6 +473,7 @@ fi
 # many_assignees_<name> is there when the tracker holds more than one assignee. The adapter's
 # category_config_<name> gives set-status its place for the status.
 in_progress_native_local() { echo in-progress; }
+in_progress_native_jira() { echo "In Progress"; }
 many_assignees_local() { :; }
 in_progress_native_github() { echo "In progress"; }
 many_assignees_github() { :; }

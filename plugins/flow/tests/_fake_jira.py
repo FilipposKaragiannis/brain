@@ -7,7 +7,8 @@ answers.sh can tell the owner's /answer from anyone else's. The project (types, 
 type) and the createmeta of each type (the option fields' allowedValues) feed vocabulary.sh; the
 createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them. A
 search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
-fields.assignee object, as Jira returns one."""
+fields.assignee object, as Jira returns one. The assignee PUT stores the signed-in user for that
+user's account id, a bare account id for another, and none for null."""
 import json, re, sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -213,6 +214,11 @@ if m:
         if not chosen:
             refuse(400, "Transition id %s is not valid for this issue." % body["transition"]["id"])
         issue["fields"]["status"] = {"name": chosen["name"], "statusCategory": {"key": chosen["category"]}}
+        answer(204)
+    if rest == "/assignee" and method == "PUT":
+        signed_user, account_id = user_of(login), body.get("accountId")
+        other_user = {"accountId": account_id} if account_id else None
+        issue["fields"]["assignee"] = signed_user if account_id == signed_user["accountId"] else other_user
         answer(204)
     if rest == "/remotelink" and method == "POST":
         kept = [l for l in issue["remotelinks"] if l.get("globalId") != body.get("globalId")]
