@@ -249,6 +249,11 @@ sh "$here/gate-git-env.sh" > "$work/gate-git-env.out" 2>&1; code=$?
 check "GateGitEnvSuite_Passes: every check in gate-git-env.sh passed ($(tail -n 1 "$work/gate-git-env.out"))" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-git-env.out"
 
+echo "an agent's commit runs format and each gate once (tests/commit-once.sh)"
+sh "$here/commit-once.sh" > "$work/commit-once.out" 2>&1; code=$?
+check "CommitOnceSuite_Passes: every check in commit-once.sh passed ($(tail -n 1 "$work/commit-once.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/commit-once.out"
+
 echo "an agent's commit runs the gates once"
 python3 - "$work/count.log" <<'PY'
 import json, sys
@@ -265,10 +270,6 @@ check "git's hooks skip the gate the agent hook passed for the same index" [ "$(
 printf 'y\n' > twice.txt; git add twice.txt
 "$hooks/git/pre-commit" >/dev/null 2>&1
 check "a different index runs the gate again" [ "$(grep -c ran "$work/count.log")" = 2 ]
-: > "$work/count.log"
-expect "commit -a records nothing (the index will change)" check-gates.sh 'git commit -a -m x'          0 ""
-"$hooks/git/pre-commit" >/dev/null 2>&1
-check "...so git's hook runs the gate" [ "$(grep -c ran "$work/count.log")" = 2 ]
 : > "$work/count.log"
 "$hooks/git/pre-commit" >/dev/null 2>&1
 check "a human commit with no agent record runs the gate" [ "$(grep -c ran "$work/count.log")" = 1 ]

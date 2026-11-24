@@ -26,8 +26,8 @@
 #     Use it for a script that must not run by hand; forbid is for a verb passed as an argument.
 # Agent hosts feed the Bash payload on stdin; the git hooks feed a plain `git commit` or `git push`;
 # check-range.sh sets STANDARDS_STAGE=ci so only the gates that list "ci" run. An agent's commit
-# runs the gates once: the agent hook records the index it passed, and git's hooks skip that same
-# index (passed_mark and passed_seen in lib.sh).
+# runs the gates once: the agent hook records the content the commit will hold, and git's hooks
+# skip that same content (passed_mark and passed_seen in commit-index.sh).
 . "$(dirname "$0")/lib.sh"
 payload="$(read_payload)"
 cmd="$(payload_command "$payload")"
@@ -39,14 +39,18 @@ count="$(json_length "$config" gates)"
 [ "$count" -gt 0 ] || exit 0
 set -f   # the globs stay literal
 commit_seg="$(git_segment commit "$cmd")"
-[ -n "$commit_seg" ] && passed_seen check-gates && exit 0   # the agent hook already passed this index
+index=""
+[ -n "$commit_seg" ] && index="$(commit_index "$commit_seg" "$cmd")"
+discard_index_at_exit "$index"
+key="$(commit_key "$index")"
+passed_seen check-gates "$key" && exit 0
 push_seg="$(git_segment push "$cmd")"
 stage=""
 if [ "${STANDARDS_STAGE:-}" = ci ]; then stage=ci
 elif [ -n "$commit_seg" ]; then stage=commit
 elif [ -n "$push_seg" ]; then stage=push; fi
 files=""
-[ -n "$commit_seg" ] && files="$(changed_files "$commit_seg")"
+[ -n "$commit_seg" ] && files="$(commit_files "$index" "$commit_seg")"
 commit_msg=""
 [ -n "$commit_seg" ] && commit_msg="$(commit_message_text "$commit_seg")"
 code="$(command_code "$cmd")"
@@ -110,5 +114,5 @@ ${marker:+    The owner can approve it: add $marker to the commit message.
 }"
   fi
 done
-if [ -z "$failed" ]; then [ -n "$commit_seg" ] && passed_mark check-gates "$commit_seg"; exit 0; fi
+if [ -z "$failed" ]; then [ -n "$commit_seg" ] && passed_mark check-gates "$index" "$key"; exit 0; fi
 block "a project gate failed" "$failed  Fix the findings, re-stage, then try again."
