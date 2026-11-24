@@ -11,7 +11,7 @@
 # are each said once, with no notification. Left alone, and said nothing of: an epic in a
 # repository with no remote, one the tracker cannot read, a base that does not resolve or is not
 # on the remote, and a base that is the task branch of the epic's parent, whose work reaches the
-# epic branch through its PR. A dry run fetches no branch and pushes nothing. Sourced, never run.
+# epic branch through its PR. A dry run pushes nothing. Sourced, never run.
 # shellcheck disable=SC2154 # scripts/steward.sh, which sources it, sets dry, have_remote and behind_base
 EPIC_BASE_KEY_PREFIX=epic-base-
 EPIC_BASE_PUSH_KEY_PREFIX=epic-push-
@@ -78,6 +78,7 @@ health_epic_base() {
   epic_base_base_branch="$(epic_base_fetch_branch "$(adapter read "$1" 2>/dev/null)")" || return 0
   epic_base_repository="$(flow_repository)"
   [ "$dry" -eq 1 ] || { fetch_base "$(epic_branch "$1")"; fetch_base "$epic_base_base_branch"; }
+  base_exists "$epic_base_base_branch" || return 0
   epic_base_behind="$(git -C "$epic_base_repository" rev-list --count "refs/remotes/origin/$(epic_branch "$1")..refs/remotes/origin/$epic_base_base_branch" 2>/dev/null)" || return 0
   if [ "$epic_base_behind" -le "$behind_base" ]; then health_cleared "$EPIC_BASE_KEY_PREFIX$(item_slug "$1")"; return 0; fi
   epic_base_merge "$1" "$epic_base_repository" "$epic_base_base_branch" "$epic_base_behind"

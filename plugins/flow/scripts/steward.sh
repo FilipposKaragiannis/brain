@@ -1539,9 +1539,7 @@ health_make_epic_branch() {
   fi
 }
 
-# health_epic_branch <epic>: an approved epic with no epic branch gets one, and one that has it
-# gets its base merged in once it is more than behind_base commits behind (health_epic_base in
-# lib/epic_base.sh); --dry-run only says so.
+# health_epic_branch <epic>: an approved epic with no epic branch gets one; --dry-run only says so.
 health_epic_branch() {
   branchless_key="epic-branch-$(item_slug "$1")"; missing_epic_branch="$(epic_branch "$1")"
   if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; health_epic_base "$1"; return 0; fi
@@ -1552,8 +1550,7 @@ health_epic_branch() {
 
 # health_epic_branches: an open epic with an open child and an approved split gets its epic
 # branch when it has none: one approved before the flow made the branch at the gate, one whose
-# branch could not be made then, or one whose children the owner made by hand. An existing epic
-# branch more than behind_base commits behind its base gets the base merged in.
+# branch could not be made then, or one whose children the owner made by hand.
 health_epic_branches() {
   for branchless_epic in $(approved_epics_with_children); do   # no pipe: health_say counts a finding in this shell
     health_epic_branch "$branchless_epic"
