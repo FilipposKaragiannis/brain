@@ -368,6 +368,28 @@ def chips_html(keys):
         '<button type="button" data-line="%s" aria-pressed="false" style="--lc:var(--l-%s)">%s</button>' % (esc(k), esc(k), esc(LINE_LABEL.get(k, k))) for k in keys)
 
 
+def flows_section_html(profiles, agent_plugin):
+    out = []
+    task_keys = ["bugfix", "task-S", "task-M", "task-L"]
+    out.append('<section id="flows"><h2><i>01</i>The flows</h2><p class="sub">You file an item. Its kind and size pick a line. The run follows the line and stops at every diamond.</p><div class="stack">')
+    out.append('<div>%s<figure><div>%s</div><figcaption>Bugs and tasks. Where lines meet, they share a step. A failed review or verify sends the item back to implement, %d attempts in all.</figcaption></figure></div>'
+               % (chips_html(task_keys), metro(profiles, task_keys, "The steps a bug or task runs, one line per profile"), profiles["max_attempts"]))
+    out.append('<div>%s<figure><div>%s</div><figcaption>Epics. They produce tasks, then wait for every one to merge.</figcaption></figure></div>'
+               % (chips_html(["epic"]), metro(profiles, ["epic"], "The steps an epic runs")))
+    stations = merged_order(profiles["profiles"], task_keys)
+    stations += [station for station in profiles["profiles"]["epic"] if station not in stations]
+    out.append('<div><h3 class="kicker">The stations</h3>%s</div>' % stations_html([station for station in stations if not station.startswith("gate:")]))
+    out.append('<div><h3 class="kicker">The diamonds</h3>%s</div>' % gates_html(profiles["gates"]))
+    out.append('<div><div class="bar"><h3 class="kicker">Drive a line</h3><div class="seg" role="group" aria-label="Host"><button type="button" data-host="claude" aria-pressed="true">Claude</button><button type="button" data-host="codex" aria-pressed="false">Codex</button><button type="button" data-host="say" aria-pressed="false">Plain words</button></div></div>'
+               '<p class="sub">Type what the dark box says, or switch to Plain words and say it. A $ box goes in a terminal or a scheduler.</p>%s</div>' % steps_html(DRIVE, agent_plugin))
+    for run in RUNS:
+        out.append('<div><h3 class="kicker">%s</h3><p class="sub">%s</p>%s</div>' % (esc(run["title"]), esc(run["lede"]), steps_html(run["steps"], agent_plugin)))
+    out.append('<div><h3 class="kicker">Also at hand</h3><div class="also">%s</div></div>' % "".join(
+        '<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code></div><p>%s</p></div>' % (cmd_html(extra["command"], extra["ask"]), esc(extra["says"])) for extra in EXTRAS))
+    out.append("</div></section>")
+    return "\n".join(out)
+
+
 def render_map(root, project_roster=None):
     """project_roster: path to a project's roster JSON. The page then shows those agents beside
     the plugin agents. The committed docs/map.html is rendered without one."""
@@ -398,24 +420,7 @@ def render_map(root, project_roster=None):
         o.append('<div class="plugin" style="--pc:var(--c-%s)"><h3>%s<small>v%s</small></h3><p>%s</p><div class="dots" aria-label="%d skills, %d agents, %d hooks">%s</div></div>'
                  % (esc(p["name"]), esc(p["name"]), esc(p["version"]), esc(p["short"]), len(p["skills"]), n_agents, len(p["hooks"]), dots))
     o.append("</div></section>")
-    # flows
-    task_keys = ["bugfix", "task-S", "task-M", "task-L"]
-    o.append('<section id="flows"><h2><i>01</i>The flows</h2><p class="sub">You file an item. Its kind and size pick a line. The run follows the line and stops at every diamond.</p><div class="stack">')
-    o.append('<div>%s<figure><div>%s</div><figcaption>Bugs and tasks. Where lines meet, they share a step. A failed review or verify sends the item back to implement, %d attempts in all.</figcaption></figure></div>'
-             % (chips_html(task_keys), metro(profiles, task_keys, "The steps a bug or task runs, one line per profile"), profiles["max_attempts"]))
-    o.append('<div>%s<figure><div>%s</div><figcaption>Epics. They produce tasks, then wait for every one to merge.</figcaption></figure></div>'
-             % (chips_html(["epic"]), metro(profiles, ["epic"], "The steps an epic runs")))
-    stations = merged_order(profiles["profiles"], task_keys)
-    stations += [station for station in profiles["profiles"]["epic"] if station not in stations]
-    o.append('<div><h3 class="kicker">The stations</h3>%s</div>' % stations_html([station for station in stations if not station.startswith("gate:")]))
-    o.append('<div><h3 class="kicker">The diamonds</h3>%s</div>' % gates_html(profiles["gates"]))
-    o.append('<div><div class="bar"><h3 class="kicker">Drive a line</h3><div class="seg" role="group" aria-label="Host"><button type="button" data-host="claude" aria-pressed="true">Claude</button><button type="button" data-host="codex" aria-pressed="false">Codex</button><button type="button" data-host="say" aria-pressed="false">Plain words</button></div></div>'
-             '<p class="sub">Type what the dark box says, or switch to Plain words and say it. A $ box goes in a terminal or a scheduler.</p>%s</div>' % steps_html(DRIVE, agent_plugin))
-    for run in RUNS:
-        o.append('<div><h3 class="kicker">%s</h3><p class="sub">%s</p>%s</div>' % (esc(run["title"]), esc(run["lede"]), steps_html(run["steps"], agent_plugin)))
-    o.append('<div><h3 class="kicker">Also at hand</h3><div class="also">%s</div></div>' % "".join(
-        '<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code></div><p>%s</p></div>' % (cmd_html(extra["command"], extra["ask"]), esc(extra["says"])) for extra in EXTRAS))
-    o.append("</div></section>")
+    o.append(flows_section_html(profiles, agent_plugin))
     # hooks
     o.append('<section id="hooks"><h2><i>02</i>Hooks</h2><p class="sub">Always on, no command needed. They stop mistakes while an agent works.</p><figure><div>%s</div><figcaption>Dots take the plugin\'s colour. Same hooks on both hosts.</figcaption></figure></section>' % svg_session(plugins))
     # skills

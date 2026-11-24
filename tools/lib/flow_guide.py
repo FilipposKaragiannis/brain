@@ -1,7 +1,7 @@
 """The hand-written part of the Flows section on the brain map: what each station does, what each
 diamond wants from you, the commands that drive a line and the runs that go on without you.
 Hand-written, because it is a teaching order and not a listing. tools/test.sh (meta tests)
-checks that every skill and agent named here exists, so a rename cannot leave a stale example.
+checks that every skill, agent and script a step names exists, so a rename cannot leave a stale example.
 
 A step is a dict:
   command  (plugin:skill, arguments)  what you type; Claude shows /plugin:skill arguments, Codex $skill arguments
@@ -15,8 +15,8 @@ A step is a dict:
 
 STATIONS = {
     "reproduce": "Writes one failing test that pins the bug, runs it red and commits it. The fix comes after.",
-    "design": "Takes a free worktree, explores the code, researches only what the repo cannot answer and designs the change.",
-    "plan": "Writes plan.md in phases. Phases that would each be a PR become sub-items instead.",
+    "design": "Takes a free worktree and explores the code. The researcher looks up only what the repo cannot answer. Then it designs the change.",
+    "plan": "Writes plan.md in phases, and on an M or L task the epic-plan-reviewer checks it. Phases that would each be a PR become sub-items instead.",
     "implement": "Builds phase by phase, one implementer per phase. Independent phases run in parallel in temporary worktrees and rebase onto the task branch.",
     "test": "Writes the tests from the acceptance lines, not from the code.",
     "review": "Reviews the diff, deeper the bigger the line: quick on a bug, deep on an L task.",
@@ -25,7 +25,7 @@ STATIONS = {
     "pr": "Opens the PR, a draft while the quiz waits for you.",
     "grill": "Interviews you one question at a time, each with its own recommended answer. Facts it reads from the code.",
     "epic": "Writes the epic body.",
-    "tasks": "Splits the epic into thin vertical tasks with sizes and blockers, filed as items under it.",
+    "tasks": "Splits the epic into thin vertical tasks with sizes and blockers, and the epic-plan-reviewer checks the list. They are filed as items under it.",
     "closeout": "When every task is merged: checks them all closed, runs the epic-level checks, then opens the epic's PR or closes the epic.",
 }
 
@@ -39,7 +39,7 @@ GATE_HINTS = {
 
 DRIVE = [
     {"command": ("flow:new", 'bug "Bots stall at the net after a restart"'),
-     "says": "Files a bug, a task or an epic in the tracker the config names, local files under .flow/items by default. A bug is matched against the open items first, and a match becomes a comment. An epic gets a problem and an outcome, no size and no tasks yet.",
+     "says": "Files a bug, a task or an epic in the tracker the config names, local files under .flow/items by default. A bug is matched against the open items first, and a match becomes a comment; otherwise it is filed with the steps to see it. An epic gets a problem and an outcome, no size and no tasks yet.",
      "result": "gh#340",
      "ask": "File a bug: bots stall at the net after a restart"},
     {"command": ("flow:board", ""),
@@ -93,7 +93,7 @@ RUNS = [{
          "says": "Schedule it nightly: a Claude Desktop scheduled task, or launchd. The ledger in .flow/log stops a note being filed twice.",
          "ask": ""},
         {"action": "Set the Priority field on the new items.",
-         "says": "The agent only suggests one. An item without a priority is never ready, so nothing starts before you look. Then the items join the queue in priority order."},
+         "says": "The agent only suggests one. An item without a priority is never ready, so nothing starts before you look. Then the items join the queue in priority order, worked by hand with flow:next or on the unattended schedule."},
         {"action": "A note the agent could not turn into testable lines.",
          "says": "It waits at the ambiguity diamond with its questions."},
     ],
