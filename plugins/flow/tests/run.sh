@@ -521,6 +521,11 @@ sh "$here/verify-scope.sh" > "$work/verify-scope.out" 2>&1; code=$?
 check "verify-scope: $(tail -n 1 "$work/verify-scope.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-scope.out"
 
+echo "a push skips the build verify passed on the same inputs (tests/build-passed.sh)"
+sh "$here/build-passed.sh" > "$work/build-passed.out" 2>&1; code=$?
+check "build-passed: $(tail -n 1 "$work/build-passed.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/build-passed.out"
+
 echo "children wait on the parent's decomposition gate, and a gate is asked once (tests/epic-gates.sh)"
 sh "$here/epic-gates.sh" > "$work/epic-gates.out" 2>&1; code=$?
 check "epic-gates: $(tail -n 1 "$work/epic-gates.out")" [ "$code" -eq 0 ]
