@@ -6,17 +6,25 @@ claim, or, with no record, the tracker's state has a step (lazy seed): the flow 
 held item is judged by neither category nor assignees, because the flow set them. A claim naming
 another machine (a shared state.dir) is never ready. A me.sh that fails stands for no one: an item
 only it would match stays back, and an unassigned one stays ready.
+
+Run as a script (next.sh) with the plugin folder and the item's adapter, it reads one joined item
+on stdin and prints why the policy keeps it back, the word and its detail on the next line (the
+machine, the category, or the assignees comma-separated), or nothing when it passes.
 """
 from __future__ import annotations
 
+import functools
+import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Callable, Mapping
 
-import _state_join as join
-import _state_schema as schema
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _state_join as join  # noqa: E402
+import _state_schema as schema  # noqa: E402
 
 ELSEWHERE, STATUS, ASSIGNED = "elsewhere", "status", "assigned"
 WORDS = (ELSEWHERE, STATUS, ASSIGNED)
@@ -24,6 +32,8 @@ ASSIGNEE_NONE, ASSIGNEE_ME, ASSIGNEE_ANY = "none", "me", "any"
 ASSIGNEE_WORDS = frozenset({ASSIGNEE_NONE, ASSIGNEE_ME, ASSIGNEE_ANY})
 CATEGORY_UNKNOWN = "unknown"
 VALUE_SEPARATOR = ","
+DETAIL_SEPARATOR = ", "
+ASSIGNEES_DETAIL = "assignees"
 MACHINE_VARIABLE = "FLOW_MACHINE"
 CATEGORIES_VARIABLE = "READY_CATEGORIES"
 ASSIGNEE_VARIABLE = "READY_ASSIGNEE"
@@ -96,7 +106,7 @@ def not_ready(item: Mapping, policy: ReadyPolicy, me_names: Callable[[], frozens
     if category_of(item) not in policy.categories:
         return NotReady(STATUS, MappingProxyType({"category": category_of(item)}))
     if not assignees_allowed(item, policy, me_names):
-        return NotReady(ASSIGNED, MappingProxyType({"assignees": list(item.get("assignees") or [])}))
+        return NotReady(ASSIGNED, MappingProxyType({ASSIGNEES_DETAIL: list(item.get("assignees") or [])}))
     return READY
 
 
@@ -129,3 +139,24 @@ class MeNames:
         self._warn(f"flow: ready.assignee names me, but the {adapter} adapter's me failed ({because}); "
                    "an item assigned to me is not ready this time")
         return frozenset()
+
+
+def detail_text(verdict: NotReady) -> str:
+    """The detail of a verdict in words: the assignees comma-separated, else its one value."""
+    if verdict.why == ASSIGNED:
+        return DETAIL_SEPARATOR.join(str(assignee) for assignee in verdict.detail[ASSIGNEES_DETAIL])
+    return DETAIL_SEPARATOR.join(str(value) for value in verdict.detail.values())
+
+
+def main(plugin: str, adapter: str) -> int:
+    item = json.load(sys.stdin)
+    me = MeNames(plugin, functools.partial(print, file=sys.stderr))
+    verdict = not_ready(item, policy_from(os.environ), functools.partial(me.read_names, adapter))
+    if verdict.why:
+        print(verdict.why)
+        print(detail_text(verdict))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1], sys.argv[2]))
