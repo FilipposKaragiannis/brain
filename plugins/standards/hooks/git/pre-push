@@ -4,6 +4,7 @@
 # project gates that list "push". The build's `paths` scope it in verify only: a push runs it.
 dir="$(cd "$(dirname "$0")" && pwd)/.."
 . "$dir/lib.sh"
+use_working_git
 cd "$(repo_root)" || exit 0
 build="$(config_command "$(config_text)" build)"
 if [ -n "$build" ]; then

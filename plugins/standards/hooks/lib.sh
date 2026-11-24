@@ -9,10 +9,14 @@ for _d in "${STANDARDS_HOOKS:-}" "$(dirname "$0")" "$(dirname "$0")/.."; do
 done
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
-# ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one.
-if ! command git --version >/dev/null 2>&1 && [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/git ]; then
-  git() { /Applications/Xcode.app/Contents/Developer/usr/bin/git "$@"; }
-fi
+# ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one. The
+# test runs git, so a script calls this only once it knows it needs git: an agent hook on a
+# command that is no commit then starts none.
+use_working_git() {
+  if ! command git --version >/dev/null 2>&1 && [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/git ]; then
+    git() { /Applications/Xcode.app/Contents/Developer/usr/bin/git "$@"; }
+  fi
+}
 
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 

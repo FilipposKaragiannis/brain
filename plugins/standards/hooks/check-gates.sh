@@ -32,19 +32,23 @@
 payload="$(read_payload)"
 cmd="$(payload_command "$payload")"
 [ -n "$cmd" ] || exit 0
-cd "$(repo_root)" 2>/dev/null || exit 0
-config="$(config_text)"
-[ -n "$config" ] || exit 0
-count="$(json_length "$config" gates)"
-[ "$count" -gt 0 ] || exit 0
 set -f   # the globs stay literal
 commit_seg="$(git_segment commit "$cmd")"
-[ -n "$commit_seg" ] && passed_seen check-gates && exit 0   # the agent hook already passed this index
 push_seg="$(git_segment push "$cmd")"
 stage=""
 if [ "${STANDARDS_STAGE:-}" = ci ]; then stage=ci
 elif [ -n "$commit_seg" ]; then stage=commit
 elif [ -n "$push_seg" ]; then stage=push; fi
+use_working_git
+cd "$(repo_root)" 2>/dev/null || exit 0
+config="$(config_text)"
+[ -n "$config" ] || exit 0
+# Off a commit or a push only a forbid gate can block.
+[ -n "$stage" ] || case "$config" in *'"forbid'*) ;; *) exit 0 ;; esac
+[ -n "$commit_seg" ] && passed_seen check-gates && exit 0   # the agent hook already passed this index
+gates="$(json_list "$config" gates)"
+count="$(printf '%s\n' "$gates" | grep -c .)"
+[ "$count" -gt 0 ] || exit 0
 files=""
 [ -n "$commit_seg" ] && files="$(changed_files "$commit_seg")"
 commit_msg=""
@@ -54,14 +58,13 @@ gate_mode="${STANDARDS_GATES:-}"
 failed=""
 i=0
 while [ "$i" -lt "$count" ]; do
-  name="$(json_get "$config" "gates.$i.name")"; [ -n "$name" ] || name="gates[$i]"
-  command="$(json_get "$config" "gates.$i.command")"
-  marker="$(json_get "$config" "gates.$i.marker")"
-  forbid="$(json_list "$config" "gates.$i.forbid")"
-  forbid_run="$(json_list "$config" "gates.$i.forbid_run")"
-  paths="$(json_list "$config" "gates.$i.paths")"
-  when="$(json_list "$config" "gates.$i.when" | tr '\n' ' ')"; [ -n "$(printf '%s' "$when" | tr -d ' ')" ] || when="commit"
+  gate="$(printf '%s\n' "$gates" | sed -n "$((i + 1))p")"
   i=$((i + 1))
+  [ -n "$stage" ] || case "$gate" in *'"forbid'*) ;; *) continue ;; esac
+  name="$(json_get "$gate" name)"; [ -n "$name" ] || name="gates[$((i - 1))]"
+  marker="$(json_get "$gate" marker)"
+  forbid="$(json_list "$gate" forbid)"
+  forbid_run="$(json_list "$gate" forbid_run)"
   if [ -n "$forbid$forbid_run" ]; then
     hit=""; said="contains"
     while IFS= read -r text; do
@@ -85,7 +88,11 @@ FORBID_RUN
     fi
     block "gate $name: the command $said \"$hit\"" "  $cmd"
   fi
-  [ -n "$command" ] && [ -n "$stage" ] || continue
+  [ -n "$stage" ] || continue
+  command="$(json_get "$gate" command)"
+  paths="$(json_list "$gate" paths)"
+  when="$(json_list "$gate" when | tr '\n' ' ')"; [ -n "$(printf '%s' "$when" | tr -d ' ')" ] || when="commit"
+  [ -n "$command" ] || continue
   case " $when " in *" $stage "*) ;; *) continue ;; esac
   if [ -n "$marker" ]; then
     [ "$gate_mode" = unmarked ] && continue

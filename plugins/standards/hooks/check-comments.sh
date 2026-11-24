@@ -14,6 +14,7 @@ cmd="$(payload_command "$payload")"
 [ -n "$cmd" ] || exit 0
 seg="$(git_segment commit "$cmd")"
 [ -n "$seg" ] || exit 0
+use_working_git
 cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
