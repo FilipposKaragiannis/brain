@@ -15,9 +15,4 @@ FLOW_JIRA_DONE="$(cfg jira.transitions.done)"; FLOW_JIRA_LIMIT="$(cfg jira.limit
 FLOW_JIRA_ANSWER_FROM="$(cfg jira.answer_from | paste -sd, -)"
 export FLOW_JIRA_SITE FLOW_JIRA_PROJECT FLOW_JIRA_EMAIL FLOW_JIRA_TYPE_EPIC FLOW_JIRA_TYPE_TASK FLOW_JIRA_TYPE_BUG \
   FLOW_JIRA_SIZE_FIELD FLOW_JIRA_AREA_FIELD FLOW_JIRA_DONE FLOW_JIRA_LIMIT FLOW_JIRA_ANSWER_FROM
-# ready_rules is lib/flow.sh's once it reads ready.* for every tracker; until then the same two keys.
-command -v ready_rules >/dev/null 2>&1 || ready_rules() {
-  READY_NEEDS="$(cfg ready.needs | paste -sd, -)"; READY_PRIORITY_ORDER="$(cfg ready.priority_order | paste -sd, -)"
-  export READY_NEEDS READY_PRIORITY_ORDER
-}
 jira() { cached_python3 -I "$FLOW_PLUGIN/adapters/jira/_jira.py" "$@"; }

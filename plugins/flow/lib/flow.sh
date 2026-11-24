@@ -11,6 +11,7 @@ export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/json.sh"
 . "$FLOW_PLUGIN/lib/stamp.sh"
 . "$FLOW_PLUGIN/lib/state.sh"
+. "$FLOW_PLUGIN/lib/ready.sh"
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
 # ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one.
@@ -302,7 +303,8 @@ trackers_unread() {
 # the priorities from most to least urgent (ready.priority_order). The deprecated
 # github.ready_needs and github.priority_order stand in for a key the file leaves out (an empty
 # list written there is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it
-# starts quiet). A field no adapter knows is refused, exit 2.
+# starts quiet). A field no adapter knows is refused, exit 2. With them go READY_ASSIGNEE and
+# READY_CATEGORIES, the ready.assignee and ready.categories policy (ready_policy in lib/ready.sh).
 READY_FIELDS="priority size"
 ready_rules() {
   _needs_key=ready.needs; _old=""; _new=""
@@ -323,6 +325,7 @@ ready_rules() {
   for _need in $(printf '%s' "$READY_NEEDS" | tr , ' '); do
     case " $READY_FIELDS " in *" $_need "*) ;; *) die "$_needs_key knows $(printf '%s' "$READY_FIELDS" | sed 's/ / and /'), not $_need" 2 ;; esac
   done
+  ready_policy
   export READY_NEEDS READY_PRIORITY_ORDER FLOW_READY_WARNED
 }
 
@@ -410,7 +413,7 @@ pick_filter() {
   _chosen="$(cfg "pick.$_pick.trackers")"
   [ -z "$_chosen" ] || printf '%s\n' "$_chosen" | grep -qx "$_adapter" || return 1
   pick_mapped "$_pick" "$_adapter"
-  FLOW_PICK_ASSIGNEE="$(cfg "pick.$_pick.assignee")"; FLOW_PICK_QUERY="$(cfg "pick.$_pick.query")"
+  FLOW_PICK_ASSIGNEE="$(cfg "pick.$_pick.assignee" | paste -sd, -)"; FLOW_PICK_QUERY="$(cfg "pick.$_pick.query")"
   FLOW_PICK_STATUS="$(cfg "pick.$_pick.status" | paste -sd, -)"
   FLOW_PICK_LABELS="$(cfg "pick.$_pick.labels" | paste -sd, -)"
   FLOW_PICK_KINDS="$(cfg "pick.$_pick.kinds" | paste -sd, -)"

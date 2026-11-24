@@ -3,4 +3,5 @@
 # JSON array; with --pick, only those the filter keeps (list.sh). A blocker in another tracker is
 # read through that tracker's adapter.
 . "$(dirname "$0")/../../lib/flow.sh"
+ready_rules
 "$FLOW_PLUGIN/adapters/local/list.sh" "$@" | "$FLOW_PLUGIN/scripts/filter-ready.sh"
