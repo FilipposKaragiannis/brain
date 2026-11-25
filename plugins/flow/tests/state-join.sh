@@ -3,6 +3,7 @@
 # items_listed; scripts/state.sh read and join) and the run and gate rows listed from the records
 # (record_list, run_record, gate_record; scripts/state.sh list), on the local adapter in a
 # throwaway repo. Each mode is set in the repo's config, but for the checks of FLOW_TRACKER_STATE.
+# The mode switches the mirror only: an item with no record reads the tracker's state in both.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -12,7 +13,7 @@ flow() { sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && "$@"' flow "$@"; }
 joined() { record read "$1" | json_value "$2"; }
 state_keys="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _state_schema; print(" ".join(_state_schema.STATE_KEYS))' "$plugin/scripts")"
 
-echo "item_read: a record wins, else the tracker under labels, else the empty state"
+echo "item_read: a record wins, else the tracker's state, else the empty state"
 recorded="$(new_task "Recorded")"
 record set "$recorded" step=implement attempts=2 touches=src/a/**,docs/b.md >/dev/null 2>&1
 "$local_adapter/write-state.sh" "$recorded" step=review
@@ -28,18 +29,18 @@ check "RecordedItemWithNoGate_ReadsGateNone: a clear gate reads none, as the ada
   '[ "$(joined "$recorded" state.gate)" = none ]'
 unrecorded="$(new_task "Unrecorded")"
 "$local_adapter/write-state.sh" "$unrecorded" step=plan
-check "UnrecordedItemUnderLabels_ReadsTheTrackersStep: an item started before the records keeps its state while the mirror is on" \
+check "UnrecordedItem_ReadsTheTrackersStep: an item started before the records keeps its state" \
   '[ "$(joined "$unrecorded" state.step)" = plan ]'
-check "UnrecordedItemUnderLabels_IsStampedFromTheTracker: a reader can tell the state is the tracker's" \
+check "UnrecordedItem_IsStampedFromTheTracker: a reader can tell the state is the tracker's" \
   '[ "$(joined "$unrecorded" state_from)" = tracker ]'
 check "UnrecordedItem_ReadSeedsNoRecord: a read never starts a record" '[ ! -f "$(record path "$unrecorded")" ]'
 tracker_state_is none
-check "UnrecordedItemUnderNone_ReadsAnEmptyStep: with the mirror off the tracker's state is never read" \
-  '[ -z "$(joined "$unrecorded" state.step)" ]'
-check "UnrecordedItemUnderNone_IsStampedNone: a reader can tell the item has no state" \
-  '[ "$(joined "$unrecorded" state_from)" = none ]'
-check "UnrecordedItemUnderNone_CarriesEveryStateKey: the empty state holds all twenty-one keys" \
-  '[ "$(record read "$unrecorded" | python3 -c "import json,sys; print(\" \".join(json.load(sys.stdin)[\"state\"]))")" = "$state_keys" ]'
+check "UnrecordedItemUnderNone_ReadsTheTrackersStep: with the mirror off an item started before the records still keeps its state" \
+  '[ "$(joined "$unrecorded" state.step)" = plan ]'
+check "UnrecordedItemUnderNone_IsStampedFromTheTracker: the mode never changes where the state came from" \
+  '[ "$(joined "$unrecorded" state_from)" = tracker ]'
+check "UnrecordedItemWithNoTrackerStateUnderNone_CarriesEveryStateKey: the empty state holds all twenty-one keys" \
+  '[ "$(printf "{\"id\":\"%s\"}" "$unrecorded" | record join | python3 -c "import json,sys; print(\" \".join(json.load(sys.stdin)[\"state\"]))")" = "$state_keys" ]'
 check "RecordedItemUnderNone_ReadsTheRecordsStep: the record is read the same in both modes" \
   '[ "$(joined "$recorded" state.step)" = implement ]'
 tracker_state_is ""
@@ -94,11 +95,14 @@ check "StateGetOfAJoinedItem_ReadsItsState: the guard lets the joined item throu
   '[ "$(flow state_get "$(record read "$recorded")" step)" = implement ]'
 
 echo "FLOW_TRACKER_STATE: the mode when the config names none"
-check "TrackerStateNoneFromTheEnvironment_ReadsTheEmptyState: the variable sets the mode of a config that has no line" \
-  '[ "$(env FLOW_TRACKER_STATE=none "$plugin/scripts/state.sh" read "$unrecorded" | json_value state_from)" = none ]'
-tracker_state_is labels
-check "ConfigLabelsAndEnvironmentNone_ReadsTheTracker: the config wins over the variable" \
-  '[ "$(env FLOW_TRACKER_STATE=none "$plugin/scripts/state.sh" read "$unrecorded" | json_value state_from)" = tracker ]'
+from_environment="$(new_task "Mode from the environment")"
+env FLOW_TRACKER_STATE=labels "$plugin/scripts/state.sh" set "$from_environment" step=plan >/dev/null 2>&1
+check "TrackerStateLabelsFromTheEnvironment_MirrorsTheWrite: the variable sets the mode of a config that has no line" \
+  '[ "$(tracker "$from_environment" step)" = plan ]'
+tracker_state_is none
+env FLOW_TRACKER_STATE=labels "$plugin/scripts/state.sh" set "$from_environment" step=implement >/dev/null 2>&1
+check "ConfigNoneAndEnvironmentLabels_MirrorsNothing: the config wins over the variable" \
+  '[ "$(tracker "$from_environment" step)" = plan ]'
 tracker_state_is ""
 env FLOW_TRACKER_STATE=sideways "$plugin/scripts/state.sh" read "$unrecorded" >/dev/null 2>&1; code=$?
 check "UnknownTrackerStateFromTheEnvironment_ExitsTwo: a bad mode is refused wherever it is set" '[ "$code" -eq 2 ]'

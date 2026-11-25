@@ -52,7 +52,7 @@ w1="$("$P/scripts/steward.sh" claim "$t1")"
 check "claim path"        [ "$w1" = "$(cd ../wt-1 && pwd -P)" ]
 check "claim branch"      [ "$(git -C "$w1" symbolic-ref --short HEAD)" = "flow/local-task-1" ]
 check "claim file"        [ "$(jget item < "$w1/.flow/claim.json")" = "$t1" ]
-mirror_on "a claim is shared through the record, not the tracker" check "claim in tracker"  [ "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" = "wt-1" ]
+check "ClaimOfAnItem_RecordsItsWorktree: a claim is shared through the record, not the tracker" [ "$(record get "$t1" worktree)" = "wt-1" ]
 check "claim again same"  [ "$("$P/scripts/steward.sh" claim "$t1")" = "$w1" ]
 check "find"              [ "$("$P/scripts/steward.sh" find "$t1")" = "$w1" ]
 printf 'x\n' > "$w1/dirty.txt"

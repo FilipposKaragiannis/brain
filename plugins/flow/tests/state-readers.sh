@@ -35,14 +35,14 @@ check "BoardJsonOfARecordedItemWhoseTrackerDiffers_ShowsTheRecordsStep: the boar
   '[ "$(board_item "$recorded" state.step)" = implement ]'
 check "BoardJson_GivesEveryItemTheTwentyOneStateKeys: the console reads state on every item, as before" \
   'python3 -c "import json,sys; items=json.load(open(sys.argv[1]))[\"items\"]; keys=sys.argv[2].split(); sys.exit(0 if items and all(sorted(item[\"state\"])==sorted(keys) for item in items) else 1)" "$work/board.json" "$state_keys"'
-check "BoardJson_StampsEveryItemWithWhereItsStateCameFrom: each item says record, tracker or none" \
-  'python3 -c "import json,sys; items=json.load(open(sys.argv[1]))[\"items\"]; sys.exit(0 if items and all(item.get(\"state_from\") in (\"record\",\"tracker\",\"none\") for item in items) else 1)" "$work/board.json"'
-check "BoardJsonOfAnUnrecordedItemUnderLabels_ShowsTheTrackersStep: an item started before the records keeps its state while the mirror is on" \
+check "BoardJson_StampsEveryItemWithWhereItsStateCameFrom: each item says record or tracker" \
+  'python3 -c "import json,sys; items=json.load(open(sys.argv[1]))[\"items\"]; sys.exit(0 if items and all(item.get(\"state_from\") in (\"record\",\"tracker\") for item in items) else 1)" "$work/board.json"'
+check "BoardJsonOfAnUnrecordedItem_ShowsTheTrackersStep: an item started before the records keeps its state" \
   '[ "$(board_item "$unrecorded" state.step)" = plan ]'
 tracker_state_is none
 "$plugin/scripts/board.sh" --json > "$work/board.json"
-check "BoardJsonOfAnUnrecordedItemUnderNone_ShowsNoStep: with the mirror off the board never reads the tracker's state" \
-  '[ -z "$(board_item "$unrecorded" state.step)" ]'
+check "BoardJsonOfAnUnrecordedItemUnderNone_ShowsTheTrackersStep: the mode switches the mirror only, so the board still reads the tracker for an item with no record" \
+  '[ "$(board_item "$unrecorded" state.step)" = plan ]'
 tracker_state_is ""
 
 echo "board.sh --json and gate.sh list: runs and gates come from the records"

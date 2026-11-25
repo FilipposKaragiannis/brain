@@ -1,10 +1,10 @@
 #!/bin/sh
 # state-views.sh: what the flow record renders and how it starts and ends, on the local adapter in
 # a throwaway repo. A write renders the run file, the gate file and the claim's step only when it
-# names their fact; the first write seeds from the tracker and this machine's gate and run files;
-# take (a next.sh start too) and archive (a release of a closed item too); the record equals
-# the tracker's state after next, advance, a gate and a hold; and an item with no record lists its
-# run and gate files as its rows under labels only.
+# names their fact; the first write seeds from the tracker but its size and this machine's gate and
+# run files; take (a next.sh start too) and archive (a release of a closed item too); under labels
+# the record equals the tracker's state after next, advance, a gate and a hold; and an item with no
+# record lists its run and gate files as its rows in both modes.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -69,10 +69,12 @@ started="$(new_task "Started before the records")"
 started_gate_file="$(printf '%s' "$gate_record" | with_item "$started")"; started_run_file="$(printf '%s' "$run_record" | with_item "$started")"
 printf '%s' "$started_gate_file" > "$(gate_file "$started")"; printf '%s' "$started_run_file" > "$(run_file "$started")"
 env FLOW_MACHINE=gamma "$plugin/scripts/state.sh" set "$started" last_event=resumed >/dev/null 2>&1
-for key in step profile size worktree attempts touches changes base held_by held_reason gate gate_from answered asked answer answered_at answer_pending pr pr_host; do
+for key in step profile worktree attempts touches changes base held_by held_reason gate gate_from answered asked answer answered_at answer_pending pr pr_host; do
   check "FirstWriteOfAStartedItem_Copies_${key}: the record starts from the tracker's state, so nothing in flight is lost" \
     '[ "$(record get "$started" "$key" | canonical)" = "$(tracker "$started" "$key" | canonical)" ]'
 done
+check "FirstWriteOfAStartedItem_LeavesTheSizeOut: the tracker's size stays its own, read until the flow re-sizes the item" \
+  '[ -z "$(record get "$started" size)" ]'
 check "FirstWriteOfAStartedItem_ClaimsItForThisMachine: an item with a step was started here" '[ "$(record get "$started" claim.machine)" = gamma ]'
 check "FirstWriteOfAStartedItem_TakesTheGateFilesOptions: the open gate's options outlive the move to the record" \
   '[ "$(record get "$started" gate.options.0.label)" = "$(printf "%s" "$gate_record" | json_value options.0.label)" ]'
@@ -143,7 +145,8 @@ released_worktree="$("$plugin/scripts/steward.sh" claim "$released" 2>/dev/null)
 check "ReleaseOfAClosedItem_LeavesNoOpenRecord: a closed item's record leaves the open ones with its worktree" '[ ! -f "$(record path "$released")" ]'
 check "ReleaseOfAClosedItem_KeepsItsRecordUnderClosed: a released item's record is archived, not deleted" '[ -f "$(closed_record "$released")" ]'
 
-echo "parity: the record equals the tracker's state after the flow's own writes"
+echo "parity: under labels the record equals the tracker's state after the flow's own writes"
+tracker_state_is labels
 paired="$(new_task "Parity")"
 paired_start="$("$plugin/scripts/next.sh" "$paired" --json 2>/dev/null)"
 paired_step="$(printf '%s' "$paired_start" | json_value step)"
@@ -161,8 +164,10 @@ holder="$(new_task "Holder")"; waiter="$(new_task "Waiter")"
 check "HoldSet_RecordEqualsTheTrackersState: a hold reads the same in both stores" 'first_key_differing_from_tracker "$waiter"'
 "$plugin/scripts/hold.sh" clear "$waiter" "holder merged" >/dev/null 2>&1
 check "HoldClear_RecordEqualsTheTrackersState: a lifted hold reads the same in both stores" 'first_key_differing_from_tracker "$waiter"'
+tracker_state_is ""
 
-echo "rows of an item with no record: its run and gate files under labels, none under none"
+echo "rows of an item with no record: its run and gate files in both modes"
+tracker_state_is labels
 viewed="$(new_task "Views before the records")"
 viewed_run_file="$(printf '%s' "$run_record" | with_item "$viewed")"; viewed_gate_file="$(printf '%s' "$gate_record" | with_item "$viewed")"
 mkdir -p .flow/runs .flow/gates
@@ -174,10 +179,10 @@ check "UnrecordedItemWithAGateFileUnderLabels_ListsTheGateFile: a gate pending b
 check "UnrecordedItemWithARunFileUnderLabels_IsInTheWholeRunsList: the list of every run carries it too" \
   '[ "$(record list runs | grep -F "\"item\":\"$viewed\"" | canonical)" = "$viewed_run_file" ]'
 tracker_state_is none
-check "UnrecordedItemWithARunFileUnderNone_ListsNoRun: with the mirror off only a record holds a run" \
-  '[ -z "$(record list runs "$viewed")" ]'
-check "UnrecordedItemWithAGateFileUnderNone_ListsNoGate: with the mirror off only a record holds a gate" \
-  '[ -z "$(record list gates "$viewed")" ]'
+check "UnrecordedItemWithARunFileUnderNone_ListsTheRunFile: the mode switches the mirror only, so a run started before the records still shows" \
+  '[ "$(record list runs "$viewed" | canonical)" = "$viewed_run_file" ]'
+check "UnrecordedItemWithAGateFileUnderNone_ListsTheGateFile: the mode switches the mirror only, so a gate pending before the records can still be answered" \
+  '[ "$(record list gates "$viewed" | canonical)" = "$viewed_gate_file" ]'
 tracker_state_is ""
 stale="$(new_task "Stale run file")"
 record set "$stale" last_event=filed >/dev/null 2>&1

@@ -272,7 +272,8 @@ if [ -x "$A/answers.sh" ]; then
   "$A/comment.sh" "$t2" --body "/answer the long way" >/dev/null 2>&1
   "$A/answers.sh" "$t2" > "$work/answers.out" 2>/dev/null
   check "answers prints the id of the item it cleared" 'grep -qx "$t2" "$work/answers.out"'
-  check "answers clears the gate with the answer" '[ "$(field "$t2" state.gate)" = none ] && [ "$(field "$t2" state.answer)" = "the long way" ]'
+  check "AnswersOfAGatedItem_ClearsTheGateInTheRecord: answers clears the gate it found answered, because the record is where the flow keeps it" '[ "$(record_get "$t2" gate)" = none ]'
+  check "AnswersOfAGatedItem_RecordsTheAnswer: answers keeps the owner's answer, because the next step reads it from the record" '[ "$(record_get "$t2" answer)" = "the long way" ]'
   check "AnswersWithNoIds_PrintsNothing: answers with no ids prints nothing, because it reads only the items it is given" '[ -z "$("$A/answers.sh" 2>&1)" ]'
   check "AnswersWithNoIds_ExitsZero: answers with no ids exits 0, because no gated item is no failure" '[ "$(code_of "$A/answers.sh")" = 0 ]'
   check "AnswersOfAMalformedId_ExitsTwo: answers of an id not of the adapter's shape exits 2, because a bad id is refused before the tracker is read" '[ "$(code_of "$A/answers.sh" "${prefix}not an id")" = 2 ]'

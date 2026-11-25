@@ -8,10 +8,11 @@ merged record, and only for a fact the write names:
                                  gate:=<object>, removed by gate=none and gate=
   step in the claim.json         from step= or the run's step, which wins; only when the claim
                                  names the item; never removed
-A record with no file yet is seeded from the tracker's state, the gate file (when the tracker
-shows no gate or the same one) and the run file. The seed renders no view.
-An item with no record lists its run file and its gate file as its rows while tracker_state is
-labels, so a run or gate from before the records still shows; under none it has no rows.
+A record with no file yet is seeded from the tracker's state but its size (the tracker's own field,
+read until the flow's re-size writes an estimate), the gate file (when the tracker shows no gate or
+the same one) and the run file. The seed renders no view.
+An item with no record lists its run file and its gate file as its rows under either tracker_state,
+so a run or gate from before the records still shows.
 """
 import json
 from collections import namedtuple
@@ -20,6 +21,7 @@ import _state_join as join
 import _state_schema as schema
 
 STEP_KEY = "step"
+SIZE_KEY = "size"
 GATE_KEY = "gate"
 WORKTREE_KEY = "worktree"
 CLAIM_ITEM_FIELD = "item"
@@ -42,10 +44,8 @@ def view_paths(flow_home, item):
                      "%s/%s.json" % (view_folder(flow_home, join.GATE_ROWS), slug))
 
 
-def unrecorded_row(view, tracker_state):
-    if tracker_state != join.TRACKER_LABELS or not isinstance(view.get(schema.RECORD_ITEM_FIELD), str):
-        return join.NO_ROW
-    return view
+def unrecorded_row(view):
+    return view if isinstance(view.get(schema.RECORD_ITEM_FIELD), str) else join.NO_ROW
 
 
 def view_text(content):
@@ -102,7 +102,8 @@ def state_text(value):
 
 
 def seed_pairs(seed):
-    pairs = [schema.Pair(key, state_text(seed.state[key])) for key in schema.STATE_KEYS if key in seed.state]
+    pairs = [schema.Pair(key, state_text(seed.state[key])) for key in schema.STATE_KEYS
+             if key in seed.state and key != SIZE_KEY]
     tracker_gate = state_text(seed.state.get(GATE_KEY))
     if seed.gate and tracker_gate in schema.GATE_CLEARED + (seed.gate.get(schema.NOTIFY_GATE_FIELD),):
         pairs.append(schema.Pair(schema.GATE_OBJECT, json.dumps(seed.gate)))

@@ -21,8 +21,10 @@ canonical() { python3 -c 'import json,sys
 text=sys.stdin.read().rstrip("\n")
 try: print(json.dumps(json.loads(text), sort_keys=True))
 except ValueError: print(text)'; }
+# first_key_differing_from_tracker <item>: the first state key the record and the tracker disagree
+# on, size left out: a record seeded by a write that is no start holds no size, the tracker's own.
 first_key_differing_from_tracker() {
-  tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["state"]))')"
+  tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(key for key in json.load(sys.stdin)["state"] if key != "size"))')"
   [ -n "$tracker_keys" ] && for key in $tracker_keys; do
     [ "$(record get "$1" "$key" | canonical)" = "$(tracker "$1" "$key" | canonical)" ] || { echo "$key differs"; return 1; }
   done

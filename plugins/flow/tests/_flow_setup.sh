@@ -34,11 +34,6 @@ print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
 claim_step() { "$P/scripts/steward.sh" pool | awk -v item="$1" '$3 == item { print $4 }'; }
 # record <command> <argument>...: the flow record of the project in the current folder.
 record() { "$P/scripts/state.sh" "$@"; }
-# The mode of the tracker's state the checks run under: FLOW_TRACKER_STATE when set, else labels.
-tracker_mode="${FLOW_TRACKER_STATE:-labels}"
-# mirror_on <what ends the need> <check...>: a check of what the tracker shows after a flow write
-# runs only while the mirror is on; the first argument names the change that lets the check go.
-mirror_on() { mirror_need="$1"; shift; if [ "$tracker_mode" = none ]; then echo "  skip $2 (with the mirror off, until $mirror_need)"; else "$@"; fi; }
 # archived <item> <path>: a field of the item's record once its release archived it.
 archived() { open_record="$(record path "$1")"; jget "$2" < "$(dirname "$open_record")/closed/$(basename "$open_record")"; }
 # end_run <item>: the item's run is over, as when its agent is gone.

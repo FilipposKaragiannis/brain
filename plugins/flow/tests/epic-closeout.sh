@@ -75,19 +75,24 @@ printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED"
 export FLOW_GH_RETRY_WAIT="0 0"
 tracked="$("$plugin/adapters/github/create.sh" epic "Loans" --body x)"
 tracked_field() { "$plugin/adapters/github/read.sh" "$tracked" | json_value "$1"; }
+tracked_record() { "$plugin/scripts/state.sh" get "$tracked" "$1"; }
 remote_branch "$(epic_of "$tracked")"; remote_commit "$(epic_of "$tracked")" loans.txt
 "$plugin/scripts/state.sh" set "$tracked" step=closeout profile=epic >/dev/null
 start_step "$tracked"
 step_result "$tracked" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
 finish_step "$tracked"
 merge_pull_request
+check "GitHubEpicWithAMergedPullRequest_StaysOpenBeforeTheSweep: the closeout left it open, or the checks below prove nothing" \
+  '[ "$(tracked_field status)" = open ]'
 check "GitHubEpicWithAMergedPullRequest_WaitsAtTheMergeGateBeforeTheSweep: the closeout left it there, or the checks below prove nothing" \
-  '[ "$(tracked_field status)" = open ] && [ "$(tracked_field state.gate)" = merge ]'
+  '[ "$(tracked_record gate)" = merge ]'
 printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
 "$plugin/scripts/steward.sh" sweep > "$work/sweep-refused.out" 2>&1
 rm -f "$FAKE_GH_DIR/fail"
+check "MergedEpicTheTrackerRefusesToClose_StaysOpen: the refused close left the issue as it was" \
+  '[ "$(tracked_field status)" = open ]'
 check "MergedEpicTheTrackerRefusesToClose_KeepsItsMergeGate: the gate record is what the next sweep finds the epic by" \
-  '[ "$(tracked_field status)" = open ] && [ "$(tracked_field state.gate)" = merge ]'
+  '[ "$(tracked_record gate)" = merge ]'
 check "MergedEpicTheTrackerRefusesToClose_IsNotSaidToBeClosed: the sweep reports what happened" \
   '! grep -qF "$tracked: closed" "$work/sweep-refused.out"'
 "$plugin/scripts/steward.sh" sweep >/dev/null 2>&1
@@ -106,9 +111,11 @@ printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
 finish_step "$tracked"
 rm -f "$FAKE_GH_DIR/fail"
 check "EpicWithNothingToMergeTheTrackerRefusesToClose_RaisesAnEscalationGate: an open epic at done with no gate is one nothing ever looks at again" \
-  '[ "$(tracked_field status)" = open ] && [ "$(tracked_field state.gate)" = escalation ]'
+  '[ "$(tracked_record gate)" = escalation ]'
+check "EpicWithNothingToMergeTheTrackerRefusesToClose_StaysOpen: the refused close left the issue as it was" \
+  '[ "$(tracked_field status)" = open ]'
 check "EpicWithNothingToMergeTheTrackerRefusesToClose_StaysAtCloseout: clearing the gate runs the closeout again" \
-  '[ "$(tracked_field state.step)" = closeout ]'
+  '[ "$(tracked_record step)" = closeout ]'
 "$plugin/scripts/gate.sh" clear "$tracked" >/dev/null 2>&1
 start_step "$tracked"
 step_result "$tracked" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"

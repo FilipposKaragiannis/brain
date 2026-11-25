@@ -12,7 +12,7 @@
 #   state.sh archive <item>         the record to closed/; refused, exit 1, while another
 #                                   machine holds the item
 #   state.sh read <item>            item_read: the adapter's read with the record joined on as
-#                                   state and stamped state_from (record, tracker or none)
+#                                   state and stamped state_from (record or tracker)
 #   state.sh join                   items_join: the item, or array of items, on stdin, joined
 #   state.sh list runs|gates [<item>]
 #                                   record_list: one compact row per line of each run in flight or

@@ -2,7 +2,7 @@
 # state.sh: the flow record of an item (lib/state.sh, scripts/state.sh), on the local adapter in a
 # throwaway repo. Every state key and gate record field reads back, each at its record path, and
 # so do pushed and claim.assigned_at; a refused write leaves both stores as they were; the tracker
-# gets each state write first unless tracker_state is none; the gate's value rules; where the
+# gets each state write first under tracker_state labels; the gate's value rules; where the
 # records live; ids of the wrong shape; and a caller's while-read loop keeps its input.
 # state-disk.sh has the lock and the disk.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
@@ -112,10 +112,11 @@ record set nowhere:1 step=plan >/dev/null 2>&1; code=$?
 check "IdNoAdapterOwns_ExitsTwo: an id no adapter owns has no record" '[ "$code" -eq 2 ]'
 check "IdNoAdapterOwns_WritesNoRecord: nothing is written for an id no adapter owns" '[ ! -f "$(record path nowhere:1)" ]'
 
-echo "the mirror: the tracker gets each state write first"
+echo "the mirror: under tracker_state labels the tracker gets each state write first"
 mirrored="$(new_task "Mirror")"
+tracker_state_is labels
 record set "$mirrored" step=verify >/dev/null 2>&1
-check "DefaultTrackerState_TrackerReadsTheValueSet: with tracker_state labels the tracker takes every state write" '[ "$(tracker "$mirrored" step)" = verify ]'
+check "TrackerStateLabels_TrackerReadsTheValueSet: with tracker_state labels the tracker takes every state write" '[ "$(tracker "$mirrored" step)" = verify ]'
 tracker_state_is none
 record set "$mirrored" step=review >/dev/null 2>&1
 check "TrackerStateNone_TrackerKeepsItsValue: with tracker_state none no write reaches the tracker" '[ "$(tracker "$mirrored" step)" = verify ]'
@@ -123,7 +124,7 @@ check "TrackerStateNone_RecordTakesTheWrite: with the mirror off the record stil
 tracker_state_is sometimes
 record set "$mirrored" step=done >/dev/null 2>&1; code=$?
 check "UnknownTrackerState_ExitsTwo: tracker_state is labels or none, anything else is bad config" '[ "$code" -eq 2 ]'
-tracker_state_is ""
+tracker_state_is labels
 refusing="$(new_task "Tracker refuses")"
 record set "$refusing" step=plan >/dev/null 2>&1
 chmod a-w "$(item_file "$refusing")"
@@ -134,6 +135,7 @@ record set "$refusing" 'run:={"step":"implement","pid":4242}' >/dev/null 2>&1
 check "TrackerRefusesWrites_RecordOnlyPairLands: a record pair never goes to the tracker, so its refusal does not stop it" \
   '[ "$(record get "$refusing" run.pid)" = 4242 ]'
 chmod u+w "$(item_file "$refusing")"
+tracker_state_is ""
 
 echo "the key map: each tracker key lands at its record path"
 mapped="$(new_task "Key map")"
