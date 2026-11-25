@@ -5,6 +5,7 @@
 # stamp matches, and never looks at hand edits (that is `init --check`). Prints on stdout, which
 # the host adds to the session's context.
 . "$(dirname "$0")/lib.sh"
+use_working_git
 read_payload >/dev/null
 root="$(repo_root)" || exit 0
 [ -f "$root/.standards/config.json" ] || exit 0

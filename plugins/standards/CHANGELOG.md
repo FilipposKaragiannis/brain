@@ -1,5 +1,22 @@
 # standards
 
+## 1.10.0 (2026-11-25)
+
+- An agent's commit runs the formatter and each gate once with `-a`, a pathspec (`-o`, `-i`) or a
+  `git add` earlier in the same command, not only on a plain `git commit`. The agent hook records
+  the content the commit will hold; git's `pre-commit` and `commit-msg` skip that same content.
+- An edit to any tracked file between the agent hook and git's hooks runs them again.
+- A commit the hook cannot predict (`-p`, `--interactive`, `--pathspec-from-file`, git options
+  before `commit`, a quoted or globbed path, an earlier `cd` or git call other than `git add`)
+  or a message in a heredoc runs them twice, as before.
+- The agent hooks on a Bash call that is no commit or push start no git and read no config, except
+  `check-gates`, which reads only the gates that carry `forbid` or `forbid_run`, and nothing when
+  the project has none. Before, every hook ran `git --version` on load and `check-gates` read every
+  field of every gate first, so each Bash call waited about 0.2 s on the hooks; it now waits about
+  0.15 s with a forbid gate and 0.1 s without one.
+- A script that sources `hooks/lib.sh` and calls git calls `use_working_git` first, which picks
+  Xcode's git where the macOS shim is broken.
+
 ## 1.9.1 (2026-11-23)
 
 - PY-02 no longer says a type checker runs in lint. Lint runs ShellCheck and Ruff. The rule now
