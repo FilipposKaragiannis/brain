@@ -2,8 +2,9 @@
 # Install or refresh the flow plugin in a repository.
 #   init.sh [--root <repo>] [--check] [--force] [--user-codex] [--source-hash]
 # Writes: .flow/config.yaml (once), .flow/plugin.sh (finds the installed plugin when a wrapper
-# runs), .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers,
-# always replaced; they hold no path or version, so a plugin update leaves them as they are), the
+# runs), .flow/notify.sh, .flow/build-passed.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and
+# .flow/hooks/*.sh (wrappers, always replaced; they hold no path or version, so a plugin update
+# leaves them as they are), the
 # Codex rules/flow.rules and agents/<flow agents>.toml (replaced, unless edited by hand since: then
 # refused, exit 1, --force replaces), the Claude worktree hook entries in
 # .claude/settings.local.json (merged, every other key kept), a marked block in .git/info/exclude
@@ -289,6 +290,8 @@ fi
 install_file "$plugin/templates/plugin.sh" .flow/plugin.sh 644
 tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' > "$tmp"
 install_file "$tmp" .flow/notify.sh 755
+tmp="$scratch/build-passed"; printf '#!/bin/sh\n# Written by flow:init. The standards pre-push hook runs it to skip a build verify passed on the same inputs.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/build-passed.sh" "$@"\n' > "$tmp"
+install_file "$tmp" .flow/build-passed.sh 755
 install_file "$plugin/templates/run-unattended.sh" .flow/run-unattended.sh 755
 for j in comments health intake next retro; do
   tmp="$scratch/job-$j"
