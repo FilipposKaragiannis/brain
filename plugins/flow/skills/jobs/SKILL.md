@@ -1,6 +1,6 @@
 ---
 name: jobs
-description: Run and watch the scheduled flow jobs on this machine (next, comments, intake, retro, health). Shows each job's schedule, state, last run with its length and result, next run and last week's counts; shows a job's run history or log; runs one now, stops a running one, pauses and resumes, and installs or removes the schedule from .flow/config.yaml. Use when the owner asks what the jobs are doing, when a job last ran or runs next, or to start, stop, pause, resume or schedule one, or when the pool looks stuck: worktrees claimed, nothing moving, a run that is not running, a gate nobody answers.
+description: Run and watch the scheduled flow jobs on this machine (next, comments, intake, retro, health, and check, which runs the project's own commands set under jobs.checks). Shows each job's schedule, state, last run with its length and result, next run and last week's counts; shows a job's run history or log; runs one now, stops a running one, pauses and resumes, and installs or removes the schedule from .flow/config.yaml. Use when the owner asks what the jobs are doing, when a job last ran or runs next, or to start, stop, pause, resume or schedule one, or when the pool looks stuck: worktrees claimed, nothing moving, a run that is not running, a gate nobody answers.
 disable-model-invocation: true
 ---
 
@@ -19,6 +19,7 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
 | end a run now | `"$P/scripts/jobs.sh" stop <name>` |
 | hold a schedule, or all, without unscheduling | `"$P/scripts/jobs.sh" pause <name\|all>`, then `resume` |
 | schedule the jobs, or change a schedule | set `jobs.schedule.<name>` in `.flow/config.yaml`, then `"$P/scripts/jobs.sh" install [name]` |
+| run a project's own command on a schedule (a nightly smoke test) | set `jobs.checks.<name>.command` and `jobs.checks.<name>.schedule` in `.flow/config.yaml`, then `"$P/scripts/jobs.sh" install check-<name>` |
 | run one job on two schedules (a claude `next` and a codex `next`) | add `jobs.schedule.next-codex: every 30m codex --max-steps 15`, then `"$P/scripts/jobs.sh" install next-codex` |
 | run `next` only on the items a filter keeps (the owner's own) | add `jobs.schedule.next-mine: every 30m --pick mine` beside a filter `pick.mine` with `assignee: me`, then `"$P/scripts/jobs.sh" install next-mine` |
 | remove a schedule | `"$P/scripts/jobs.sh" uninstall [name]`, also for one the config no longer names |
@@ -34,12 +35,15 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
    `local:task/3`) or an option is an arg as before. Edit the config, show the diff, then install.
 3. A schedule's name is a job (`next`, `comments`, `intake`, `retro`, `health`) or a job, a dash
    and a label of a lowercase letter then lowercase letters and digits (`next-codex`,
-   `next-gh81`), so one job runs on several schedules, each with its own args and host. Each one
+   `next-gh81`), so one job runs on several schedules, each with its own args and host. A check
+   runs only as `check-<name>`, one per key under `jobs.checks` (rule 10): the bare name `check`
+   is refused, and a `jobs.schedule.check-<name>` key is no schedule. Each one
    is its own launchd agent (`com.<repo>.flow.<name>`), log, lock, pause and history, and its
    runs are `<name>` in `runs.jsonl`. Two `next` schedules run side by side and never pick the
-   same item. The schedules of any other job take turns: one skips while another of its job runs,
-   as they share its state. `install` refuses any other name (`next_codex`, `next-1`), exit 2. `all` is every
-   schedule the config names.
+   same item, and two checks run side by side, each in its own checkout. The schedules of any
+   other job take turns: one skips while another of its job runs, as they share its state.
+   `install` refuses any other name (`next_codex`, `next-1`), exit 2. `all` is every schedule
+   the config names.
 4. `stop` ends the agent sessions mid-step. Confirm it first: the item stays where its last
    step left it, and the next run picks it up again.
 5. Pause is the safe hold: a paused schedule's runs exit at once and show as `paused`, the
@@ -63,6 +67,31 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
    their own sessions, `next` and the run `health` resumes for their steps with no agent. Empty
    or absent keeps the pair.
    An effort the host does not take fails the run at its start, exit 2, as a failed run.
+   A check's schedule takes none of these (rule 10).
+10. A check is one of the project's own commands run on a schedule, set under `jobs.checks` in
+    `.flow/config.yaml`, each key its name:
+    ```yaml
+    jobs:
+      checks:
+        smoke:
+          command: npm ci && npm run smoke
+          schedule: daily 02:00
+    ```
+    The name is a lowercase letter, then lowercase letters and digits (`smoke`, `audit2`), and the
+    schedule `check-smoke` runs it: `status`, `history`, `logs`, `run`, `stop`, `pause` and
+    `install` take that name. The schedule is the timing alone (`every 30m`, `daily 02:00`,
+    `weekly sun 03:00`): no args, no host word, no `--model` or `--effort`, as a check starts no
+    session. Its runs take the `jobs.host` word all the same, so that host's CLI must be installed
+    on the machine. `run` and `install` refuse a malformed entry, naming its line in the config,
+    and a missing `.flow/jobs/check.sh`, saying to run flow:init, exit 2; `init --check` names each
+    malformed entry as a gap. Edit the config, show the diff, then install.
+11. The command goes through the config's plain reader, so write it on one line, bare:
+    - a space then `#` ends it, inside quotes too (`echo a # b` runs `echo a`);
+    - a command that starts and ends with the same quote loses that pair (`'x' && echo 'y'` runs
+      `x' && echo 'y`);
+    - a command starting with `[`, quoted or not, reads as a list and is refused: start it another
+      way, such as `test -f x`;
+    - a block scalar (`|`, `>`) reads as that one character.
 
 Facts to answer with:
 - On macOS each job is a launchd agent that loads at login. It runs while the owner is logged in
@@ -180,4 +209,26 @@ Facts to answer with:
 - `jobs.model` and `jobs.effort` are deprecated (read only while the host has no `jobs.<host>`
   map, with the old name mapping for Codex and one warning in the job's log). To migrate, move
   them under `jobs.claude` and give `jobs.codex` Codex names.
+- A check runs from a clean checkout of the base, never a claimed worktree. Each run fetches
+  `base` (the config's, default `main`) in the main worktree, takes `origin/<base>` (as the last
+  fetch left it when the fetch fails, which the log says, else the local `<base>`), and checks
+  that commit out detached in a shared clone under `<flow home>/check-runs/<name>`. No project
+  setup runs there (`worktree_setup`, `worktree_copy`, submodules, LFS): a check that needs its
+  dependencies installs them in its command. The command runs in `sh` with no input; its output
+  goes to `.flow/log/check-<name>.out`, replaced each run, and to the check's log. The clone goes
+  when the run ends, by a pass, a fail or a stop.
+- A check's run line is `done: passed at <commit>`, `failed: exited <code> at <commit>: <the
+  output's last line>` (exit 1, shown as failed), or `error: could not check out <base>: <why>`.
+- Whether a check passed last is in `.flow/log/check-<name>.state`. A fail after a pass files one
+  bug, `Scheduled check <name> fails`, through `new.sh` in the main worktree, so `adapters.bug`
+  picks the tracker; the line ends `; filed bug <id>`. A fail after a fail files none and ends
+  `; still failing, bug <id>`, or `; still failing` when no bug was filed. A first-ever fail
+  files none, as no pass came before it. A bug the tracker refuses ends the line with `; the bug
+  could not be filed: <why>` and is filed at the next fail. The bug is never closed: once the
+  check passes again, the next fail after it files a new one.
+- The bug's body holds the check's command and the last 40 lines of its output, cut to 8000
+  bytes. On a public tracker (a GitHub issue on a public repository) both are public: keep
+  secrets out of the command and out of what it prints.
+- The console shows a check as a card, but its run, pause and install buttons refuse a
+  `check-<name>` schedule; `jobs.sh` does those.
 - Never claim a schedule exists unless `status` shows it `scheduled`.
