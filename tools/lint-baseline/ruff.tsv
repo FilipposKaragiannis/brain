@@ -100,6 +100,5 @@ tools/lib/map.py	B007	1
 tools/lib/map.py	E731	2
 tools/lib/map.py	I001	2
 tools/lib/map.py	SIM115	1
-tools/lib/playbooks.py	S101	1
 tools/lib/release.py	S603	1
 tools/lib/suite_parity.py	S105	1
