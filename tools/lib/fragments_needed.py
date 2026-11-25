@@ -192,9 +192,10 @@ def _releases(fragment_changes: "list[_Change]", paths_at_references: "frozenset
     )
 
 
-def _pays(fragment_changes: "list[_Change]", paths_at_head: "frozenset[str]") -> bool:
+def _pays(fragment_changes: "list[_Change]", work: _Work) -> bool:
     return any(
-        change.status != _DELETED and change.path in paths_at_head for change in fragment_changes
+        change.path in work.paths_at_head and change.path not in work.paths_at_references
+        for change in fragment_changes
     )
 
 
@@ -219,7 +220,7 @@ def _finding(plugin: str, work: _Work) -> Optional[_Finding]:
     if (
         not shipped
         or _releases(fragment_changes, work.paths_at_references)
-        or _pays(fragment_changes, work.paths_at_head)
+        or _pays(fragment_changes, work)
     ):
         return None
     return _Finding(plugin, shipped[0], len(shipped) - 1)

@@ -178,6 +178,27 @@ expect 'FragmentAddedThenDeleted_Fails because deleting a fragment the base neve
   "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
 
 repository="$(repository_seeded)"
+git -C "$repository" switch -q main
+repository_fragment "$repository" flow earlier-change
+repository_commit "$repository" "docs(flow): an earlier change's fragment"
+git -C "$repository" update-ref refs/remotes/origin/main main
+git -C "$repository" switch -q -C work main
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_write "$repository" plugins/flow/changelog.d/earlier-change.md "$(printf 'bump: patch\n\n- An earlier change, worded better.')"
+repository_commit "$repository" "feat(flow): a change that edits an earlier fragment"
+expect "EarlierFragmentEditedBesideShippedChange_Fails because editing a fragment the base holds adds none for this change" \
+  "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
+
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_fragment "$repository" flow flow-change
+repository_commit "$repository" "feat(flow): a change with its fragment"
+repository_write "$repository" plugins/flow/changelog.d/flow-change.md "$(printf 'bump: patch\n\n- A change a user sees, worded better.')"
+repository_commit "$repository" "docs(flow): reword the fragment"
+expect 'FragmentAddedThenEdited_Passes because a fragment this change added still pays after an edit' \
+  "$(outcome "$repository" main origin/main)" "exit $passes_exit, names: none"
+
+repository="$(repository_seeded)"
 git -C "$repository" tag base-before-fragment main
 git -C "$repository" switch -q main
 repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
