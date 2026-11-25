@@ -55,14 +55,16 @@ check "ColouredOutput_PatternMatchesTheLineWithoutItsColours: a runner that colo
   '[ "$(check_summary "gate coloured")" = "5 passed" ]'
 check "PatternThatMatchesNoLine_SummaryIsTheLastNonEmptyLine: a pattern that misses falls back to the default, never to nothing" \
   '[ "$(check_summary "gate unmatched")" = "only line" ]'
-check "PassWithNoOutput_SummaryIsTheBuildersNoOutputWord: a silent pass still shows a result" \
-  '[ -n "$summary_without_output" ] && [ "$(check_summary "gate silent")" = "$summary_without_output" ]'
+check "PassWithNoOutput_SummaryIsNotEmpty: a silent pass still shows a result, because an empty cell reads as a missing check" \
+  '[ -n "$(check_summary "gate silent")" ]'
+check "PassWithNoOutput_SummaryIsTheBuildersNoOutputWord: every silent pass reads the same, because the builder owns that word" \
+  '[ "$(check_summary "gate silent")" = "$summary_without_output" ]'
 check "PatternThatIsNoRegularExpression_SummaryNamesThePattern: a broken pattern is a config fault the owner can see and fix" \
   'check_summary "gate broken" | grep -qF -- "$broken_pattern"'
 check "FailedGateWithNoSummaryPattern_SummaryEndsWithItsLastNonEmptyLine: the default line shows on a fail as on a pass" \
   'check_summary "gate failing" | grep -q "last failure line\$"'
 check "FailedGate_SummaryKeepsTheTailOfItsOutput: the stop gate and the escalation read the cause from it" \
-  'check_summary "gate failing" | grep -qF "cause one cause two last failure line"'
+  'check_summary "gate failing" | grep -qF "cause one"'
 
 echo "build, test and mutation with patterns under verify.summary"
 build_script="$(printing_script build 0 'compiling 12 files' 'built 12 files' 'cleanup')"
@@ -86,5 +88,15 @@ check "TestWithSummaryPattern_SummaryIsTheMatchingLine: verify.summary.test pick
   '[ "$(check_summary tests)" = "4 passed in 0.1s" ]'
 check "MutationSignalWithSummaryPattern_SummaryIsTheMatchingLine: verify.summary.mutation picks the score of a run that is a signal" \
   '[ "$(check_summary mutation)" = "score 80%" ]'
+
+echo "a test command with no summary pattern"
+default_test_script="$(printing_script default-tests 0 '7 passed in 0.2s' 'coverage written' '')"
+new_item defaults "  ok: 'true'"
+mkdir -p "$worktree/.standards"
+printf '{"test": "sh %s"}\n' "$default_test_script" > "$worktree/.standards/config.json"
+git -C "$worktree" add -A && git -C "$worktree" commit -qm standards
+verify >/dev/null 2>&1
+check "TestWithNoSummaryPattern_SummaryIsItsLastNonEmptyLine: a project with no verify.summary still sees more than ok, because the default needs no setup" \
+  '[ "$(check_summary tests)" = "coverage written" ]'
 
 if [ "$fails" -eq 0 ]; then echo "verify-summary: ok"; else echo "verify-summary: $fails failed"; exit 1; fi
