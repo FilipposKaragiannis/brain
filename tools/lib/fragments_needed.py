@@ -19,6 +19,7 @@ from typing import Optional, Sequence, Union
 
 _GIT_TIMEOUT_SECONDS = 120
 _GIT = "git"
+_HEAD = "HEAD"
 _UNAVAILABLE_BASE = "unavailable"
 _PLUGINS_FOLDER = "plugins"
 _PLUGIN_FOLDER = "plugins/%s/"
@@ -74,6 +75,7 @@ class _Comparison:
 class _Work:
     changes: "tuple[_Change, ...]"
     paths_at_head: "frozenset[str]"
+    paths_at_references: "frozenset[str]"
 
 
 def _glob_pattern(glob: str) -> "re.Pattern[str]":
@@ -134,8 +136,13 @@ def _fields(output: bytes) -> "list[str]":
 
 
 def _changes(output: bytes) -> "tuple[_Change, ...]":
-    fields = _fields(output)
-    return tuple(_Change(status, path) for status, path in zip(fields[0::2], fields[1::2]))
+    fields = iter(_fields(output))
+    return tuple(_Change(status, path) for status, path in zip(fields, fields))
+
+
+def _plugin_paths_at(commit: str) -> Optional["frozenset[str]"]:
+    tree = _git_output(("ls-tree", "-r", "-z", "--name-only", commit, "--", _PLUGINS_FOLDER))
+    return None if tree is None else frozenset(_fields(tree))
 
 
 def _work(commits: "tuple[str, ...]") -> Union[_Work, _Refusal]:
@@ -147,17 +154,21 @@ def _work(commits: "tuple[str, ...]") -> Union[_Work, _Refusal]:
             "-z",
             "--name-status",
             "--format=",
-            "HEAD",
+            _HEAD,
             "--not",
             *commits,
         )
     )
-    tree = _git_output(("ls-tree", "-r", "-z", "--name-only", "HEAD", "--", _PLUGINS_FOLDER))
-    if log is None or tree is None:
+    paths_at_head = _plugin_paths_at(_HEAD)
+    paths_at_each_reference = [_plugin_paths_at(commit) for commit in commits]
+    if log is None or paths_at_head is None or None in paths_at_each_reference:
         return _Refusal(
             ("fragments: git could not list the commits since %s" % ", ".join(commits),)
         )
-    return _Work(_changes(log), frozenset(_fields(tree)))
+    paths_at_references = frozenset(
+        path for paths in paths_at_each_reference if paths is not None for path in paths
+    )
+    return _Work(_changes(log), paths_at_head, paths_at_references)
 
 
 def _plugins(paths_at_head: "frozenset[str]") -> "list[str]":
@@ -168,8 +179,11 @@ def _plugins(paths_at_head: "frozenset[str]") -> "list[str]":
     )
 
 
-def _releases(fragment_changes: "list[_Change]") -> bool:
-    return any(change.status == _DELETED for change in fragment_changes)
+def _releases(fragment_changes: "list[_Change]", paths_at_references: "frozenset[str]") -> bool:
+    return any(
+        change.status == _DELETED and change.path in paths_at_references
+        for change in fragment_changes
+    )
 
 
 def _pays(fragment_changes: "list[_Change]", paths_at_head: "frozenset[str]") -> bool:
@@ -196,7 +210,11 @@ def _finding(plugin: str, work: _Work) -> Optional[_Finding]:
         change for change in plugin_changes if _matches(change.path, _FRAGMENT % plugin)
     ]
     shipped = _shipped(plugin_changes)
-    if not shipped or _releases(fragment_changes) or _pays(fragment_changes, work.paths_at_head):
+    if (
+        not shipped
+        or _releases(fragment_changes, work.paths_at_references)
+        or _pays(fragment_changes, work.paths_at_head)
+    ):
         return None
     return _Finding(plugin, shipped[0], len(shipped) - 1)
 

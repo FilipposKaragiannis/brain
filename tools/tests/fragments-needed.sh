@@ -168,6 +168,15 @@ repository_commit "$repository" "release: flow 1.1.0"
 expect 'ReleaseFoldCommit_Passes because the release folds the fragments a plugin change carried' \
   "$(outcome "$repository" main origin/main)" "exit $passes_exit, names: none"
 
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_fragment "$repository" flow flow-change
+repository_commit "$repository" "feat(flow): a change with its fragment"
+git -C "$repository" rm -q plugins/flow/changelog.d/flow-change.md
+repository_commit "$repository" "chore(flow): drop the fragment again"
+expect 'FragmentAddedThenDeleted_Fails because deleting a fragment the base never held folds no release' \
+  "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
+
 repository="$(repository_epic_merged_main)"
 expect 'DefaultBranchMergedIntoEpicBranch_Passes because commits from the default branch are not the epic work' \
   "$(outcome "$repository" "$(git -C "$repository" rev-parse epic-tip-before-merge)" origin/main)" "exit $passes_exit, names: none"
