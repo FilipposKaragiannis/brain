@@ -3,7 +3,7 @@
 Files: `.py`.
 
 - **PY-01** PEP 8. Ruff formats, sorts imports and lints.
-- **PY-02** Type annotations on every function signature. One type checker runs in lint, with today's findings recorded as a baseline.
+- **PY-02** Type annotations on every function signature. A type checker in lint, with a recorded baseline, is planned and does not run yet.
 - **PY-03** Records are frozen dataclasses or named tuples. A function does not mutate its arguments.
 - **PY-04** Outside data is parsed at the boundary into a dataclass. Inside, code uses the typed value, not a raw dict.
 - **PY-05** Resources use `with`. Large or lazy sequences use generators.
