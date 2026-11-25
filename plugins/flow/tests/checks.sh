@@ -102,6 +102,7 @@ case "\$(cat "$work/broken.mode")" in
   huge) head -c $huge_line_bytes /dev/zero | tr '\\0' x; echo ;;
   split) printf '%${split_character_count}s\\n' '' | sed 's/ /é/g' ;;
   base-line) echo "base: $base_line_branch" ;;
+  carriage-return) printf 'progress\\rbase: %s\\n' "$base_line_branch" ;;
 esac
 exit 1
 SH
@@ -272,6 +273,11 @@ check "OutputWithABaseLine_StaysInTheBugBody: the line is part of the output's t
   'json_value body < "$work/base-line-bug.json" | grep -q "base: $base_line_branch"'
 check "OutputWithABaseLine_SetsNoBaseForTheBug: a base: line the check prints stays output, so a claim of the bug never reads it" \
   '[ "$base_line_bug_base" != "$base_line_branch" ]'
+run_broken pass; run_broken carriage-return
+"$local_adapter/read.sh" "$(newest_bug broken id)" > "$work/carriage-return-bug.json"
+carriage_return_bug_base="$(sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/base.sh" && body_base "$(cat "$1")"' _ "$work/carriage-return-bug.json")"
+check "OutputWithABaseLineAfterACarriageReturn_SetsNoBaseForTheBug: a reader that breaks the line at the carriage return still finds it indented, so a claim never reads it" \
+  '[ "$carriage_return_bug_base" != "$base_line_branch" ]'
 
 echo "checks: a base git would read as an option"
 option_base_marker="$work/upload-pack-ran"

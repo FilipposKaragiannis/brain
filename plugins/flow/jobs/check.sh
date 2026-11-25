@@ -86,10 +86,11 @@ fence_for() {
     'BEGIN { longest = shortest } length($0) > longest { longest = length($0) } END { print longest + 1 }')"
   printf "%${fence_length}s" '' | tr ' ' '`'
 }
-# code_block <text>: the text as a fenced code block it cannot close, each line indented.
+# code_block <text>: the text as a fenced code block it cannot close, each line indented, a line a
+# lone carriage return starts too, as a reader that takes it for a line break sees it.
 code_block() {
   _block_fence="$(fence_for "$1")"
-  printf '%s\n%s\n%s\n' "$_block_fence" "$1" "$_block_fence" | sed "s/^/$block_indent/"
+  printf '%s\n%s\n%s\n' "$_block_fence" "$1" "$_block_fence" | tr '\r' '\n' | sed "s/^/$block_indent/"
 }
 # bug_body <exit code> <time>: the bug's body in the item shape, the output's tail in its notes.
 bug_body() {
