@@ -90,8 +90,8 @@ repository_commit "$repository" "feat(flow): a shipped change"
 expect 'ShippedFileWithoutFragment_Fails because a plugin change with no fragment never reaches a release' \
   "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
 outcome "$repository" main origin/main > /dev/null
-expect 'ShippedFileWithoutFragment_NamesThePluginAndTheFragmentPath because the author must see what to add' \
-  "$(grep -cF 'plugins/flow/changelog.d/' "$work/output")" 1
+expect 'ShippedFileWithoutFragment_NamesTheFragmentPath because the author must see what to add' \
+  "$(grep -qF 'plugins/flow/changelog.d/' "$work/output" && echo named || echo missing)" named
 
 repository="$(repository_seeded)"
 repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
@@ -176,6 +176,42 @@ git -C "$repository" rm -q plugins/flow/changelog.d/flow-change.md
 repository_commit "$repository" "chore(flow): drop the fragment again"
 expect 'FragmentAddedThenDeleted_Fails because deleting a fragment the base never held folds no release' \
   "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
+
+repository="$(repository_seeded)"
+git -C "$repository" tag base-before-fragment main
+git -C "$repository" switch -q main
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_fragment "$repository" flow flow-change
+repository_commit "$repository" "feat(flow): a change with its fragment"
+git -C "$repository" update-ref refs/remotes/origin/main main
+git -C "$repository" switch -q -C work main
+git -C "$repository" rm -q plugins/flow/changelog.d/flow-change.md
+repository_write "$repository" plugins/flow/CHANGELOG.md "# flow"
+repository_write "$repository" plugins/flow/plugin.source.json '{"name": "flow", "version": "1.1.0"}'
+repository_commit "$repository" "release: flow 1.1.0"
+expect 'ReleaseFoldOfFragmentOnlyTheDefaultBranchHeld_Passes because a fragment on the default branch is released even when the base predates it' \
+  "$(outcome "$repository" "$(git -C "$repository" rev-parse base-before-fragment)" origin/main)" "exit $passes_exit, names: none"
+
+repository="$(repository_seeded)"
+git -C "$repository" switch -q main
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_fragment "$repository" flow flow-change
+repository_commit "$repository" "feat(flow): a change with its fragment"
+git -C "$repository" update-ref refs/remotes/origin/main main
+git -C "$repository" switch -q -C work main
+git -C "$repository" rm -q plugins/flow/changelog.d/flow-change.md
+repository_write "$repository" plugins/flow/CHANGELOG.md "# flow"
+repository_write "$repository" plugins/flow/plugin.source.json '{"name": "flow", "version": "1.1.0"}'
+repository_write "$repository" plugins/standards/skills/use/SKILL.md "a shipped standards change"
+repository_commit "$repository" "release: flow 1.1.0 beside a standards change"
+expect 'ReleaseFoldBesideAnotherPluginChange_NamesTheOtherPlugin because a release excuses only the plugin whose fragments it folds' \
+  "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: standards"
+
+repository="$(repository_seeded)"
+repository_fragment "$repository" flow flow-note
+repository_commit "$repository" "docs(flow): a fragment on its own"
+expect 'OnlyFragmentAdded_Passes because a fragment alone is no shipped change that owes one' \
+  "$(outcome "$repository" main origin/main)" "exit $passes_exit, names: none"
 
 repository="$(repository_epic_merged_main)"
 expect 'DefaultBranchMergedIntoEpicBranch_Passes because commits from the default branch are not the epic work' \
