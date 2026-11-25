@@ -6,6 +6,7 @@ lib/state.sh is its one caller; see there.
   _state.py take    --state-dir D --flow-home H --item I --now T --machine M --host N --seed stdin|none
   _state.py get     --state-dir D --flow-home H --item I -- <key>
   _state.py show    --state-dir D --flow-home H --item I
+  _state.py status  --state-dir D --flow-home H --item I
   _state.py archive --state-dir D --flow-home H --item I --machine M
   _state.py join|list|row ...  the record laid onto items, and its run and gate rows: _state_reads.py
 
@@ -16,6 +17,8 @@ item's gate and run files. set then renders the views its pairs name (_state_vie
 file is the item's claim.json, or empty for none. A record that does not parse or carries a schema
 above this one is refused, exit 1. A refused pair writes nothing, exit 2.
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
+status prints the tracker status the record stands for (_state_schema.pushed_status), nothing with
+no record or no claim.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
 import fcntl
@@ -218,6 +221,14 @@ def command_show(options):
     return schema.DONE
 
 
+def command_status(options):
+    stored = read_record(item_paths(options).record)
+    status = schema.pushed_status(stored.record) if stored.record is not NO_RECORD else schema.NO_STATUS
+    if status:
+        print(status)
+    return stored.outcome
+
+
 def warn(message):
     sys.stderr.write("flow: %s\n" % message)
 
@@ -226,7 +237,8 @@ def commands(random_bytes):
     edge = reads.Edge(read_record, read_object, sys.stdin.read, warn)
     return MappingProxyType(dict({"set": lambda options: command_set(options, random_bytes),
                                   "take": lambda options: command_take(options, random_bytes),
-                                  "get": command_get, "show": command_show, "archive": command_archive},
+                                  "get": command_get, "show": command_show, "status": command_status,
+                                  "archive": command_archive},
                                  **reads.commands(edge)))
 
 

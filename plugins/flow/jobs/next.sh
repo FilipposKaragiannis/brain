@@ -41,6 +41,7 @@ set -u
 job=next
 . "$(dirname "$0")/_job.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
+. "$FLOW_PLUGIN/lib/answers.sh"
 host="${1:-}"; shift || true
 workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0; model="$job_opt_model"; effort="$job_opt_effort"; pick=""
 while [ $# -gt 0 ]; do
@@ -64,10 +65,22 @@ if [ -n "$pick" ]; then
   # shellcheck disable=SC2086
   pick_trackers "$pick" $trackers >/dev/null
 fi
+answer_gates_on_trackers() {
+  answer_gate_rows="$(record_list gates 2>/dev/null)"
+  for answer_adapter_folder in "$FLOW_PLUGIN"/adapters/*; do
+    [ -x "$answer_adapter_folder/answers.sh" ] || continue
+    answer_adapter="${answer_adapter_folder##*/}"
+    answer_gated_items="$(printf '%s\n' "$answer_gate_rows" | answerable_gates "$answer_adapter")"
+    [ -n "$answer_gated_items" ] || continue
+    set --
+    while read -r answer_item; do set -- "$@" "$answer_item"; done <<GATED
+$answer_gated_items
+GATED
+    adapter answers "$answer_adapter" "$@" 2>/dev/null </dev/null | while read -r answer_cleared_item; do job_say "$answer_cleared_item: gate answered on the tracker"; done
+  done
+}
 # plan: one host:count word per host whose workers this run starts; empty for one run in place.
 # A paused run never reads it, and a bad jobs.workers stops the run before the tracker is touched.
-# A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
-# so an item whose last missing field was just set shows as ready before a worker looks.
 # Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
 # can be picked in this same schedule. Then the sweep frees the worktrees whose PR the owner
 # merged (steward.sh sweep), so the pool has room before a worker claims.
@@ -80,15 +93,10 @@ if [ -z "$worker" ]; then
   if [ -z "$plan" ] && [ "$workers" -gt 1 ]; then plan="$host:$workers"; fi
   mkdir -p "$(job_log_dir)"
   if flow_lock answers; then
-    for a in $(adapters_configured); do
-      [ -x "$FLOW_PLUGIN/adapters/$a/answers.sh" ] && { adapter answers "$a" 2>/dev/null | while read -r id; do job_say "$id: gate answered on the tracker"; done; }
-    done
+    answer_gates_on_trackers
     flow_unlock
   fi
   job_sweep || true
-  for a in $(adapters_configured); do
-    [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
-  done
 fi
 if [ -n "$plan" ]; then
   [ -z "$item" ] || die "--workers runs the queue; drop the item, or run one worker for it" 2

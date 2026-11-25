@@ -1,15 +1,25 @@
 #!/bin/sh
-# jira answers: clear each gate the owner answered on the issue. An answer is a comment after the
-# latest "**Gate: <gate>**" comment whose first word is /answer, by the user the API token belongs
-# to or an account id or email in jira.answer_from; the rest of the comment is the answer
-# ("/answer" alone means as recommended). The merge gate is left alone: it clears when the PR is
-# merged. gate.sh comments "Gate cleared: ..." on the issue, the owner's receipt, since Jira's REST
-# API has no reactions. The item's id prints once it is cleared. Only issues inside jira.scope
-# (scope_filter in lib/flow.sh) are read.
+# jira answers <id>...: clear each gate the owner answered on the issue, for the ids given (the
+# job passes the gated items of the flow records). An answer is a comment after the latest
+# "**Gate: <gate>**" comment whose first word is /answer, by the user the API token belongs to or
+# an account id or email in jira.answer_from; the rest of the comment is the answer ("/answer"
+# alone means as recommended). An id whose record holds no gate, or the merge gate (it clears
+# when the PR is merged), or whose issue is Done or outside jira.scope (scope_filter in
+# lib/flow.sh), is left alone. gate.sh comments "Gate cleared: ..." on the issue, the owner's receipt, since Jira's
+# REST API has no reactions. The item's id prints once it is cleared. No ids prints nothing; an id
+# that is not a Jira item's exits 2.
+[ $# -gt 0 ] || exit 0
 . "$(dirname "$0")/_jira.sh"
-[ $# -eq 0 ] || die "usage: answers" 2
+. "$FLOW_PLUGIN/lib/answers.sh"
+answer_items_required jira "$@"
+gated_items="$(record_list gates 2>/dev/null | answerable_gates jira "$@")"
+[ -n "$gated_items" ] || exit 0
+set --
+while read -r gated_item; do set -- "$@" "$gated_item"; done <<GATED
+$gated_items
+GATED
 scope_filter jira
-found="$(jira answers)" || exit 1
+found="$(jira answers "$@")" || exit 1
 printf '%s\n' "$found" | while read -r line; do
   [ -n "$line" ] || continue
   id="$(json_get "$line" id)"; text="$(json_get "$line" text)"

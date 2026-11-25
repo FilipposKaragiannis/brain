@@ -31,6 +31,7 @@ COMMAND_OPTIONS = MappingProxyType({
     "take": ("state-dir", "flow-home", "item", "now", "machine", "host", "seed"),
     "get": ("state-dir", "flow-home", "item"),
     "show": ("state-dir", "flow-home", "item"),
+    "status": ("state-dir", "flow-home", "item"),
     "archive": ("state-dir", "flow-home", "item", "machine"),
     "join": ("state-dir", "flow-home", "tracker-state"),
     "list": ("state-dir", "flow-home", "tracker-state", "kind"),
@@ -40,7 +41,8 @@ OPTIONAL_OPTIONS = MappingProxyType({"list": (ITEM_OPTION,)})
 PAIRS_COMMAND = "set"
 KEY_COMMAND = "get"
 WORDS_USAGE = MappingProxyType({PAIRS_COMMAND: "-- <pair>...", KEY_COMMAND: "-- <key>"})
-WORD_COUNTS = MappingProxyType({KEY_COMMAND: 1, "take": 0, "show": 0, "archive": 0, "join": 0, "list": 0, "row": 0})
+WORD_COUNTS = MappingProxyType({KEY_COMMAND: 1, "take": 0, "show": 0, "status": 0, "archive": 0, "join": 0, "list": 0,
+                                 "row": 0})
 OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed", "tracker_state",
                  "kind")
 UNSET_OPTIONS = MappingProxyType(dict.fromkeys(OPTION_FIELDS, ""))

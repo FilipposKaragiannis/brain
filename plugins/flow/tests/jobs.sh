@@ -615,6 +615,24 @@ printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2
 FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null; FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null
 check "next job: notify.idle says it once, not on every run" [ "$(grep -c '	idle	' "$home2/events.log")" = 1 ]
 check "the idle notice is an event, not a gate" sh -c "[ -z \"\$(ls '$home2/gates' 2>/dev/null)\" ]"
+answers_home="$work/home-answers"; answers_gh="$work/gh-answers"; mkdir -p "$answers_home" "$answers_gh"
+record_gated_issue=60; record_gated_item="gh#$record_gated_issue"; record_gated_answer="the way the record holds"
+cp "$P/tests/_fake_gh.py" "$answers_gh/"
+printf '{"issues": [{"number": %s, "title": "Gated in the record", "body": "", "state": "OPEN", "labels": ["size:S"], "url": "https://gh/%s"}]}\n' "$record_gated_issue" "$record_gated_issue" > "$answers_gh/issues.json"
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\npick:\n  nothing:\n    labels: [no-such-label]\n' > "$answers_home/config.yaml"
+FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" FLOW_TRACKER_STATE=none "$P/scripts/gate.sh" raise "$record_gated_item" ambiguity "1. Which way?" >/dev/null 2>&1
+printf '/answer %s' "$record_gated_answer" | FAKE_GH_DIR="$answers_gh" gh issue comment "$record_gated_issue" -R acme/widgets --body-file - >/dev/null
+FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" "$P/jobs/next.sh" claude --pick nothing >/dev/null 2>&1
+check "GateInTheRecordWithNoLabel_IsAnsweredByTheNextJob: the next job clears a gate its record holds though the tracker shows none, because the gated ids come from the records" \
+  [ "$(FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" "$P/scripts/state.sh" get "$record_gated_item" answer)" = "$record_gated_answer" ]
+unsorted_home="$work/home-unsorted"; unsorted_gh="$work/gh-unsorted"; mkdir -p "$unsorted_home" "$unsorted_gh"
+unsorted_issue=61; unsorted_status=Backlog
+cp "$P/tests/_fake_gh.py" "$unsorted_gh/"
+printf '{"issues": [{"number": %s, "title": "Triaged, left in the backlog", "body": "", "state": "OPEN", "labels": ["size:S"], "url": "https://gh/%s", "project_item": "PI_%s", "project_status": "%s"}]}\n' "$unsorted_issue" "$unsorted_issue" "$unsorted_issue" "$unsorted_status" > "$unsorted_gh/issues.json"
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  project: 1\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\npick:\n  nothing:\n    labels: [no-such-label]\n' > "$unsorted_home/config.yaml"
+FLOW_HOME="$unsorted_home" FAKE_GH_DIR="$unsorted_gh" "$P/jobs/next.sh" claude --pick nothing >/dev/null 2>&1
+check "UnstartedCardOnTheBoard_StaysWhereTheOwnerPutIt: the next job leaves a ready issue's card in Backlog, because only the flow's own changes move a card" \
+  [ "$(FLOW_HOME="$unsorted_home" FAKE_GH_DIR="$unsorted_gh" "$P/adapters/github/read.sh" "gh#$unsorted_issue" | jget project.status)" = "$unsorted_status" ]
 check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'quiet: 0 new'"
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null
@@ -645,7 +663,7 @@ FLOW_HOME="$home2" "$J" pause retro >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "again" >/dev/null
 check "a paused job exits at once and spends nothing" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q '^.*paused:' && [ ! -s '$HOST_LOG' ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"result\":\"paused'"
 FLOW_HOME="$home2" "$J" pause next >/dev/null
-check "a paused next skips the tracker sync and every worker" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude --workers 2 | grep -q 'paused' && [ ! -f '$home2/log/next-1.log' ]"
+check "PausedNext_StartsNoWorker: a paused next exits before any worker starts, because a pause holds the whole schedule" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude --workers 2 | grep -q 'paused' && [ ! -f '$home2/log/next-1.log' ]"
 check "a paused next stops a worker started by hand too, recorded as that worker's paused run" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' codex --worker 3 | grep -q 'paused' && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"next-3\",\"host\":\"codex\".*\"result\":\"paused'"
 FLOW_HOME="$home2" "$P/jobs/next.sh" codex --worker codex > "$work/worker.out" 2>&1; code=$?
 check "a worker label that is not a number is refused, so no worker runs where pause and status cannot see it" sh -c "[ $code = 2 ] && grep -q -- '--worker takes a number from 1; to split the workers across hosts, set jobs.workers' '$work/worker.out' && [ ! -f '$home2/log/next-codex.log' ]"

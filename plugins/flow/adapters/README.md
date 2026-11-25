@@ -12,8 +12,8 @@ fake backend, and `tests/run.sh` runs it for every adapter.
 |---|---|---|
 | `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`, `jira:`) |
 | `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
-| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh`, `me.sh` | yes | the operations below, executable |
-| `sync.sh`, `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
+| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh`, `me.sh`, `set-status.sh`, `assign.sh` | yes | the operations below, executable |
+| `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
 
 Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for `die`, `cfg`,
 `flow_home` and the JSON helpers, and says what went wrong as one `flow: ...` line on stderr.
@@ -57,9 +57,10 @@ prefix.
 | `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, `state.pr_host` the host that ran it (claude or codex, else unset), and a comment names it |
 | `write-state` | `<id> key=value...` | nothing; each key reads back (below) |
 | `me` | | the names `me` stands for in a pick filter, a tracker scope and `ready.assignee`, one per line: GitHub the `gh` login; Jira the token user's account id, then `jira.email`; local the git `user.email`, then `user.name`, lower case, and nothing (exit 0) when git has neither. Exit 1 when the tracker cannot say |
-| `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round. A tracker whose board shows the flow state already (Jira's labels) has none |
+| `set-status` | `<id> <backlog\|ready\|in-progress\|needs-you\|in-review>` | `<id> <native name>` when it moved the item to the status, the tracker's own name for it; nothing when the item is there already or the tracker has no place for a status. Any other name exits 2. Local writes the item file's `workflow`, which its `category` reads |
+| `assign` | `<id> <me\|none>` | `<id> <name>` when it changed the item: `me` adds the first name `me` prints beside any other assignee, `none` takes that name off and leaves any other; nothing when the item already says so. Any other target exits 2, and so does an id another adapter owns; local keeps an `[a, b]` list a list |
 | `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
-| `answers` | | optional: clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts; never the merge gate) through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it, and a Slack gate message says to answer on the issue |
+| `answers` | `<id>...` | optional: takes the ids of the items at a gate and reads the comments of those only; clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts) through `scripts/gate.sh clear`, prints each cleared id. An id whose record holds no gate or the merge gate is left (`answerable_gates` in `lib/answers.sh`); no ids prints nothing, exit 0; an id not of the adapter's shape exits 2. `jobs/next.sh` runs it with the gated items of the flow records, grouped by adapter, and a Slack gate message says to answer on the issue |
 
 `kind` is `epic`, `task` or `bug`. `create` puts a value the tracker has no place for nowhere
 and says so on stderr (`--type` on a tracker without types);
@@ -124,6 +125,14 @@ No flow script calls `write-state` itself: each writes through `record_set` in `
 `tracker_state` is `labels`, sends the same pairs to `write-state` first and records them only
 when the tracker took them (ADR 0004). `link-pr` still writes `pr` and `pr_host` to the tracker;
 the sweep and the pr step copy both from the tracker into the record.
+
+No flow script calls `set-status` or `assign` but `lib/push.sh`. `tracker_push` sets the status the
+item's flow record stands for: `in-progress` while the flow works it, `needs-you` at a gate,
+`in-review` at the merge gate or once every step ran, nothing with no claim. It runs after a take
+that made the claim, a gate raised or cleared (but a merge gate cleared at done) and the last
+step, and records what landed in `pushed`. At that take `tracker_take` first runs `assign me` when
+the item has no assignee, and records `claim.assigned_at` when it assigned. A call that fails
+warns, leaves a `push failed` line in `events.log` and never fails the step.
 
 No flow script reads `state` from an adapter either. A script reads one item with `item_read`
 (`scripts/state.sh read`) and a list with `items_join` or `items_listed`, which join the item's
@@ -203,14 +212,24 @@ notes say `elsewhere` (with `machine`) first, then `gate`, then `status` (with `
 
 | Adapter | category |
 |---|---|
-| `github` | `done` when closed; `unknown` with no `github.project`, no card on it or a card with no Status; else the card's Status through `github.status.*`: `backlog` and `ready` are `todo`, `running` `in-progress`, `review` `review`, `gate` `blocked`, and any other Status `blocked` |
+| `github` | `done` when closed; without `github.project`, `in-progress` when the issue has the `github.claim_label` label; `unknown` with no `github.project`, no card on it or a card with no Status; else the card's Status through `github.status.*`: `backlog` and `ready` are `todo`, `running` `in-progress`, `review` `review`, `gate` `blocked`, and any other Status `blocked` |
 | `local` | `done` when closed; else the item file's `workflow`: `backlog` and `ready` are `todo`, `in-progress` `in-progress`, `in-review` `review`, `needs-you` and any other value `blocked`, none `unknown` |
 | `jira` | a status named in `jira.status.review` or `jira.status.blocked` (a name or a list, any case) is `review` or `blocked`; else the status category: `new` is `todo`, `indeterminate` `in-progress`, `done` `done`, another `unknown` |
 
 A GitHub board whose columns have other names than `Backlog`, `Ready`, `In progress`, `In review`
 and `Needs you` reads every carded item `blocked` and hides it: set `github.status.backlog`,
-`.ready`, `.running`, `.review` and `.gate` to the board's names. After `sync` moves an epic's card
-to In progress, the epic reads `in-progress` until the next `sync`.
+`.ready`, `.running`, `.review` and `.gate` to the board's names.
+
+GitHub's `set-status` moves the issue's card on `github.project` to the Status of
+`github.status.<key>`: `backlog` and `ready` by their own keys, `in-progress` by `running`,
+`needs-you` by `gate` and `in-review` by `review`. An issue with no card is added to the project
+first; a card already at the Status costs no write; a project with no such Status says so and
+exits 1. Without `github.project` there is no board, and `set-status` calls nothing, unless
+`github.claim_label` (opt-in, unset by default) names a label: `in-progress` puts that label on the
+issue, printing `<id> <label>`, any other status takes it off, printing `<id> <status>`, and the
+issue reads `in-progress` while it has it. `assign` adds or removes the `gh` login (`me.sh`) through
+`gh issue edit --add-assignee` or `--remove-assignee`, after it reads the issue's assignees, so a
+repeat call writes nothing.
 
 ### Jira
 
@@ -225,6 +244,7 @@ The `jira` adapter reaches Jira Cloud through its REST API v3 with `curl`. Name 
 | `jira.types.epic`, `.task`, `.bug` | `Epic`, `Task`, `Bug` | the issue type each kind is created as and read back from; any other type reads as a task |
 | `jira.fields.size`, `jira.fields.area` | unset | a custom field, by id (`customfield_10040`) or name, for the size and the area; unset, the size is a label and the area is not kept |
 | `jira.transitions.done` | the first transition named `Done` | the transition `close` takes |
+| `jira.transitions.backlog`, `.ready`, `.in-progress`, `.needs-you`, `.in-review` | `ready`: the first transition into the status category `new`; `in-progress`: the first into `indeterminate`; the others: none | the transition `set-status` takes to each status, by name |
 | `jira.limit` | `500` | the most issues `list` reads, inside `jira.scope` |
 | `jira.scope` | unset | the issues every search keeps (Tracker scope, below) |
 | `jira.answer_from` | the token's user | the account ids or emails whose `/answer` comments clear a gate |
@@ -238,17 +258,30 @@ whose link Jira refused, is a `Blocked by: <id>, <id>` line in the description, 
 carries no `open_blockers`.
 `link-pr` adds the PR as a remote link and a comment.
 
-`answers` reads the comments of each open issue at a gate (`GET .../issue/<KEY>/comment`) and
+`set-status` reads the issue's transitions (`GET .../issue/<KEY>/transitions`) and takes the one
+`jira.transitions.<name>` names, and exits 1 when the issue has none of that name. Jira lists only
+the transitions out of the issue's status, so before it moves the issue it stores that transition's
+target status in the issue's `flow-transition-target` property, a map of transition names to their
+target statuses that each move merges into, so a move Jira refuses forgets no other transition's
+target. An issue already in a transition's stored target counts as there: a repeat prints nothing
+and exits 0. A property that is not such a map holds no target. An issue moved there by hand before
+the flow ever took that transition has no stored target, so it still exits 1. Unset, `ready`
+and `in-progress` take the first transition into their status category, and an issue already in
+that category stays where it is; any other status, or one no transition leads to, is a no-op that
+`events.log` says once (`no transition for <name>: set jira.transitions.<name>`). It prints the
+status the issue moved to. `assign` sets the assignee (`PUT .../issue/<KEY>/assignee`) to the
+token's user and prints its account id; Jira holds one assignee, so `me` leaves an issue someone
+else holds with them, and `none` clears only the token's user.
+
+`answers` reads the comments of each issue it is given (`GET .../issue/<KEY>/comment`) and
 takes an `/answer` by the token's own user (`GET /rest/api/3/myself`) or by an account id or email
 in `jira.answer_from`; Jira's REST API has no reactions, so the `Gate cleared: ...` comment
 `gate.sh` writes is the receipt. `vocabulary` lists the project's issue types without sub-tasks
 (`GET /rest/api/3/project/<KEY>`) and, for a `jira.fields.area` field of options, the values a new
 task may pick (`GET /rest/api/3/issue/createmeta/<KEY>/issuetypes/<id>`); a free-text area field
-has none. There is no `sync`: GitHub's moves a card on a Projects board, a second place that does
-not follow the issue, while a Jira board's columns are the issues' own workflow statuses, whose
-transitions each project shapes (with screens and conditions) and which no flow key maps. The flow
-state shows on the card as the `step:` and `gate:` labels, which a board's quick filters and
-swimlanes can use, and `close` takes the item to Done.
+has none. A Jira board's columns are the issues' own workflow statuses, whose transitions each
+project shapes (with screens and conditions) and `jira.transitions.<name>` maps. The flow state shows on the card as the `step:` and `gate:` labels, which a board's quick
+filters and swimlanes can use, and `close` takes the item to Done.
 
 ## Where the two adapters differed
 
@@ -409,9 +442,9 @@ count in `read`), so a parent counts only its children inside the scope: with
 none, and can read ready. GitHub reads `subIssuesSummary`, which no search narrows, and local
 scans every item file, so both count every open child.
 
-`answers` reads the gates of the items inside the scope only (GitHub through its scoped list, Jira
-with the scope in its search). A gate on an item that has left the scope waits until the owner
-clears it with `scripts/gate.sh clear`.
+`answers` reads the gates of the items inside the scope only, of the ids it is given (GitHub
+through its scoped list, Jira with the scope in a search of each key). A gate on an item that has
+left the scope waits until the owner clears it with `scripts/gate.sh clear`.
 
 GitHub caps a search at 1000 results, so a scope that matches more is cut there, below a higher
 `github.limit`; narrow the scope rather than raise the limit.

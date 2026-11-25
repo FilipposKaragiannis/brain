@@ -112,24 +112,25 @@ check_all "graph: a GitHub list cut at github.limit stops the graph and says so"
 mv .flow/config.yaml.bak .flow/config.yaml
 check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "11" ]
 check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github/list.sh' --limit 3 2>'$work/limit.err' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')\" = 3 ] && grep -q 'github.limit 3' '$work/limit.err'"
-: > "$FAKE_GH_DIR/calls.log"
-"$P/adapters/github/sync.sh" > "$work/sync.out"
-status_of() { python3 -c "import json; print(next(i.get('project_status','') for i in json.load(open('$FAKE_GH_DIR/issues.json'))['issues'] if i['number']==$1))"; }
-check "gh sync: triaged and unblocked items are Ready" [ "$(status_of 30)$(status_of 32)" = "ReadyReady" ]
-check "gh sync: a missing field or an open blocker is Backlog" [ "$(status_of 33)$(status_of 34)$(status_of 35)" = "BacklogBacklogBacklog" ]
 printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
 python3 -I "$P/adapters/github/_mutate.py" field acme/widgets 36 Size M 2>"$work/gh-err"
 check_all "gh field write survives one 502" '[ "$(python3 -c "import json; print(next(i[\"fields\"].get(\"Size\",\"\") for i in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"] if i[\"number\"]==36))")" = "M" ] && grep -q "trying again" "$work/gh-err"'
 rm -f "$FAKE_GH_DIR/fail"
-check "gh sync: a started step is In progress, a gate Needs you, the merge gate In review" [ "$(status_of 36)|$(status_of 37)|$(status_of 38)" = "In progress|Needs you|In review" ]
-check "gh sync: a card already at its status costs no write" sh -c "! grep -q 'i=PI_31' '$FAKE_GH_DIR/calls.log' && ! grep -q '^gh#31' '$work/sync.out'"
-check "gh sync: a card missing from the project is added" sh -c "grep -q addProjectV2ItemById '$FAKE_GH_DIR/calls.log'"
-check "gh sync: an item with open sub-issues is In progress" [ "$(status_of 39)" = "In progress" ]
-check "gh sync twice moves nothing" [ -z "$("$P/adapters/github/sync.sh")" ]
 : > "$FAKE_GH_DIR/calls.log"
+# card_history <number>: every Status the fake gh's project has held on the issue's card, oldest first.
+card_history() { python3 -c 'import json,sys
+stored = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2]))
+print(json.dumps(stored.get("project_status_history", [])))' "$FAKE_GH_DIR/issues.json" "$1"; }
+history_before="$(card_history 33)"
 "$P/adapters/github/write-state.sh" 'gh#33' size=L gate=ambiguity
 check "gh write-state: size goes to the field, not a label" sh -c "[ \"\$('$P/adapters/github/read.sh' 'gh#33' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"size\"])')\" = L ] && ! grep -q 'size:L' '$FAKE_GH_DIR/calls.log'"
-check "gh write-state moves the card" [ "$(status_of 33)" = "Needs you" ]
+check "WriteStateOfAGate_LeavesTheCard: a gate label written to the tracker leaves the card's Status history as it was, because the card follows the flow record through set-status" [ "$(card_history 33)" = "$history_before" ]
+cp .flow/config.yaml "$work/config.mirrored" && printf 'tracker_state: labels\n' >> .flow/config.yaml
+sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "gh#34"' >/dev/null 2>&1
+history_before="$(card_history 34)"
+"$P/scripts/gate.sh" raise 'gh#34' ambiguity "Which way?" implement >/dev/null 2>&1
+check "GateRaiseWithLabelsAndProject_WritesTheCardOnce: a gate raised on a claimed item adds one Status to its card's history, because the push moves the card and the label write leaves it" [ "$(card_history 34 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" -eq "$(printf '%s' "$history_before" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)) + 1)')" ]
+mv "$work/config.mirrored" .flow/config.yaml
 chore="$("$P/scripts/new.sh" task "Tidy" --size M --type Chore --body "## Acceptance
 - x")"
 check "gh create: --type sets the type, the size goes to the field, no labels" sh -c "'$P/adapters/github/read.sh' '$chore' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"size\"],i[\"labels\"])==(\"Chore\",\"M\",[])'"
@@ -147,16 +148,20 @@ picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 end_run 'gh#32'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
-"$P/adapters/github/sync.sh" >/dev/null
 check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
 "$P/scripts/gate.sh" raise 'gh#37' ambiguity "1. Visual only?
    Recommended: yes." >/dev/null 2>&1
 printf '/answer 1. no, let it touch the ball' | FAKE_GH_USER=stranger gh issue comment 37 -R acme/widgets --body-file - >/dev/null
 printf 'thinking about it' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
-printf '/answer 1. no, keep it visual' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
-check "answers: an /answer from the owner after the gate clears it" [ "$("$P/adapters/github/answers.sh")" = "gh#37" ]
-mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
-mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
+owner_answer="1. no, keep it visual"
+printf '/answer %s' "$owner_answer" | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
+check "AnsweredGate_PrintsItsId: answers prints the id of the gate an owner's /answer cleared, because the job logs each id it prints" [ "$("$P/adapters/github/answers.sh" 'gh#37')" = "gh#37" ]
+check "AnsweredGate_ClearsTheGate: the record holds no gate after the owner's /answer, because the answer is what clears it" [ "$(record get 'gh#37' gate)" = none ]
+check "AnsweredGate_TakesTheOwnersWords: the record's answer is the owner's /answer, not a stranger's, because only an owner's answer counts" [ "$(record get 'gh#37' answer)" = "$owner_answer" ]
+check "AnsweredGate_NamesTheGateItAnswered: the record names the ambiguity gate as the one answered, because the brief says which gate the answer is to" [ "$(record get 'gh#37' answered)" = ambiguity ]
+check "AnsweredGate_KeepsTheQuestion: the record keeps the question the answer is to, because the next brief carries both" sh -c "'$P/scripts/state.sh' get 'gh#37' asked | grep -q 'Visual only?'"
+check "AnsweredComment_GetsAPlusOne: the owner's /answer comment gets a +1, because the reaction is the owner's receipt on GitHub" grep -q '"content": "+1"' "$FAKE_GH_DIR/issues.json"
+check "AnsweredGate_SecondPassClearsNothing: a second answers pass on the cleared id prints nothing, because its record holds no gate" [ -z "$("$P/adapters/github/answers.sh" 'gh#37')" ]
 picked="$("$P/scripts/next.sh" 'gh#37' --json)"; brief="$(printf '%s' "$picked" | jget brief)"
 check "the next brief carries the owner's answer and the question" sh -c "grep -q \"The owner's answer to the last gate (ambiguity)\" '$brief' && grep -q 'Answer: 1. no, keep it visual' '$brief' && grep -q 'Visual only?' '$brief'"
 end_run 'gh#37'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
@@ -185,6 +190,8 @@ cp "$FAKE_GH_DIR/issues.json" "$work/scope-issues.saved"; cp .flow/config.yaml "
 python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
 import json, sys
 path = sys.argv[1]; data = json.load(open(path))
+for taken_issue in data["issues"]:
+    taken_issue["assignees"] = []
 data["issues"] += [{"number": 50, "title": "Team A's, mine", "state": "OPEN", "labels": ["team-a"], "assignees": ["owner"]},
                    {"number": 51, "title": "Team B's", "state": "OPEN", "labels": ["team-b"]}]
 json.dump(data, open(path, "w"))
@@ -198,9 +205,9 @@ for scope_issue in 50 51; do
   "$P/scripts/gate.sh" raise "gh#$scope_issue" ambiguity "1. Which team?" >/dev/null 2>&1
   printf '/answer 1. this one' | gh issue comment "$scope_issue" -R acme/widgets --body-file - >/dev/null
 done
-scope_cleared="$("$P/adapters/github/answers.sh" 2>/dev/null)"
-mirror_on "answers finds the gate in the record, not on the tracker" check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
-mirror_on "answers finds the gate in the record, not on the tracker" check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.gate)" = "ambiguity" ]
+scope_cleared="$("$P/adapters/github/answers.sh" 'gh#50' 'gh#51' 2>/dev/null)"
+check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
+check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$(record get 'gh#51' gate)" = "ambiguity" ]
 gh_scope_config '    assignee: me'
 check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user, because me stands for the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
 scope_limit=1

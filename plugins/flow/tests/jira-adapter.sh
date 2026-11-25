@@ -76,15 +76,24 @@ jira_comment_as "$jira_gated" flow@acme.test "/answer before the gate"
 jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/dev/null 2>&1
 jira_comment_as "$jira_gated" stranger@acme.test "/answer the stranger's way"
 jira_comment_as "$jira_gated" flow@acme.test "thinking about it"
-jira_comment_as "$jira_gated" flow@acme.test "/answer the owner's way"
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
+jira_owner_answer="the owner's way"
+jira_comment_as "$jira_gated" flow@acme.test "/answer $jira_owner_answer"
+check_all "JiraAnsweredGate_PrintsItsId: answers prints the id of the gate the token user's /answer cleared, because the job logs each id it prints" '[ "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" = "$jira_gated" ]'
+check_all "JiraAnsweredGate_TakesTheOwnersWords: the record's answer is the owner's latest /answer after the gate, not a stranger's or an earlier one, because only an owner's answer to this gate counts" '[ "$(jira_run "$P/scripts/state.sh" get "$jira_gated" answer)" = "$jira_owner_answer" ]'
+check_all "JiraAnsweredGate_SecondPassClearsNothing: a second answers pass on the cleared id prints nothing, because its record holds no gate" '[ -z "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" ]'
 jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "2. And now?" >/dev/null 2>&1
 jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+check_all "JiraAnswerFromEmail_Counts: an /answer by an email in jira.answer_from clears the gate, because answer_from names who may answer" '[ "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" = "$jira_gated" ]'
+check_all "JiraBareAnswer_TakesTheRecommendations: /answer alone records the answer as recommended, because a bare answer accepts the recommendations" '[ "$(jira_run "$P/scripts/state.sh" get "$jira_gated" answer)" = "as recommended" ]'
+jira_closed="$(jira_run "$P/adapters/jira/create.sh" task "Closed with a gate")"
+jira_run "$P/scripts/gate.sh" raise "$jira_closed" ambiguity "1. Which way?" >/dev/null 2>&1
+jira_comment_as "$jira_closed" stranger@acme.test "/answer this way"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["issues"][sys.argv[2]]["fields"]["status"] = {"name": "Closed", "statusCategory": {"key": "done"}}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_closed#jira:}"
+check_all "JiraAnswerOnDoneIssue_PrintsNothing: answers prints no id for a Done issue the owner answered, because a closed issue's answer is not taken" '[ -z "$(jira_run "$P/adapters/jira/answers.sh" "$jira_closed")" ]'
+check_all "JiraAnswerOnDoneIssue_GateIsLeft: answers leaves the gate on a Done issue the owner answered, because clearing it would move the closed issue back to in progress" '[ "$(jira_run "$P/scripts/state.sh" get "$jira_closed" gate)" = ambiguity ]'
 echo "jira tracker scope (fake curl)"
 jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
 if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]
@@ -99,9 +108,9 @@ for gated in "$jsg_in" "$jsg_out"; do
   jira_run "$P/scripts/gate.sh" raise "$gated" ambiguity "1. Which way?" >/dev/null 2>&1
   jira_comment_as "$gated" flow@acme.test "/answer this way"
 done
-jira_run "$P/adapters/jira/answers.sh" >/dev/null 2>&1
-mirror_on "answers finds the gate in the record, not on the tracker" check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope, because answers reads the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
-mirror_on "answers finds the gate in the record, not on the tracker" check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_out" | jget state.gate)" = ambiguity ]
+jira_run "$P/adapters/jira/answers.sh" "$jsg_in" "$jsg_out" >/dev/null 2>&1
+check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope, because answers reads the scoped issues" [ "$(jira_run "$P/scripts/state.sh" get "$jsg_in" gate)" = none ]
+check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/scripts/state.sh" get "$jsg_out" gate)" = ambiguity ]
 jsp="$(jira_run "$P/adapters/jira/create.sh" epic "Scoped parent")"; jira_set "$jsp" labels team-a
 jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child inside" --parent "$jsp")" labels team-a
 jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child outside" --parent "$jsp")" labels team-b
@@ -152,6 +161,83 @@ jira_query_ids="$(jira_run "$P/adapters/jira/list.sh" --pick mine | python3 -c '
 check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match, because the scope and the pick compose" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
 check_all "JiraScopeQueryAndPickQuery_DropsScopeOnly: the list leaves out an issue only the scope matches, because the pick applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_scope "*) false ;; *) true ;; esac'
 check_all "JiraScopeQueryAndPickQuery_DropsPickOnly: the list leaves out an issue only the pick matches, because the scope applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_pick "*) false ;; *) true ;; esac'
+echo "jira set-status and assign (fake curl)"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+d["transitions"] = [{"id": "21", "name": "In Progress", "category": "indeterminate"}, {"id": "12", "name": "Selected for Development", "category": "new"},
+  {"id": "11", "name": "To Do", "category": "new"}, {"id": "61", "name": "Code Review", "category": "indeterminate"}, {"id": "31", "name": "Done", "category": "done"}]
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+jira_config https://acme.atlassian.net
+printf '    in-review: Code Review\n    backlog: Parked\n' >> .flow/config.yaml
+jira_status_name() { jira_db "d[\"issues\"][\"${1#jira:}\"][\"fields\"][\"status\"][\"name\"]"; }
+jira_named="$(jira_run "$P/adapters/jira/create.sh" task "Moved by a named transition")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_named" in-review >/dev/null 2>&1
+check "JiraSetStatusNamedTransition_TakesIt: set-status in-review lands on the status jira.transitions.in-review names, because a named transition wins over the category" [ "$(jira_status_name "$jira_named")" = "Code Review" ]
+check "JiraSetStatusNamedTransitionMissing_ExitsOne: set-status backlog exits 1 when the issue has no transition jira.transitions.backlog names, because the setting points nowhere" [ "$(jira_run "$P/adapters/jira/set-status.sh" "$jira_named" backlog >/dev/null 2>&1; echo $?)" = 1 ]
+jira_fallback="$(jira_run "$P/adapters/jira/create.sh" task "Moved by its category")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_fallback" in-progress >/dev/null 2>&1
+check "JiraSetStatusInProgressUnset_TakesFirstIndeterminate: set-status in-progress with no jira.transitions.in-progress takes the first transition into indeterminate, because that category is in progress" [ "$(jira_status_name "$jira_fallback")" = "In Progress" ]
+jira_run "$P/adapters/jira/set-status.sh" "$jira_fallback" ready >/dev/null 2>&1
+check "JiraSetStatusReadyUnset_TakesFirstNew: set-status ready with no jira.transitions.ready takes the first transition into new, because that category is to do" [ "$(jira_status_name "$jira_fallback")" = "Selected for Development" ]
+jira_unplaced="$(jira_run "$P/adapters/jira/create.sh" task "No place for needs-you")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_unplaced" needs-you >/dev/null 2>&1
+jira_run "$P/adapters/jira/set-status.sh" "$jira_unplaced" needs-you >/dev/null 2>&1; jira_unplaced_code=$?
+check "JiraSetStatusNoTransition_ExitsZero: set-status needs-you with no jira.transitions.needs-you exits 0, because a status the tracker has no place for is no failure" [ "$jira_unplaced_code" = 0 ]
+check "JiraSetStatusNoTransition_SaidOnce: two set-status needs-you with no transition leave one events.log line, because the owner needs telling once, not on every gate" [ "$(grep -c "no transition for needs-you: set jira.transitions.needs-you" "$(flow_home)/events.log")" = 1 ]
+echo "jira set-status through a transition named apart from the status it leads to"
+jira_review_transition="Submit for review"; jira_review_status="In Review"
+python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
+jira_data["transitions"].append({"id": "71", "name": sys.argv[2], "to": sys.argv[3], "category": "indeterminate", "from": ["To Do", "In Progress"]})
+json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "$jira_review_transition" "$jira_review_status"
+jira_config https://acme.atlassian.net
+printf '    in-review: %s\n' "$jira_review_transition" >> .flow/config.yaml
+jira_submitted="$(jira_run "$P/adapters/jira/create.sh" task "Submitted for review")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_submitted" in-review >/dev/null 2>&1
+check "JiraSetStatusTransitionNamedApart_LandsOnItsTarget: set-status in-review lands on the status the jira.transitions.in-review transition leads to, because a transition's name need not be its status's" [ "$(jira_status_name "$jira_submitted")" = "$jira_review_status" ]
+jira_run "$P/adapters/jira/set-status.sh" "$jira_submitted" in-review > "$work/jira/resubmitted.out" 2>/dev/null; jira_resubmitted_code=$?
+check "JiraSetStatusTransitionNamedApartRepeated_ExitsZero: a second set-status in-review exits 0 though Jira lists no transition of that name out of the status it led to, because the issue is there already" [ "$jira_resubmitted_code" = 0 ]
+check "JiraSetStatusTransitionNamedApartRepeated_PrintsNothing: a second set-status in-review prints nothing, because the issue did not move" [ ! -s "$work/jira/resubmitted.out" ]
+check "JiraSetStatusTransitionNamedApartRepeated_StaysInItsStatus: a second set-status in-review leaves the issue in the status the transition led to, because a push repeats on every step" [ "$(jira_status_name "$jira_submitted")" = "$jira_review_status" ]
+echo "jira set-status after Jira refused a named move"
+jira_start_transition="Start"; jira_ask_transition="Ask the owner"
+python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
+jira_data["transitions"] += [{"id": "81", "name": sys.argv[2], "to": "In Progress", "category": "indeterminate", "from": ["To Do"]},
+  {"id": "82", "name": sys.argv[3], "to": "Waiting", "category": "indeterminate", "from": ["In Progress"], "refused": "Fill in the Reason field."}]
+json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "$jira_start_transition" "$jira_ask_transition"
+jira_config https://acme.atlassian.net
+printf '    in-progress: %s\n    needs-you: %s\n' "$jira_start_transition" "$jira_ask_transition" >> .flow/config.yaml
+jira_started="$(jira_run "$P/adapters/jira/create.sh" task "Started, then refused a move")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_started" in-progress >/dev/null 2>&1
+jira_run "$P/adapters/jira/set-status.sh" "$jira_started" needs-you >/dev/null 2>&1; jira_refused_code=$?
+check "JiraSetStatusRefusedMove_ExitsOne: set-status needs-you exits 1 when Jira refuses the named transition's move, because the issue did not move" [ "$jira_refused_code" = 1 ]
+check "JiraSetStatusRefusedMove_LeavesTheIssueWhereItWas: set-status needs-you leaves the issue in the status the earlier named transition led to when Jira refuses the move, because a refused POST changes nothing on the tracker" [ "$(jira_status_name "$jira_started")" = "In Progress" ]
+jira_run "$P/adapters/jira/set-status.sh" "$jira_started" in-progress > "$work/jira/restarted.out" 2>/dev/null; jira_restarted_code=$?
+check "JiraSetStatusRepeatAfterRefusedMove_ExitsZero: set-status in-progress again exits 0 after Jira refused another named move, because a refused move leaves the issue where the earlier transition took it" [ "$jira_restarted_code" = 0 ]
+check "JiraSetStatusRepeatAfterRefusedMove_PrintsNothing: set-status in-progress again prints nothing after Jira refused another named move, because the issue did not move" [ ! -s "$work/jira/restarted.out" ]
+jira_malformed="$(jira_run "$P/adapters/jira/create.sh" task "Unstarted, with a malformed stored target")"
+python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
+jira_data["issues"][sys.argv[2]]["properties"]["flow-transition-target"] = "not a map"
+json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_malformed#jira:}"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_malformed" in-progress >/dev/null 2>&1; jira_malformed_code=$?
+check "JiraSetStatusOverMalformedStoredTarget_ExitsZero: set-status in-progress exits 0 on an issue whose stored target is not a map, because a value on the tracker is outside data and reads as none stored" [ "$jira_malformed_code" = 0 ]
+check "JiraSetStatusOverMalformedStoredTarget_TakesTheNamedTransition: set-status in-progress moves the issue to the named transition's target though its stored target is not a map, because none stored leaves the move to the transition list" [ "$(jira_status_name "$jira_malformed")" = "In Progress" ]
+echo "jira set-status through a transition named as the current status"
+jira_config https://acme.atlassian.net
+printf '    in-progress: Ready\n' >> .flow/config.yaml
+jira_ready="$(jira_run "$P/adapters/jira/create.sh" task "Ready, with a Ready transition out of it")"
+python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
+jira_data["transitions"].append({"id": "91", "name": "Ready", "to": "Doing", "category": "indeterminate", "from": ["Ready"]})
+jira_data["issues"][sys.argv[2]]["fields"]["status"] = {"name": "Ready", "statusCategory": {"key": "new"}}
+json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_ready#jira:}"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_ready" in-progress >/dev/null 2>&1
+check "JiraSetStatusTransitionNamedAsCurrentStatus_LandsOnItsTarget: set-status in-progress moves an issue in Ready to Doing when jira.transitions.in-progress names a listed Ready transition into Doing, because the setting names a transition, not a status" [ "$(jira_status_name "$jira_ready")" = Doing ]
+jira_assigned="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to me")"
+jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" me >/dev/null 2>&1
+check "JiraAssignMe_AssigneesHoldTokenUser: after assign me the issue's assignees hold the token's user, because me is the account the token belongs to" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = '["flow@acme.test"]' ]
+jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" none >/dev/null 2>&1
+check "JiraAssignNone_ClearsAssignee: after assign none the issue has no assignee, because the token's user held it" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = "[]" ]
+jira_theirs="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to someone else")"; jira_set "$jira_theirs" assignee someone@acme.test
+jira_run "$P/adapters/jira/assign.sh" "$jira_theirs" me >/dev/null 2>&1
+check "JiraAssignMeOnOthersIssue_KeepsTheirs: assign me leaves an issue someone else holds with them, because Jira holds one assignee and the flow never takes it" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_theirs" | jget assignees)" = '["someone@acme.test"]' ]
 cp "$work/config.gh" .flow/config.yaml
 
 [ "$fails" -eq 0 ] && { echo "jira-adapter: ok"; exit 0; }

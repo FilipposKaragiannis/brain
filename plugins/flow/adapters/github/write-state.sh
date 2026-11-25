@@ -1,7 +1,7 @@
 #!/bin/sh
 # github write-state <id> key=value...: labels for step, gate, worktree (wt:), profile (flow:)
 # and size (the github.fields.size issue field instead, when set); the full state in the marked
-# comment; then the project card's Status. Lists are comma-separated.
+# comment. Lists are comma-separated.
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: write-state <id> key=value..." 2
 repo="$(gh_repo)"; n="$(issue_number "$1")" || exit 2; shift
@@ -86,5 +86,4 @@ if [ -n "$GH_SIZE_FIELD" ]; then
       || echo "flow: could not set the size of gh#$n" >&2 ;; esac
   done
 fi
-[ -n "$GH_PROJECT" ] && { "$FLOW_PLUGIN/adapters/github/sync.sh" "gh#$n" >/dev/null || echo "flow: could not move the project card of gh#$n" >&2; }
 exit 0

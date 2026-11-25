@@ -27,7 +27,9 @@
 #                                           gate stands, with a warning that the tracker lags; a
 #                                           record that cannot take it raises nothing, exit 1.
 #                                           A comment or notification that fails after the write
-#                                           is said on stderr and the gate stands
+#                                           is said on stderr and the gate stands. Then the
+#                                           tracker's status follows (lib/push.sh tracker_push):
+#                                           in-review for merge, needs-you for the others
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
 #                                           children are all closed, the plan step runs again;
@@ -54,6 +56,9 @@
 #                                           when the gate has no condition, exit 1 when it waits on
 #                                           another one; "already cleared", exit 0, when its record
 #                                           is gone
+#                                           Then the tracker's status follows (lib/push.sh
+#                                           tracker_push), after the lock, but for a merge gate
+#                                           cleared at done
 #                                           Each clear of an item waits for another one to finish
 #                                           (exit 75 after 10s) and reads the record after it
 #   gate.sh clear <claude|codex>            start sessions on a host a spend limit, an auth
@@ -133,6 +138,10 @@ gate_drop() {
   esac
 }
 
+# merge_cleared_at_done: the merge gate went and the item stays done, as when the sweep clears it on
+# a merged PR: its card is in review already and the item is closed or closing, so no push moves it.
+merge_cleared_at_done() { [ "$gate" = merge ] && [ "$(record_get "$item" step)" = "done" ]; }
+
 # gate_unanswered <item> <gate> <why> <question>: the question nobody answered, quoted on the item
 # (headed Unanswered, not Gate, so no answers pass reads it as a gate) and on stdout, for a
 # follow-up. A question with no record points at the gate's own comment.
@@ -180,7 +189,8 @@ $footer" >/dev/null || echo "flow: the $gate gate on $item is recorded, but its 
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
       "answered_by=$answered_by" "$condition_field" "footer=$footer" \
-      || echo "flow: the $gate gate on $item is recorded, but notify.sh failed" >&2 ;;
+      || echo "flow: the $gate gate on $item is recorded, but notify.sh failed" >&2
+    tracker_push "$item" ;;
   clear)
     [ $# -ge 2 ] || die "$CLEAR_USAGE" 2
     item="$2"; mode=answer; option_number=""
@@ -221,7 +231,9 @@ $footer" >/dev/null || echo "flow: the $gate gate on $item is recorded, but its 
       met) clear_met "$given" ;;
       option) clear_option "$option_number" "$option_answer" ;;
       *) clear_answer "$given" ;;
-    esac ;;
+    esac
+    flow_unlock
+    merge_cleared_at_done || tracker_push "$item" ;;
   list)
     case "$#:${2:-}" in
       1:) ;;

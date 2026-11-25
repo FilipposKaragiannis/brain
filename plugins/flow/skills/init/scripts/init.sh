@@ -158,6 +158,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   area: Area                # the area intake files a note under, from its section"
         echo "  # scope:                      # every list keeps only these: assignee, status, labels, kinds, or query alone"
         echo "  # project: 1                  # the project whose Status follows the flow state"
+        echo "  # claim_label: in-progress    # without a project, the label an item in progress carries (off)"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
         echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
@@ -174,6 +175,8 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#     area: Area"
       echo "#   transitions:"
       echo "#     done: Done                # the transition close takes"
+      echo "#     in-review: Code Review    # the transition set-status takes; also backlog, ready, in-progress, needs-you"
+      echo "#                               # unset: ready and in-progress take the first into their category, the rest stay put"
       echo "#   limit: 500                  # the most issues one list reads"
       echo "#   scope:                      # every search keeps only these: assignee, status, labels, kinds, or query alone"
       echo "#   answer_from: [you@example.com]  # whose /answer comments clear a gate (default: the token's user)"

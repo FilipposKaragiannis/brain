@@ -11,6 +11,7 @@ export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/json.sh"
 . "$FLOW_PLUGIN/lib/stamp.sh"
 . "$FLOW_PLUGIN/lib/state.sh"
+. "$FLOW_PLUGIN/lib/push.sh"
 . "$FLOW_PLUGIN/lib/ready.sh"
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file

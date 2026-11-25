@@ -15,7 +15,8 @@
 #   record_show <item>          the record as JSON; exit 1 with none
 #   record_set <item> <pair>... key=value for the twenty-one keys (adapters/README.md; a dash reads as
 #                               an underscore), or the record pairs run:=<object|null>,
-#                               run.step=<text> and gate:=<object>, never both kinds in one write.
+#                               run.step=<text>, gate:=<object>, pushed:=<object|null> and
+#                               claim.assigned_at=<text>, never both kinds in one write.
 #                               With tracker_state labels the state pairs go to the tracker first
 #                               (adapter write-state) and are recorded only when it took them.
 #                               The run file, the gate file and the claim's step follow a write
@@ -36,7 +37,8 @@
 #   item_claim_file <item>      the claim.json of the item's pool worktree; nothing when it holds
 #                               none
 #   take_item <item>            this machine holds the item: claim.machine, claim.host and
-#                               claim.claimed_at, when the claim names no machine yet
+#                               claim.claimed_at, when the claim names no machine yet; then
+#                               tracker_take (lib/push.sh) assigns and pushes on a claim it made
 #   record_archive <item>       the record to closed/; nothing with no record; exit 1 when
 #                               another machine holds it
 #   item_read <item>            the adapter's read of the item with its record joined on as state
@@ -140,7 +142,10 @@ take_item() (
   [ $# -eq 1 ] || die "usage: take_item <item>" "$EXIT_USAGE"
   item_shape_required "$1"
   flow_record_dir="$(record_ensured_dir)" || exit "$EXIT_USAGE"
-  record_seeded take "$1" "$flow_record_dir" "$(flow_home)"
+  flow_record_claim=held
+  [ -n "$(record_get "$1" claim.machine)" ] || flow_record_claim=new
+  record_seeded take "$1" "$flow_record_dir" "$(flow_home)" || exit
+  tracker_take "$1" "$flow_record_claim"
 )
 
 record_archive() (

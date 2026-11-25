@@ -27,23 +27,18 @@ assignee_login() {
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
 # name org issue fields (each replaces its size: or priority: labels), github.project numbers the
-# project whose Status the adapter keeps in step and reads an item's category from, through the
-# Status names github.status.<key> renames. The readiness rules are every tracker's (ready_rules in
-# lib/flow.sh); list and read take them before they build items.
+# project whose Status set-status moves and an item's category is read from, through the Status
+# names github.status.<key> renames. The readiness rules are every tracker's (ready_rules in
+# lib/flow.sh); list and read take them before they build items. Without a project,
+# github.claim_label names the one label set-status puts on an item in progress and takes off at
+# any other status.
 GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
-GH_PROJECT="$(cfg github.project)"; GH_PRIORITY_LABEL="priority:"
+GH_PROJECT="$(cfg github.project)"; GH_PRIORITY_LABEL="priority:"; GH_CLAIM_LABEL="$(cfg github.claim_label)"
 GH_STATUS_BACKLOG="$(cfg_or github.status.backlog Backlog)"; GH_STATUS_READY="$(cfg_or github.status.ready Ready)"
 GH_STATUS_GATE="$(cfg_or github.status.gate "Needs you")"; GH_STATUS_RUNNING="$(cfg_or github.status.running "In progress")"
 GH_STATUS_REVIEW="$(cfg_or github.status.review "In review")"
-export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL \
+export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL GH_CLAIM_LABEL \
   GH_STATUS_BACKLOG GH_STATUS_READY GH_STATUS_GATE GH_STATUS_RUNNING GH_STATUS_REVIEW
-
-# project_sync [item JSON lines on stdin]: move the project cards to the Status the flow state
-# implies. A no-op without github.project.
-project_sync() {
-  [ -n "$GH_PROJECT" ] || { cat >/dev/null; return 0; }
-  cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" sync "$(gh_repo)" "$GH_PROJECT"
-}
 
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: as
 # _query.py's kind_of reads it, the issue type Epic or Bug, else the label epic or bug, else task.
@@ -53,9 +48,10 @@ project_sync() {
 # it, empty with the field set. rank orders ready items (lower first) by READY_PRIORITY_ORDER;
 # needs lists the READY_NEEDS fields an unstarted item still lacks, the same rule as the local
 # adapter's _item.py (change both); open_children counts its open native sub-issues. assignees are
-# the logins as GitHub gives them. category: done when closed, unknown with no github.project card
-# or a card with no Status, else the card's Status read back through the GH_STATUS_* names, and
-# blocked for a Status outside them.
+# the logins as GitHub gives them. category: done when closed; without github.project, in-progress
+# when the issue has the github.claim_label label; unknown with no github.project card or a card
+# with no Status, else the card's Status read back through the GH_STATUS_* names, and blocked for a
+# Status outside them.
 issue_to_item() {
   cached_python3 -I -c '
 import json, os, re, sys
@@ -107,16 +103,21 @@ item = next((p for p in raw.get("project_items", []) if project and str(p["proje
 STATUS_CATEGORIES = {os.environ["GH_STATUS_BACKLOG"]: "todo", os.environ["GH_STATUS_READY"]: "todo",
                      os.environ["GH_STATUS_RUNNING"]: "in-progress", os.environ["GH_STATUS_REVIEW"]: "review",
                      os.environ["GH_STATUS_GATE"]: "blocked"}
-def category_of(is_open: bool, card: dict) -> str:
+claim_label = os.environ.get("GH_CLAIM_LABEL", "")
+def carries_claim_label(labels: list) -> bool:
+    return bool(claim_label) and not project and claim_label in labels
+def category_of(is_open: bool, card: dict, labels: list) -> str:
     if not is_open:
         return "done"
+    if carries_claim_label(labels):
+        return "in-progress"
     if not card.get("status"):
         return "unknown"
     return STATUS_CATEGORIES.get(card["status"], "blocked")
 print(json.dumps({
     "id": "gh#%d" % raw["number"], "kind": kind, "type": raw.get("type") or "", "title": raw.get("title", ""), "size": size,
     "priority": priority, "priority_labels": priority_labels, "area": area, "rank": rank, "needs": needs,
-    "status": "open" if is_open else "closed", "category": category_of(is_open, item or {}), "assignees": raw.get("assignees", []),
+    "status": "open" if is_open else "closed", "category": category_of(is_open, item or {}, labels), "assignees": raw.get("assignees", []),
     "labels": labels, "blocked_by": ["gh#%d" % b["number"] for b in raw.get("blocked_by", [])],
     "open_blockers": ["gh#%d" % b["number"] for b in raw.get("blocked_by", []) if b.get("state", "open") != "closed"],
     "open_children": raw.get("open_children", 0), "parent": parent, "state": state, "url": raw.get("url", ""), "body": raw.get("body", ""),

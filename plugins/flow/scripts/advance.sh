@@ -21,6 +21,8 @@
 # comments, the plan's hold line in events.log; and after a stop between a write and the run's
 # removal, the gate comment and notification, and a failed step's attempt. The state, the gate
 # and its record stay one.
+# The last step done moves the tracker's status to in-review (lib/push.sh tracker_push); a push that
+# fails warns and leaves the exit as it was.
 # Exit codes: 0 next step ready · 1 a state write failed (the touches, the plan's changes or hold,
 # the gate, an attempt, or the next step with its size) · 4 waiting at a gate, or split and
 # waiting on its children · 6 done.
@@ -357,6 +359,7 @@ if [ -z "$following" ]; then
   record_set "$item" "step=done" "profile=$profile" "attempts=0" ${resized:+"$resized"} "last_event=$(now_iso) $step done; every step ran" >/dev/null \
     || state_not_recorded "step done"
   adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Every step of $profile ran." >/dev/null
+  tracker_push "$item"
   finish_run
   report 6 "done" ""
 fi
