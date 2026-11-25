@@ -9,14 +9,18 @@ cmd="$(payload_command "$payload")"
 [ -n "$cmd" ] || exit 0
 seg="$(git_segment commit "$cmd")"
 [ -n "$seg" ] || exit 0
+use_working_git
 cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
-passed_seen check-format && exit 0   # the agent hook already passed this index
+index="$(commit_index "$seg" "$cmd")"
+discard_index_at_exit "$index"
+key="$(commit_key "$index")"
+passed_seen check-format "$key" && exit 0
 hooks_folder="$(cd "$(dirname "$0")" && pwd)"
 names="$(mktemp)" || exit 0
-trap 'rm -f "$names"' EXIT
-changed_files_null_byte_separated "$seg" > "$names"
+trap 'rm -f "$names"; [ -z "$index" ] || rm -rf "$(dirname "$index")"' EXIT
+commit_files_null_byte_separated "$index" "$seg" > "$names"
 [ -s "$names" ] || exit 0
 failed=""
 count="$(json_length "$config" "languages")"
@@ -38,5 +42,5 @@ $(printf '%s\n' "$output" | tail -40 | sed 's/^/    /')
   done
   i=$((i + 1))
 done
-if [ -z "$failed" ]; then passed_mark check-format "$seg"; exit 0; fi
+if [ -z "$failed" ]; then passed_mark check-format "$index" "$key"; exit 0; fi
 block "the formatter check failed" "$failed  L-03: run the formatter on the files above, re-stage, then commit again."
