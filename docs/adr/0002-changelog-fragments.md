@@ -27,6 +27,10 @@ merges.
   `release/next`, and opens or refreshes the release PR, titled
   `release: <plugin> <version>, ...` with the new CHANGELOG sections as its body. Nothing pushes
   to main: main's ruleset wants a PR and signed commits. The owner merges the release PR.
+- CI and verify fail a PR whose own commits change a file a plugin ships with no fragment for that
+  plugin (`tools/lib/fragments_needed.py`). Tests, evals and meta's generated `map.html` are
+  exempt; a change that deletes a plugin's fragments already on its base or the default branch
+  is its release and owes none; commits that came from the default branch do not count. The format and the fold stay as they are.
 - Rejected: raising the version at merge time (a bot would push to main, which the ruleset
   forbids); an Unreleased section in `CHANGELOG.md` (every PR edits the same lines, so they
   conflict as before); a version taken from the history at install time (the hosts read the
