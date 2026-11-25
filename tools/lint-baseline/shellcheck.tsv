@@ -54,7 +54,7 @@ plugins/flow/tests/base-claim.sh	SC2154	13
 plugins/flow/tests/base-readers.sh	SC2034	2
 plugins/flow/tests/base-readers.sh	SC2154	7
 plugins/flow/tests/blockers.sh	SC2034	3
-plugins/flow/tests/branch-name.sh	SC2034	13
+plugins/flow/tests/branch-name.sh	SC2034	15
 plugins/flow/tests/branch-name.sh	SC2154	6
 plugins/flow/tests/core-board.sh	SC1010	1
 plugins/flow/tests/core-board.sh	SC2034	4
