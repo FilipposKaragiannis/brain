@@ -77,14 +77,14 @@ jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/de
 jira_comment_as "$jira_gated" stranger@acme.test "/answer the stranger's way"
 jira_comment_as "$jira_gated" flow@acme.test "thinking about it"
 jira_comment_as "$jira_gated" flow@acme.test "/answer the owner's way"
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" = "$jira_gated" ]'
 mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" ]'
 jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "2. And now?" >/dev/null 2>&1
 jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
-mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
 echo "jira tracker scope (fake curl)"
 jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
 if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]
@@ -99,7 +99,7 @@ for gated in "$jsg_in" "$jsg_out"; do
   jira_run "$P/scripts/gate.sh" raise "$gated" ambiguity "1. Which way?" >/dev/null 2>&1
   jira_comment_as "$gated" flow@acme.test "/answer this way"
 done
-jira_run "$P/adapters/jira/answers.sh" >/dev/null 2>&1
+jira_run "$P/adapters/jira/answers.sh" "$jsg_in" "$jsg_out" >/dev/null 2>&1
 mirror_on "answers finds the gate in the record, not on the tracker" check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope, because answers reads the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
 mirror_on "answers finds the gate in the record, not on the tracker" check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_out" | jget state.gate)" = ambiguity ]
 jsp="$(jira_run "$P/adapters/jira/create.sh" epic "Scoped parent")"; jira_set "$jsp" labels team-a

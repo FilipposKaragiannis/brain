@@ -11,7 +11,7 @@
   _jira.py remote-link <id> <url>
   _jira.py set-status <id> <backlog|ready|in-progress|needs-you|in-review> <events log> <time>
   _jira.py assign <id> <me|none>
-  _jira.py answers
+  _jira.py answers <id>...
   _jira.py me
   _jira.py vocabulary
 
@@ -22,12 +22,13 @@ state is mirrored as labels the way the GitHub adapter does it (step:*, gate:*, 
 size:* unless jira.fields.size names a field) and kept whole in the issue property flow-state.
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
-answers prints one JSON line {"id", "text"} per gated item the owner answered with an /answer
-comment; answers.sh clears the gates. me prints the names `me` stands for, one per line: the
-account id of the token's user, then jira.email. jira.scope (scope_filter in lib/flow.sh,
-FLOW_SCOPE_*) is ANDed into every search: list, its children counts, read's children count and
-answers; in-scope exits 0 when the issue is inside it, 1 when not. vocabulary prints the
-project's issue types and the options of the jira.fields.area field.
+answers prints one JSON line {"id", "text"} per given item the owner answered with an /answer
+comment; answers.sh passes the gated ones and clears the gates. me prints the names `me` stands
+for, one per line: the account id of the token's user, then jira.email. jira.scope (scope_filter
+in lib/flow.sh, FLOW_SCOPE_*) is ANDed into every search: list, its children counts, read's
+children count and in-scope, which answers runs per item; in-scope exits 0 when the issue is
+inside it, 1 when not. vocabulary prints the project's issue types and the options of the
+jira.fields.area field.
 
 set-status moves the issue through the transition jira.transitions.<name> names
 (FLOW_JIRA_TRANSITION_*); unset, ready takes the first transition into the status category new and
@@ -60,8 +61,6 @@ PAGE_SIZE = 100
 SEARCH = "/rest/api/3/search/jql"
 GATE_COMMENT = "**Gate: "
 ANSWER_WORD = "/answer"
-# Gates an /answer comment clears; the merge gate clears when the PR is merged.
-UNANSWERABLE_GATES = ("none", "merge")
 PICK = "FLOW_PICK_"
 SCOPE = "FLOW_SCOPE_"
 STATUS_NAMES = ("backlog", "ready", "in-progress", "needs-you", "in-review")
@@ -300,12 +299,17 @@ def cmd_read(args):
 
 def cmd_in_scope(args):
     """Exit 0 when the issue is inside jira.scope, or no scope is set (no call); 1 when it is not."""
-    key, scope = key_of(args[0]), scope_conditions()
+    sys.exit(0 if inside_scope(key_of(args[0])) else 1)
+
+
+def inside_scope(key):
+    """True when the issue is inside jira.scope, or no scope is set (no call)."""
+    scope = scope_conditions()
     if not scope:
-        sys.exit(0)
+        return True
     conditions = ["key = %s" % jql_text(key), "project = %s" % jql_text(setting("PROJECT"))] + scope
     issues, _ = search(" AND ".join(conditions), ["summary"], 1)
-    sys.exit(0 if issues else 1)
+    return bool(issues)
 
 
 # --- writing
@@ -627,18 +631,14 @@ def answer_after_gate(comments, allowed):
 
 
 def cmd_answers(args):
-    if args:
-        fail("answers takes no arguments", 2)
-    conditions = ['project = "%s"' % setting("PROJECT")] + scope_conditions() + ["statusCategory != Done"]
-    issues, _ = search(" AND ".join(conditions) + " ORDER BY created DESC", ["labels"], int(setting("LIMIT", "500")))
-    gated = [i for i in issues if flow_state(i, i["fields"].get("labels") or [], {})["gate"] not in UNANSWERABLE_GATES]
-    if not gated:
+    keys = [key for key in (key_of(item_id) for item_id in args) if inside_scope(key)]
+    if not keys:
         return
     allowed = answerers()
-    for issue in gated:
-        text = answer_after_gate(comments_of(issue["key"]), allowed)
+    for key in keys:
+        text = answer_after_gate(comments_of(key), allowed)
         if text is not None:
-            print(json.dumps({"id": PREFIX + issue["key"], "text": text}))
+            print(json.dumps({"id": PREFIX + key, "text": text}))
 
 
 def issue_types():

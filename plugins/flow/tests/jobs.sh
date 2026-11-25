@@ -615,6 +615,15 @@ printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2
 FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null; FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null
 check "next job: notify.idle says it once, not on every run" [ "$(grep -c '	idle	' "$home2/events.log")" = 1 ]
 check "the idle notice is an event, not a gate" sh -c "[ -z \"\$(ls '$home2/gates' 2>/dev/null)\" ]"
+answers_home="$work/home-answers"; answers_gh="$work/gh-answers"; mkdir -p "$answers_home" "$answers_gh"
+cp "$P/tests/_fake_gh.py" "$answers_gh/"
+printf '{"issues": [{"number": 60, "title": "Gated in the record", "body": "", "state": "OPEN", "labels": ["size:S"], "url": "https://gh/60"}]}\n' > "$answers_gh/issues.json"
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\npick:\n  nothing:\n    labels: [no-such-label]\n' > "$answers_home/config.yaml"
+FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" FLOW_TRACKER_STATE=none "$P/scripts/gate.sh" raise 'gh#60' ambiguity "1. Which way?" >/dev/null 2>&1
+printf '/answer the way the record holds' | FAKE_GH_DIR="$answers_gh" gh issue comment 60 -R acme/widgets --body-file - >/dev/null
+FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" "$P/jobs/next.sh" claude --pick nothing >/dev/null 2>&1
+check "GateInTheRecordWithNoLabel_IsAnsweredByTheNextJob: the next job clears a gate its record holds though the tracker shows none, because the gated ids come from the records" \
+  [ "$(FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" "$P/scripts/state.sh" get 'gh#60' answer)" = "the way the record holds" ]
 check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'quiet: 0 new'"
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null

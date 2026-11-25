@@ -41,6 +41,7 @@ set -u
 job=next
 . "$(dirname "$0")/_job.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
+. "$FLOW_PLUGIN/lib/answers.sh"
 host="${1:-}"; shift || true
 workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0; model="$job_opt_model"; effort="$job_opt_effort"; pick=""
 while [ $# -gt 0 ]; do
@@ -64,6 +65,16 @@ if [ -n "$pick" ]; then
   # shellcheck disable=SC2086
   pick_trackers "$pick" $trackers >/dev/null
 fi
+answer_gates_on_trackers() {
+  # shellcheck disable=SC2119 # with no items given, every answerable gate is the job's
+  answer_gated_items="$(answerable_gates)"
+  for answer_adapter in $(for answer_item in $answer_gated_items; do adapter_for "$answer_item" && echo; done | sort -u); do
+    [ -x "$FLOW_PLUGIN/adapters/$answer_adapter/answers.sh" ] || continue
+    answer_adapter_items="$(for answer_item in $answer_gated_items; do [ "$(adapter_for "$answer_item")" != "$answer_adapter" ] || echo "$answer_item"; done)"
+    # shellcheck disable=SC2086 # the ids are the records' item ids, which hold no space or glob
+    adapter answers "$answer_adapter" $answer_adapter_items 2>/dev/null | while read -r answer_cleared_item; do job_say "$answer_cleared_item: gate answered on the tracker"; done
+  done
+}
 # plan: one host:count word per host whose workers this run starts; empty for one run in place.
 # A paused run never reads it, and a bad jobs.workers stops the run before the tracker is touched.
 # Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
@@ -78,9 +89,7 @@ if [ -z "$worker" ]; then
   if [ -z "$plan" ] && [ "$workers" -gt 1 ]; then plan="$host:$workers"; fi
   mkdir -p "$(job_log_dir)"
   if flow_lock answers; then
-    for a in $(adapters_configured); do
-      [ -x "$FLOW_PLUGIN/adapters/$a/answers.sh" ] && { adapter answers "$a" 2>/dev/null | while read -r id; do job_say "$id: gate answered on the tracker"; done; }
-    done
+    answer_gates_on_trackers
     flow_unlock
   fi
   job_sweep || true

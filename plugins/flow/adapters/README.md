@@ -60,7 +60,7 @@ prefix.
 | `set-status` | `<id> <backlog\|ready\|in-progress\|needs-you\|in-review>` | `<id> <native name>` when it moved the item to the status, the tracker's own name for it; nothing when the item is there already or the tracker has no place for a status. Any other name exits 2. Local writes the item file's `workflow`, which its `category` reads |
 | `assign` | `<id> <me\|none>` | `<id> <name>` when it changed the item: `me` adds the first name `me` prints beside any other assignee, `none` takes that name off and leaves any other; nothing when the item already says so. Any other target exits 2, and so does an id another adapter owns; local keeps an `[a, b]` list a list |
 | `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
-| `answers` | | optional: clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts; never the merge gate) through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it, and a Slack gate message says to answer on the issue |
+| `answers` | `<id>...` | optional: takes the ids of the items at a gate and reads the comments of those only; clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts) through `scripts/gate.sh clear`, prints each cleared id. An id whose record holds no gate or the merge gate is left (`answerable_gates` in `lib/answers.sh`); no ids prints nothing, exit 0; an id not of the adapter's shape exits 2. `jobs/next.sh` runs it with the gated items of the flow records, grouped by adapter, and a Slack gate message says to answer on the issue |
 
 `kind` is `epic`, `task` or `bug`. `create` puts a value the tracker has no place for nowhere
 and says so on stderr (`--type` on a tracker without types);
@@ -267,7 +267,7 @@ status the issue moved to. `assign` sets the assignee (`PUT .../issue/<KEY>/assi
 token's user and prints its account id; Jira holds one assignee, so `me` leaves an issue someone
 else holds with them, and `none` clears only the token's user.
 
-`answers` reads the comments of each open issue at a gate (`GET .../issue/<KEY>/comment`) and
+`answers` reads the comments of each issue it is given (`GET .../issue/<KEY>/comment`) and
 takes an `/answer` by the token's own user (`GET /rest/api/3/myself`) or by an account id or email
 in `jira.answer_from`; Jira's REST API has no reactions, so the `Gate cleared: ...` comment
 `gate.sh` writes is the receipt. `vocabulary` lists the project's issue types without sub-tasks
@@ -436,9 +436,9 @@ count in `read`), so a parent counts only its children inside the scope: with
 none, and can read ready. GitHub reads `subIssuesSummary`, which no search narrows, and local
 scans every item file, so both count every open child.
 
-`answers` reads the gates of the items inside the scope only (GitHub through its scoped list, Jira
-with the scope in its search). A gate on an item that has left the scope waits until the owner
-clears it with `scripts/gate.sh clear`.
+`answers` reads the gates of the items inside the scope only (each id it is given goes through
+`in-scope` first). A gate on an item that has left the scope waits until the owner clears it with
+`scripts/gate.sh clear`.
 
 GitHub caps a search at 1000 results, so a scope that matches more is cut there, below a higher
 `github.limit`; narrow the scope rather than raise the limit.
