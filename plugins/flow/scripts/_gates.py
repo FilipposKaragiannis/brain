@@ -11,7 +11,8 @@ recommended answer, on the numbered line itself or on a following line, and the 
 continue the answer until the next numbered line. Any other line joins the question's text. A
 message with no numbered line has no questions; the reader then shows the message itself. After
 those come the record's options ([] when it has none or they do not validate), raised_by,
-answered_by, condition and footer (null when absent), so a record from before them still lists.
+answered_by, condition, footer and from_step, the step whose work the gate judges (null when
+absent), so a record from before them still lists.
 
 The options mode validates the options gate.sh raise was given: 1 to 9 objects, each with a
 non-empty label and text and a true or false recommended (false when absent), at most one
@@ -126,6 +127,7 @@ def gate(record, now):
         "answered_by": optional_text(record.get("answered_by")),
         "condition": optional_text(record.get("condition")),
         "footer": optional_text(record.get("footer")),
+        "from_step": optional_text(record.get("from_step")),
     }
 
 
