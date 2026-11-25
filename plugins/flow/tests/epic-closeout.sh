@@ -222,4 +222,12 @@ pass_closeout "$tracked_apart"
 check "EpicCloseoutInACloneThatTracksOnlyTheDefaultBranch_OpensThePullRequest: the fetch must refresh the very copy the comparison reads, or the remote's newer work looks merged" \
   '[ "$(pull_request headRefName)" = "$(epic_of "$tracked_apart")" ] && [ "$(item_status "$tracked_apart")" = open ]'
 
+echo "epic closeout: the closeout of an epic with a branch runs on that branch"
+github_repository checked_out
+verified="$(epic_with_work "Cup final")"
+"$local_adapter/write-state.sh" "$verified" step=closeout profile=epic
+closeout_worktree="$("$plugin/scripts/next.sh" "$verified" --json 2>/dev/null | json_value worktree)"
+check "EpicCloseoutWithAnEpicBranch_StartsInAWorktreeOnTheEpicBranch: the verifier checks the epic's work, which only its branch holds" \
+  '[ "$(git -C "$closeout_worktree" symbolic-ref --short -q HEAD)" = "$(epic_of "$verified")" ]'
+
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi
