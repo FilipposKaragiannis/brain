@@ -29,9 +29,9 @@ set_pull_request() { python3 -c 'import json, sys; github_record = json.load(ope
 merge_pull_request() { python3 -c 'import json, sys; github_record = json.load(open(sys.argv[1])); github_record["pr"]["state"] = "MERGED"; json.dump(github_record, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json"; }
 item_status() { "$local_adapter/read.sh" "$1" | json_value status; }
 claimed_worktree_of() { "$plugin/scripts/steward.sh" find "$1" 2>/dev/null; }
-holds_no_pool_claim() {
-  holds_no_pool_claim_table="$("$plugin/scripts/steward.sh" pool)" || return 1
-  printf '%s\n' "$holds_no_pool_claim_table" | grep -q '^worktree ' && ! printf '%s\n' "$holds_no_pool_claim_table" | grep -qF " $1 "
+pool_claim_state_of() {
+  pool_claim_state_of_table="$("$plugin/scripts/steward.sh" pool)" || { printf 'no pool table'; return; }
+  if printf '%s\n' "$pool_claim_state_of_table" | grep -qF " $1 "; then printf claimed; else printf unclaimed; fi
 }
 epic_with_work() {
   worked_epic="$("$local_adapter/create.sh" epic "$1" --body x)"
@@ -258,7 +258,7 @@ finish_step "$verified"
 check "EpicCloseoutThatPassedWithWorkToMerge_WaitsAtTheMergeGate: the epic's pull request merges only once the owner says so" \
   '[ "$(state "$verified" gate)" = merge ]'
 check "EpicCloseoutThatPassedWithWorkToMerge_ReleasesItsWorktree: the sweep closes an epic at the merge gate only while no claim holds it" \
-  'holds_no_pool_claim "$verified"'
+  '[ "$(pool_claim_state_of "$verified")" = unclaimed ]'
 
 echo "epic closeout: the closeout worktree's base is the branch the epic started from"
 github_repository started
@@ -298,7 +298,7 @@ plain_worktree="$("$plugin/scripts/next.sh" "$plain" --json 2>/dev/null | json_v
 check "EpicCloseoutWithNoEpicBranch_StartsInTheMainCheckout: there is no branch of the epic's own to check out" \
   '[ "$(resolved_folder "$plain_worktree" closeout)" = "$(resolved_folder "$root/app" main)" ]'
 check "EpicCloseoutWithNoEpicBranch_ClaimsNoPoolWorktree: a claim would hold a worktree nothing runs in" \
-  'holds_no_pool_claim "$plain"'
+  '[ "$(pool_claim_state_of "$plain")" = unclaimed ]'
 step_result "$plain" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
 finish_step "$plain"
 check "EpicCloseoutWithNoEpicBranch_LeavesTheMainCheckoutOnMain: releasing the run's worktree by path would move the main checkout to an idle branch" \
@@ -318,25 +318,25 @@ closeout_with "$level_epic" "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMAR
 check "EpicCloseoutThatPassedWithNothingToMerge_ClosesTheEpic: with nothing on its branch that the base lacks, there is no pull request to wait for" \
   '[ "$(item_status "$level_epic")" = closed ]'
 check "EpicCloseoutThatPassedWithNothingToMerge_ReleasesItsWorktree: a closed epic keeps no worktree" \
-  'holds_no_pool_claim "$level_epic"'
+  '[ "$(pool_claim_state_of "$level_epic")" = unclaimed ]'
 asking="$(epic_with_work "Asking")"
 closeout_with "$asking" '{"status":"gate","gate":"ambiguity","message":"Which cup counts?"}' 0
 check "EpicCloseoutThatStopsAtAGate_WaitsAtThatGate: the question the closeout asked is the owner's to answer" \
   '[ "$(state "$asking" gate)" = ambiguity ]'
 check "EpicCloseoutThatStopsAtAGate_ReleasesItsWorktree: the owner may take days to answer, and the closeout after it claims the tip again" \
-  'holds_no_pool_claim "$asking"'
+  '[ "$(pool_claim_state_of "$asking")" = unclaimed ]'
 failing="$(epic_with_work "Failing")"
 closeout_with "$failing" '{"status":"fail","summary":"A check failed."}' 0
 check "EpicCloseoutThatFails_CountsAnAttempt: a failed closeout runs again until its attempts run out" \
   '[ "$(state "$failing" attempts)" = 1 ]'
 check "EpicCloseoutThatFails_ReleasesItsWorktree: the health job would merge the base into a claimed branch no run holds" \
-  'holds_no_pool_claim "$failing"'
+  '[ "$(pool_claim_state_of "$failing")" = unclaimed ]'
 exhausted="$(epic_with_work "Exhausted")"
 closeout_with "$exhausted" '{"status":"fail","summary":"A check failed again."}' "$((MAX_ATTEMPTS - 1))"
 check "EpicCloseoutThatFailsItsLastAttempt_RaisesAnEscalationGate: a closeout out of attempts needs the owner" \
   '[ "$(state "$exhausted" gate)" = escalation ]'
 check "EpicCloseoutThatFailsItsLastAttempt_ReleasesItsWorktree: the escalation gate waits on the owner, not on a worktree" \
-  'holds_no_pool_claim "$exhausted"'
+  '[ "$(pool_claim_state_of "$exhausted")" = unclaimed ]'
 unopened="$(epic_with_work "Unopened")"
 printf '9\nGitHub is down\n' > "$FAKE_GH_DIR/fail"
 closeout_with "$unopened" "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}" 0
@@ -344,7 +344,7 @@ rm -f "$FAKE_GH_DIR/fail"
 check "EpicCloseoutInAPoolWorktreeWhosePullRequestCannotBeOpened_RaisesAnEscalationGate: the owner opens the pull request gh refused, then clears the gate" \
   '[ "$(state "$unopened" gate)" = escalation ]'
 check "EpicCloseoutWhosePullRequestCannotBeOpened_ReleasesItsWorktree: the owner opens the PR by hand, and the closeout after the gate claims the tip again" \
-  'holds_no_pool_claim "$unopened"'
+  '[ "$(pool_claim_state_of "$unopened")" = unclaimed ]'
 
 echo "epic closeout: a tracker that refuses to close an epic whose branch holds nothing new"
 github_repository unclosed_branch
@@ -361,7 +361,7 @@ rm -f "$FAKE_GH_DIR/fail"
 check "EpicCloseoutInAPoolWorktreeTheTrackerRefusesToClose_RaisesAnEscalationGate: the owner closes the epic the tracker refused to close, or clears the gate to try again" \
   '[ "$("$plugin/adapters/github/read.sh" "$unclosed" | json_value state.gate)" = escalation ]'
 check "EpicCloseoutTheTrackerRefusesToClose_ReleasesItsWorktree: clearing the gate runs the closeout again, which claims the tip again" \
-  'holds_no_pool_claim "$unclosed"'
+  '[ "$(pool_claim_state_of "$unclosed")" = unclaimed ]'
 
 echo "epic closeout: a local epic branch that differs from the remote"
 github_repository local_copies
@@ -382,7 +382,7 @@ ahead_code=$?
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_IsRefused: its unpushed commits are not in the pull request, so the remote tip would not be what passed" \
   '[ "$ahead_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_ClaimsNoWorktree: a refused closeout holds nothing" \
-  'holds_no_pool_claim "$ahead"'
+  '[ "$(pool_claim_state_of "$ahead")" = unclaimed ]'
 held="$(epic_with_work "Held")"
 git fetch -q origin "$(epic_of "$held"):$(epic_of "$held")"
 git worktree add -q "$root/elsewhere" "$(epic_of "$held")"
@@ -393,7 +393,7 @@ held_code=$?
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_IsRefused: git checks a branch out in one worktree at a time" \
   '[ "$held_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_ClaimsNoWorktree: a refused closeout holds nothing" \
-  'holds_no_pool_claim "$held"'
+  '[ "$(pool_claim_state_of "$held")" = unclaimed ]'
 unasked="$(epic_with_work "Unasked")"
 "$local_adapter/write-state.sh" "$unasked" step=closeout profile=epic
 git remote set-url origin "$work/no-such-remote.git"
