@@ -4,21 +4,26 @@
 # "**Gate: <gate>**" comment whose first word is /answer, by the authenticated user or a login in
 # github.answer_from; the rest of the comment is the answer ("/answer" alone means as
 # recommended). An id whose record holds no gate, or the merge gate (it clears when the PR is
-# merged), or whose issue is outside github.scope, is left alone. Each answered comment gets a +1
-# reaction, and the item's id prints once it is cleared. No ids prints nothing; an id that is not
-# a GitHub item's exits 2.
+# merged), or whose issue is outside github.scope (read through the scoped list), is left alone.
+# Each answered comment gets a +1 reaction, and the item's id prints once it is cleared. No ids
+# prints nothing; an id that is not a GitHub item's exits 2.
 [ $# -gt 0 ] || exit 0
 . "$(dirname "$0")/_gh.sh"
 . "$FLOW_PLUGIN/lib/answers.sh"
 answer_items_required github "$@"
-gated_items="$(answerable_gates "$@")"
+gated_items="$(record_list gates 2>/dev/null | answerable_gates github "$@")"
+if [ -n "$gated_items" ] && scope_in_config; then
+  gated_items="$("$FLOW_PLUGIN/adapters/github/list.sh" </dev/null | cached_python3 -I -c '
+import json, sys
+listed = {item["id"] for item in json.load(sys.stdin)}
+print("\n".join(gated for gated in sys.argv[1].splitlines() if gated in listed))' "$gated_items")" || exit 1
+fi
 [ -n "$gated_items" ] || exit 0
 repo="$(gh_repo)"
 allowed="$(cfg github.answer_from | paste -sd, -)"
 [ -n "$allowed" ] || allowed="$(gh api user -q .login 2>/dev/null)"
 [ -n "$allowed" ] || die "cannot tell whose answers count: set github.answer_from"
-printf '%s\n' "$gated_items" | while read -r gated_item; do
-  "$FLOW_PLUGIN/adapters/github/in-scope.sh" "$gated_item" >/dev/null 2>&1 || continue
+while read -r gated_item <&3; do
   found="$(gh api "repos/$repo/issues/$(issue_number "$gated_item")/comments?per_page=100" 2>/dev/null | cached_python3 -I -c '
 import json, sys
 allowed = set(sys.argv[1].split(","))
@@ -35,4 +40,6 @@ for c in comments[last + 1:]:
   "$FLOW_PLUGIN/scripts/gate.sh" clear "$gated_item" "$answer_text" >/dev/null || { echo "flow: could not clear the gate on $gated_item" >&2; continue; }
   gh api -X POST "repos/$repo/issues/comments/$comment_id/reactions" -f content=+1 >/dev/null 2>&1 || true
   echo "$gated_item"
-done
+done 3<<GATED
+$gated_items
+GATED

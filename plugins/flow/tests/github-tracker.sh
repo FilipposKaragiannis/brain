@@ -150,10 +150,15 @@ check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/
    Recommended: yes." >/dev/null 2>&1
 printf '/answer 1. no, let it touch the ball' | FAKE_GH_USER=stranger gh issue comment 37 -R acme/widgets --body-file - >/dev/null
 printf 'thinking about it' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
-printf '/answer 1. no, keep it visual' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
-check "answers: an /answer from the owner after the gate clears it" [ "$("$P/adapters/github/answers.sh" 'gh#37')" = "gh#37" ]
-mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
-mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh' 'gh#37')\" ]"
+owner_answer="1. no, keep it visual"
+printf '/answer %s' "$owner_answer" | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
+check "AnsweredGate_PrintsItsId: answers prints the id of the gate an owner's /answer cleared, because the job logs each id it prints" [ "$("$P/adapters/github/answers.sh" 'gh#37')" = "gh#37" ]
+check "AnsweredGate_ClearsTheGate: the record holds no gate after the owner's /answer, because the answer is what clears it" [ "$(record get 'gh#37' gate)" = none ]
+check "AnsweredGate_TakesTheOwnersWords: the record's answer is the owner's /answer, not a stranger's, because only an owner's answer counts" [ "$(record get 'gh#37' answer)" = "$owner_answer" ]
+check "AnsweredGate_NamesTheGateItAnswered: the record names the ambiguity gate as the one answered, because the brief says which gate the answer is to" [ "$(record get 'gh#37' answered)" = ambiguity ]
+check "AnsweredGate_KeepsTheQuestion: the record keeps the question the answer is to, because the next brief carries both" sh -c "'$P/scripts/state.sh' get 'gh#37' asked | grep -q 'Visual only?'"
+check "AnsweredComment_GetsAPlusOne: the owner's /answer comment gets a +1, because the reaction is the owner's receipt on GitHub" grep -q '"content": "+1"' "$FAKE_GH_DIR/issues.json"
+check "AnsweredGate_SecondPassClearsNothing: a second answers pass on the cleared id prints nothing, because its record holds no gate" [ -z "$("$P/adapters/github/answers.sh" 'gh#37')" ]
 picked="$("$P/scripts/next.sh" 'gh#37' --json)"; brief="$(printf '%s' "$picked" | jget brief)"
 check "the next brief carries the owner's answer and the question" sh -c "grep -q \"The owner's answer to the last gate (ambiguity)\" '$brief' && grep -q 'Answer: 1. no, keep it visual' '$brief' && grep -q 'Visual only?' '$brief'"
 end_run 'gh#37'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
@@ -198,8 +203,8 @@ for scope_issue in 50 51; do
   printf '/answer 1. this one' | gh issue comment "$scope_issue" -R acme/widgets --body-file - >/dev/null
 done
 scope_cleared="$("$P/adapters/github/answers.sh" 'gh#50' 'gh#51' 2>/dev/null)"
-mirror_on "answers finds the gate in the record, not on the tracker" check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
-mirror_on "answers finds the gate in the record, not on the tracker" check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.gate)" = "ambiguity" ]
+check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
+check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$(record get 'gh#51' gate)" = "ambiguity" ]
 gh_scope_config '    assignee: me'
 check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user, because me stands for the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
 scope_limit=1

@@ -66,13 +66,17 @@ if [ -n "$pick" ]; then
   pick_trackers "$pick" $trackers >/dev/null
 fi
 answer_gates_on_trackers() {
-  # shellcheck disable=SC2119 # with no items given, every answerable gate is the job's
-  answer_gated_items="$(answerable_gates)"
-  for answer_adapter in $(for answer_item in $answer_gated_items; do adapter_for "$answer_item" && echo; done | sort -u); do
-    [ -x "$FLOW_PLUGIN/adapters/$answer_adapter/answers.sh" ] || continue
-    answer_adapter_items="$(for answer_item in $answer_gated_items; do [ "$(adapter_for "$answer_item")" != "$answer_adapter" ] || echo "$answer_item"; done)"
-    # shellcheck disable=SC2086 # the ids are the records' item ids, which hold no space or glob
-    adapter answers "$answer_adapter" $answer_adapter_items 2>/dev/null | while read -r answer_cleared_item; do job_say "$answer_cleared_item: gate answered on the tracker"; done
+  answer_gate_rows="$(record_list gates 2>/dev/null)"
+  for answer_adapter_folder in "$FLOW_PLUGIN"/adapters/*; do
+    [ -x "$answer_adapter_folder/answers.sh" ] || continue
+    answer_adapter="${answer_adapter_folder##*/}"
+    answer_gated_items="$(printf '%s\n' "$answer_gate_rows" | answerable_gates "$answer_adapter")"
+    [ -n "$answer_gated_items" ] || continue
+    set --
+    while read -r answer_item; do set -- "$@" "$answer_item"; done <<GATED
+$answer_gated_items
+GATED
+    adapter answers "$answer_adapter" "$@" 2>/dev/null </dev/null | while read -r answer_cleared_item; do job_say "$answer_cleared_item: gate answered on the tracker"; done
   done
 }
 # plan: one host:count word per host whose workers this run starts; empty for one run in place.

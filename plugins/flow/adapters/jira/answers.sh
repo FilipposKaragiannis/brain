@@ -12,11 +12,14 @@
 . "$(dirname "$0")/_jira.sh"
 . "$FLOW_PLUGIN/lib/answers.sh"
 answer_items_required jira "$@"
-gated_items="$(answerable_gates "$@")"
+gated_items="$(record_list gates 2>/dev/null | answerable_gates jira "$@")"
 [ -n "$gated_items" ] || exit 0
+set --
+while read -r gated_item; do set -- "$@" "$gated_item"; done <<GATED
+$gated_items
+GATED
 scope_filter jira
-# shellcheck disable=SC2086 # the ids are item_id_shaped, so no id holds a space or a glob
-found="$(jira answers $gated_items)" || exit 1
+found="$(jira answers "$@")" || exit 1
 printf '%s\n' "$found" | while read -r line; do
   [ -n "$line" ] || continue
   id="$(json_get "$line" id)"; text="$(json_get "$line" text)"

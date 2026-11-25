@@ -436,9 +436,9 @@ count in `read`), so a parent counts only its children inside the scope: with
 none, and can read ready. GitHub reads `subIssuesSummary`, which no search narrows, and local
 scans every item file, so both count every open child.
 
-`answers` reads the gates of the items inside the scope only (each id it is given goes through
-`in-scope` first). A gate on an item that has left the scope waits until the owner clears it with
-`scripts/gate.sh clear`.
+`answers` reads the gates of the items inside the scope only, of the ids it is given (GitHub
+through its scoped list, Jira with the scope in a search of each key). A gate on an item that has
+left the scope waits until the owner clears it with `scripts/gate.sh clear`.
 
 GitHub caps a search at 1000 results, so a scope that matches more is cut there, below a higher
 `github.limit`; narrow the scope rather than raise the limit.
