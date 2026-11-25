@@ -6,7 +6,6 @@
 # with no PR. An open PR from the epic branch is taken as it is. A PR gh cannot open leaves the
 # epic open at closeout behind an escalation gate.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
-# shellcheck disable=SC2034 # a check's condition, run whole by check, reads the names set for it
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
@@ -18,7 +17,8 @@ PATH="$work/github:$PATH"; export PATH
 
 CLOSEOUT_SUMMARY="Every acceptance line is proven."
 MAX_ATTEMPTS="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$plugin/profiles.json")"
-CLAIM_REFUSED=4
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
+CLAIM_REFUSED="$(sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/base.sh" && printf %s "$claim_refused"')"
 github_repository() {
   new_repo "$1"
   printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
@@ -29,6 +29,10 @@ set_pull_request() { python3 -c 'import json, sys; github_record = json.load(ope
 merge_pull_request() { python3 -c 'import json, sys; github_record = json.load(open(sys.argv[1])); github_record["pr"]["state"] = "MERGED"; json.dump(github_record, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json"; }
 item_status() { "$local_adapter/read.sh" "$1" | json_value status; }
 claimed_worktree_of() { "$plugin/scripts/steward.sh" find "$1" 2>/dev/null; }
+holds_no_pool_claim() {
+  holds_no_pool_claim_table="$("$plugin/scripts/steward.sh" pool)" || return 1
+  printf '%s\n' "$holds_no_pool_claim_table" | grep -q '^worktree ' && ! printf '%s\n' "$holds_no_pool_claim_table" | grep -qF " $1 "
+}
 epic_with_work() {
   worked_epic="$("$local_adapter/create.sh" epic "$1" --body x)"
   remote_branch "$(epic_of "$worked_epic")"; remote_commit "$(epic_of "$worked_epic")" "$(slug "$worked_epic").txt"
@@ -233,7 +237,9 @@ echo "epic closeout: the closeout of an epic with a branch runs on that branch"
 github_repository checked_out
 verified="$(epic_with_work "Cup final")"
 "$local_adapter/write-state.sh" "$verified" step=closeout profile=epic
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
 closeout_worktree="$("$plugin/scripts/next.sh" "$verified" --json 2>/dev/null | json_value worktree)"
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
 claimed_worktree="$("$plugin/scripts/steward.sh" find "$verified" 2>/dev/null)"
 resolved_folder() { if [ -n "$1" ]; then (cd "$1" && pwd -P); else printf 'no %s folder' "$2"; fi; }
 check "EpicCloseoutWithAnEpicBranch_StartsInThePoolWorktreeClaimedForTheEpic: the main checkout stays on main, so the epic's work needs a pool worktree of its own" \
@@ -241,6 +247,7 @@ check "EpicCloseoutWithAnEpicBranch_StartsInThePoolWorktreeClaimedForTheEpic: th
 check "EpicCloseoutWithAnEpicBranch_StartsAtTheRemoteTipOfTheEpicBranch: the pull request merges the remote tip, so that commit is the one the verifier must check" \
   '[ "$(git -C "${closeout_worktree:-$work/no-closeout-worktree}" rev-parse HEAD)" = "$(remote_tip "$(epic_of "$verified")")" ]'
 
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
 closeout_brief="$(json_value reports < "$(run_file "$verified")")/brief-closeout.md"
 check "EpicCloseoutWithAnEpicBranch_RunsWithTheEpicBranchCheckedOut: verify.sh refuses a HEAD that is not the item's branch, and a detached tip is none" \
   '[ "$(git -C "${closeout_worktree:-$work/no-closeout-worktree}" symbolic-ref --short -q HEAD)" = "$(epic_of "$verified")" ]'
@@ -248,10 +255,10 @@ check "EpicCloseoutWithAnEpicBranch_NamesTheEpicBranchInTheBrief: the verifier w
   'grep -F -- "- Worktree:" "$closeout_brief" | grep -qF "on branch \`$(epic_of "$verified")\`"'
 step_result "$verified" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
 finish_step "$verified"
-check "EpicCloseoutThatPassedWithWorkToMerge_WaitsAtTheMergeGate: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutThatPassedWithWorkToMerge_WaitsAtTheMergeGate: the epic's pull request merges only once the owner says so" \
   '[ "$(state "$verified" gate)" = merge ]'
 check "EpicCloseoutThatPassedWithWorkToMerge_ReleasesItsWorktree: the sweep closes an epic at the merge gate only while no claim holds it" \
-  '[ -z "$(claimed_worktree_of "$verified")" ]'
+  'holds_no_pool_claim "$verified"'
 
 echo "epic closeout: the closeout worktree's base is the branch the epic started from"
 github_repository started
@@ -262,7 +269,7 @@ git -C "$root/other" fetch -q origin && git -C "$root/other" push -q origin "ori
 remote_commit "$(epic_of "$final_round")" final-round.txt
 "$local_adapter/write-state.sh" "$final_round" step=closeout profile=epic
 start_step "$final_round"
-check "EpicCloseoutOfAnEpicUnderAnEpicWithABranch_ClaimsWithThatBranchAsItsBase: verify compares the epic's work with the branch its pull request merges into" \
+check "EpicCloseoutOfAnEpicUnderAnEpicWithABranch_ClaimsWithThatBranchAsItsBase: the claim's base is the outer epic's branch, the one the epic started from and verify compares its work with" \
   '[ "$(claim_base "$final_round")" = "$(epic_of "$season")" ]'
 
 echo "epic closeout: the closeout worktree is set up for the epic's tip"
@@ -275,6 +282,7 @@ locked="$("$local_adapter/create.sh" epic "Locked squads" --body x)"
 remote_branch "$(epic_of "$locked")"; remote_commit "$(epic_of "$locked")" package-lock.json
 "$local_adapter/write-state.sh" "$locked" step=closeout profile=epic
 start_step "$locked"
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
 locked_worktree="$(claimed_worktree_of "$locked")"
 check "EpicCloseoutWhoseBranchChangesASetupPath_RunsTheSetupAtTheEpicTip: a check that needs installed files runs against the epic's own lockfile" \
   '[ "$(cat "$locked_worktree/installed/from")" = "$(remote_tip "$(epic_of "$locked")")" ]'
@@ -285,11 +293,12 @@ echo "epic closeout: an epic with no epic branch closes out in the main checkout
 github_repository branchless
 plain="$("$local_adapter/create.sh" epic "Testimonials" --body x)"
 "$local_adapter/write-state.sh" "$plain" step=closeout profile=epic
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
 plain_worktree="$("$plugin/scripts/next.sh" "$plain" --json 2>/dev/null | json_value worktree)"
 check "EpicCloseoutWithNoEpicBranch_StartsInTheMainCheckout: there is no branch of the epic's own to check out" \
   '[ "$(resolved_folder "$plain_worktree" closeout)" = "$(resolved_folder "$root/app" main)" ]'
 check "EpicCloseoutWithNoEpicBranch_ClaimsNoPoolWorktree: a claim would hold a worktree nothing runs in" \
-  '[ -z "$(claimed_worktree_of "$plain")" ]'
+  'holds_no_pool_claim "$plain"'
 step_result "$plain" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
 finish_step "$plain"
 check "EpicCloseoutWithNoEpicBranch_LeavesTheMainCheckoutOnMain: releasing the run's worktree by path would move the main checkout to an idle branch" \
@@ -306,36 +315,36 @@ closeout_with() {
 level_epic="$("$local_adapter/create.sh" epic "Level" --body x)"
 remote_branch "$(epic_of "$level_epic")"
 closeout_with "$level_epic" "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}" 0
-check "EpicCloseoutThatPassedWithNothingToMerge_ClosesTheEpic: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutThatPassedWithNothingToMerge_ClosesTheEpic: with nothing on its branch that the base lacks, there is no pull request to wait for" \
   '[ "$(item_status "$level_epic")" = closed ]'
 check "EpicCloseoutThatPassedWithNothingToMerge_ReleasesItsWorktree: a closed epic keeps no worktree" \
-  '[ -z "$(claimed_worktree_of "$level_epic")" ]'
+  'holds_no_pool_claim "$level_epic"'
 asking="$(epic_with_work "Asking")"
 closeout_with "$asking" '{"status":"gate","gate":"ambiguity","message":"Which cup counts?"}' 0
-check "EpicCloseoutThatStopsAtAGate_WaitsAtThatGate: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutThatStopsAtAGate_WaitsAtThatGate: the question the closeout asked is the owner's to answer" \
   '[ "$(state "$asking" gate)" = ambiguity ]'
 check "EpicCloseoutThatStopsAtAGate_ReleasesItsWorktree: the owner may take days to answer, and the closeout after it claims the tip again" \
-  '[ -z "$(claimed_worktree_of "$asking")" ]'
+  'holds_no_pool_claim "$asking"'
 failing="$(epic_with_work "Failing")"
 closeout_with "$failing" '{"status":"fail","summary":"A check failed."}' 0
-check "EpicCloseoutThatFails_CountsAnAttempt: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutThatFails_CountsAnAttempt: a failed closeout runs again until its attempts run out" \
   '[ "$(state "$failing" attempts)" = 1 ]'
 check "EpicCloseoutThatFails_ReleasesItsWorktree: the health job would merge the base into a claimed branch no run holds" \
-  '[ -z "$(claimed_worktree_of "$failing")" ]'
+  'holds_no_pool_claim "$failing"'
 exhausted="$(epic_with_work "Exhausted")"
 closeout_with "$exhausted" '{"status":"fail","summary":"A check failed again."}' "$((MAX_ATTEMPTS - 1))"
-check "EpicCloseoutThatFailsItsLastAttempt_RaisesAnEscalationGate: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutThatFailsItsLastAttempt_RaisesAnEscalationGate: a closeout out of attempts needs the owner" \
   '[ "$(state "$exhausted" gate)" = escalation ]'
 check "EpicCloseoutThatFailsItsLastAttempt_ReleasesItsWorktree: the escalation gate waits on the owner, not on a worktree" \
-  '[ -z "$(claimed_worktree_of "$exhausted")" ]'
+  'holds_no_pool_claim "$exhausted"'
 unopened="$(epic_with_work "Unopened")"
 printf '9\nGitHub is down\n' > "$FAKE_GH_DIR/fail"
 closeout_with "$unopened" "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}" 0
 rm -f "$FAKE_GH_DIR/fail"
-check "EpicCloseoutInAPoolWorktreeWhosePullRequestCannotBeOpened_RaisesAnEscalationGate: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutInAPoolWorktreeWhosePullRequestCannotBeOpened_RaisesAnEscalationGate: the owner opens the pull request gh refused, then clears the gate" \
   '[ "$(state "$unopened" gate)" = escalation ]'
 check "EpicCloseoutWhosePullRequestCannotBeOpened_ReleasesItsWorktree: the owner opens the PR by hand, and the closeout after the gate claims the tip again" \
-  '[ -z "$(claimed_worktree_of "$unopened")" ]'
+  'holds_no_pool_claim "$unopened"'
 
 echo "epic closeout: a tracker that refuses to close an epic whose branch holds nothing new"
 github_repository unclosed_branch
@@ -349,10 +358,10 @@ step_result "$unclosed" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_S
 printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
 finish_step "$unclosed"
 rm -f "$FAKE_GH_DIR/fail"
-check "EpicCloseoutInAPoolWorktreeTheTrackerRefusesToClose_RaisesAnEscalationGate: the closeout reached its end, or the check below proves nothing" \
+check "EpicCloseoutInAPoolWorktreeTheTrackerRefusesToClose_RaisesAnEscalationGate: the owner closes the epic the tracker refused to close, or clears the gate to try again" \
   '[ "$("$plugin/adapters/github/read.sh" "$unclosed" | json_value state.gate)" = escalation ]'
 check "EpicCloseoutTheTrackerRefusesToClose_ReleasesItsWorktree: clearing the gate runs the closeout again, which claims the tip again" \
-  '[ -z "$(claimed_worktree_of "$unclosed")" ]'
+  'holds_no_pool_claim "$unclosed"'
 
 echo "epic closeout: a local epic branch that differs from the remote"
 github_repository local_copies
@@ -367,24 +376,30 @@ ahead="$(epic_with_work "Ahead")"
 git fetch -q origin "$(epic_of "$ahead"):$(epic_of "$ahead")"
 git update-ref "refs/heads/$(epic_of "$ahead")" "$(git commit-tree -p "$(epic_of "$ahead")" -m unpushed "$(epic_of "$ahead")^{tree}")"
 "$local_adapter/write-state.sh" "$ahead" step=closeout profile=epic
-start_step "$ahead"; ahead_code=$?
+start_step "$ahead"
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
+ahead_code=$?
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_IsRefused: its unpushed commits are not in the pull request, so the remote tip would not be what passed" \
   '[ "$ahead_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_ClaimsNoWorktree: a refused closeout holds nothing" \
-  '[ -z "$(claimed_worktree_of "$ahead")" ]'
+  'holds_no_pool_claim "$ahead"'
 held="$(epic_with_work "Held")"
 git fetch -q origin "$(epic_of "$held"):$(epic_of "$held")"
 git worktree add -q "$root/elsewhere" "$(epic_of "$held")"
 "$local_adapter/write-state.sh" "$held" step=closeout profile=epic
-start_step "$held"; held_code=$?
+start_step "$held"
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
+held_code=$?
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_IsRefused: git checks a branch out in one worktree at a time" \
   '[ "$held_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_ClaimsNoWorktree: a refused closeout holds nothing" \
-  '[ -z "$(claimed_worktree_of "$held")" ]'
+  'holds_no_pool_claim "$held"'
 unasked="$(epic_with_work "Unasked")"
 "$local_adapter/write-state.sh" "$unasked" step=closeout profile=epic
 git remote set-url origin "$work/no-such-remote.git"
-start_step "$unasked"; unasked_code=$?
+start_step "$unasked"
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
+unasked_code=$?
 check "EpicCloseoutWhoseRemoteCannotBeAsked_IsRefused: not seeing the epic branch is no proof it has none" \
   '[ "$unasked_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWhoseRemoteCannotBeAsked_StartsNoRun: a closeout in the main checkout would grade the base instead of the epic" \
@@ -395,6 +410,7 @@ github_repository kept
 kept="$(epic_with_work "Kept")"
 "$local_adapter/write-state.sh" "$kept" step=closeout profile=epic
 start_step "$kept"
+# shellcheck disable=SC2034 # read in a check's condition, which check runs whole
 kept_worktree="$(claimed_worktree_of "$kept")"
 rm -f "$(run_file "$kept")"
 remote_commit main first-fixture.txt; remote_commit main second-fixture.txt
