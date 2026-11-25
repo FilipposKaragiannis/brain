@@ -18,7 +18,7 @@ done
 # in issue_to_item). The callers in advance.sh and next.sh go on either way, with that state.
 current="$(state_comment "$repo" "$n")" || die "cannot read the comments of gh#$n"
 labels="$(gh issue view "$n" -R "$repo" --json labels -q '.labels[].name')" || die "cannot read the labels of gh#$n"
-merged="$(printf '%s' "$current" | python3 -I -c '
+merged="$(printf '%s' "$current" | cached_python3 -I -c '
 import json, sys
 data = json.load(sys.stdin)["data"]
 for kv in sys.argv[1:]:
@@ -28,7 +28,19 @@ for kv in sys.argv[1:]:
     else: data[k] = v
 data.setdefault("gate", "none")
 print(json.dumps(data))' "$@")"
-add=""; remove=""
+add_labels=""; remove_labels=""; line_break='
+'
+stale_labels() {
+  label_prefix="$1"; kept_value="$2"
+  while IFS= read -r old; do
+    case "$old" in "$label_prefix"*) ;; *) continue ;; esac
+    [ "$old" != "$label_prefix$kept_value" ] || continue
+    case "$old" in *,*) echo "flow: left the label '$old' on gh#$n: a comma in it would make gh remove two" >&2; continue ;; esac
+    printf '%s\n' "$old"
+  done <<LABELS
+$labels
+LABELS
+}
 label_keys="step gate worktree profile size"
 [ -n "$GH_SIZE_FIELD" ] && label_keys="step gate worktree profile"
 for key in $label_keys; do
@@ -36,16 +48,24 @@ for key in $label_keys; do
   for kv in "$@"; do
     [ "${kv%%=*}" = "$key" ] || continue
     value="${kv#*=}"
-    for old in $(printf '%s\n' "$labels" | grep "^$prefix" || true); do
-      [ "$old" = "$prefix$value" ] || remove="$remove --remove-label $old"
-    done
-    if [ -n "$value" ] && [ "$value" != "none" ]; then ensure_label "$prefix$value"; add="$add --add-label $prefix$value"; fi
+    case "$value" in *"$line_break"*|*,*) die "the $key of gh#$n has a line break or a comma, so it cannot be a label" 2 ;; esac
+    remove_labels="$remove_labels$line_break$(stale_labels "$prefix" "$value")"
+    if [ -n "$value" ] && [ "$value" != "none" ]; then ensure_label "$prefix$value"; add_labels="$add_labels$line_break$prefix$value"; fi
   done
 done
-# shellcheck disable=SC2086
-if [ -n "$add$remove" ]; then gh issue edit "$n" -R "$repo" $add $remove >/dev/null || die "cannot write the labels of gh#$n"; fi
-body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
-comment_id() { python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
+edit_labels() {
+  set --
+  while IFS= read -r label; do [ -z "$label" ] || set -- "$@" --add-label "$label"; done <<ADD
+$add_labels
+ADD
+  while IFS= read -r label; do [ -z "$label" ] || set -- "$@" --remove-label "$label"; done <<REMOVE
+$remove_labels
+REMOVE
+  [ $# -eq 0 ] || gh issue edit "$n" -R "$repo" "$@" >/dev/null
+}
+edit_labels || die "cannot write the labels of gh#$n"
+body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | cached_python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
+comment_id() { cached_python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
 patch_state() { printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$1" -F body=@- >/dev/null; }
 post_state() { printf '%s' "$body" | gh_once api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null; }
 cid="$(printf '%s' "$current" | comment_id)"
@@ -62,7 +82,7 @@ done
 if [ -n "$cid" ]; then patch_state "$cid" || die "cannot write the state of gh#$n"; fi
 if [ -n "$GH_SIZE_FIELD" ]; then
   for kv in "$@"; do
-    case "$kv" in size=?*) python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \
+    case "$kv" in size=?*) cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \
       || echo "flow: could not set the size of gh#$n" >&2 ;; esac
   done
 fi

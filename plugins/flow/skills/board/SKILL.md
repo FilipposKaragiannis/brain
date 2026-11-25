@@ -1,6 +1,6 @@
 ---
 name: board
-description: Show the flow board. Every adapter, every claim. The worktree pool with item, step and last event, every open item with its state and blockers, the gates waiting on the owner, and overlapping claims. Use when the user asks what is running, what is ready, what is blocked, or wants the dependency graph of an epic or the priorities graph of the board.
+description: Show the flow board. Every adapter, every claim. The gates waiting on the owner first, then what went stale, overlapping claims, every open item with its state and blockers, and the worktree pool with item, step and last event. Use when the user asks what is running, what is ready, what is blocked, or wants the dependency graph of an epic or the priorities graph of the board.
 disable-model-invocation: true
 ---
 
@@ -28,7 +28,9 @@ path `codex plugin list` prints for `flow`). Call it `$P`.
    an answer that has waited past it on the run that carries it out (the gate column says
    `none, answer waits on next` or `on the comments job` while one waits), or a claim whose
    base is not on the remote (`base <b> is not on the remote`: its PR has no branch to merge into
-   until the base is pushed again). The `worktree` column names a base other than the config base.
+   until the base is pushed again), or a merge gate on an item with no PR linked (it is not under
+   Waiting on you: there is nothing to merge until its PR is linked, or the item closes and the
+   sweep frees its worktree). The `worktree` column names a base other than the config base.
    Say what it means in one line and that the `health` job clears and resumes it, or run
    `"$P/scripts/steward.sh" health --dry-run`.
 4. When a gate waits, say in one line per gate what the owner must do, and how to clear it:

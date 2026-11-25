@@ -1,11 +1,15 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
-# JSON valid, shell scripts parse, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
+# JSON valid, shell scripts parse, ShellCheck and Ruff find nothing new, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
 # match the plugin's. Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
 status=0
 fail() { echo "lint: $1"; status=1; }
+baseline_report="$(mktemp)" || exit 1
+trap 'rm -f "$baseline_report"' EXIT
+python3 -I tools/lib/lint_baseline.py check > "$baseline_report" 2>&1 &
+baseline_check=$!
 
 python3 tools/lib/generate.py --check || status=1
 
@@ -137,8 +141,19 @@ PY
 
 # Every test suite runs in the sandbox, so no test reaches the checkout it runs from or the
 # owner's config, and a run that does fails.
+flow_dispatcher="plugins/flow/tests/run.sh"
+flow_dispatch='set -u
+here="$(cd "$(dirname "$0")" && pwd)"
+case "$#" in
+  0) exec python3 -I "$here/../../../tools/lib/flow_suites.py" all ;;
+  *) echo "usage: run.sh" >&2; exit 2 ;;
+esac'
 for f in plugins/*/tests/*.sh plugins/*/*/tests/*.sh tools/tests/*.sh; do
   case "$(basename "$f")" in _*|fake-*) continue ;; esac
+  if [ "$f" = "$flow_dispatcher" ]; then
+    [ "$(grep -v '^#' "$f")" = "$flow_dispatch" ] || fail "the flow dispatcher holds more than the dispatch to tools/lib/flow_suites.py: $f"
+    continue
+  fi
   grep -q '^\. "[^"]*/tools/lib/sandbox\.sh"; sandbox_enter "\$work" ' "$f" && grep -q "^trap 'sandbox_close \$?' EXIT$" "$f" \
     || fail "test suite outside the sandbox (tools/lib/sandbox.sh): $f"
 done
@@ -150,6 +165,9 @@ done
 # The installed block must stay under 6 KB (Codex budget).
 size="$(wc -c < plugins/standards/rules/block.md | tr -d ' ')"
 [ "$size" -le 6144 ] || fail "standards block is $size bytes, limit 6144"
+
+wait "$baseline_check" || status=1
+cat "$baseline_report"
 
 [ "$status" -eq 0 ] && echo "lint: ok"
 exit $status

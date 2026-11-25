@@ -56,7 +56,7 @@ wait_note() {
 # open blockers (FLOW_READY_NOTES in filter-ready.sh). A pick never names such an item, so its note
 # is written here, while it waits.
 wait_notes() {
-  printf '%s\n' "$1" | python3 -I -c '
+  printf '%s\n' "$1" | cached_python3 -I -c '
 import json, sys
 for note in json.loads(sys.stdin.read() or "[]"):
     if note["why"] == "blocked" and note.get("worktree"):

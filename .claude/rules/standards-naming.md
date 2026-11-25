@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.sh"
+  - "**/*.py"
 ---
 # 4. Files and naming
 

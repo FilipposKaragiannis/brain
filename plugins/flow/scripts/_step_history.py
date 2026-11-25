@@ -12,7 +12,8 @@ never write a day twice:
   until the day is kept.
 A step record is one JSON object per line with item, step, at, seconds, exit and cost_usd; a line
 that is no such record is skipped. The records of both log files and the pending file count,
-each once. Imported by _graph_report.py, which calls keep_history before every report.
+each once. Imported by _graph_report.py, which calls keep_history before every report, and
+read_history, which writes nothing, for the slower steps alone.
 """
 import calendar
 import fcntl
@@ -140,16 +141,26 @@ def write_pending_records(log, now):
     os.replace(rewritten, os.path.join(log, PENDING_FILE))
 
 
+def recorded_runs(log):
+    return list(recorded_steps(log, (PENDING_FILE,) + LOG_FILES).values())
+
+
 def keep_history(log, now):
     if not os.path.isdir(log):
         return {"kept": [], "runs": []}
     with open(os.path.join(log, LOCK_FILE), "w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        runs = list(recorded_steps(log, (PENDING_FILE,) + LOG_FILES).values())
+        runs = recorded_runs(log)
         kept = kept_history(log)
         kept += write_settled_days(log, runs, kept, now)
         write_pending_records(log, now)
     return {"kept": kept, "runs": runs}
+
+
+def read_history(log):
+    if not os.path.isdir(log):
+        return {"kept": [], "runs": []}
+    return {"kept": kept_history(log), "runs": recorded_runs(log)}
 
 
 def daily_history(kept, runs, now):

@@ -147,7 +147,10 @@ LOCK_HELD_SECONDS=4; KEEP_HAS_STARTED_SECONDS=2
 python3 -c 'import fcntl, sys, time
 held = open(sys.argv[1], "w"); fcntl.flock(held, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(float(sys.argv[3]))' \
   .flow/log/steps.daily.lock "$work/lock-is-held" "$LOCK_HELD_SECONDS" &
-while [ ! -f "$work/lock-is-held" ]; do sleep 0.1; done
+holder_pid=$!
+while [ ! -f "$work/lock-is-held" ] && kill -0 "$holder_pid" 2>/dev/null; do sleep 0.1; done
+check "HistoryWriterStarts_HoldsTheLock because the contention check needs an active writer" \
+  '[ -f "$work/lock-is-held" ]'
 graph_report --keep &
 sleep "$KEEP_HAS_STARTED_SECONDS"
 check "KeepWhileAnotherWriterHoldsTheHistoryLock_HasWrittenNothing: it waits, or two writers would both find the day missing and write it" \

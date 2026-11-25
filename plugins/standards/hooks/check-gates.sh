@@ -45,8 +45,10 @@ stage=""
 if [ "${STANDARDS_STAGE:-}" = ci ]; then stage=ci
 elif [ -n "$commit_seg" ]; then stage=commit
 elif [ -n "$push_seg" ]; then stage=push; fi
-files=""
-[ -n "$commit_seg" ] && files="$(changed_files "$commit_seg")"
+hooks_folder="$(cd "$(dirname "$0")" && pwd)"
+names="$(mktemp)" || exit 0
+trap 'rm -f "$names"' EXIT
+[ -n "$commit_seg" ] && changed_files_null_byte_separated "$commit_seg" > "$names"
 commit_msg=""
 [ -n "$commit_seg" ] && commit_msg="$(commit_message_text "$commit_seg")"
 code="$(command_code "$cmd")"
@@ -94,13 +96,8 @@ FORBID_RUN
     [ "$gate_mode" = marked ] && continue
   fi
   if [ -n "$paths" ] && [ "$stage" != push ]; then
-    match=0
-    for pattern in $paths; do
-      pattern="$(printf '%s' "$pattern" | sed 's|\*\*|*|g')"
-      # shellcheck disable=SC2254
-      for file in $files; do case "$file" in $pattern) match=1 ;; esac; done
-    done
-    [ "$match" -eq 1 ] || continue
+    matches="$(xargs -0 sh "$hooks_folder/files-matching-patterns.sh" "$(printf '%s\n' "$paths" | sed 's|\*\*|*|g')" < "$names")"
+    [ -n "$matches" ] || continue
   fi
   # shellcheck disable=SC2046
   if ! output="$(unset $(git rev-parse --local-env-vars); STANDARDS_COMMIT_MESSAGE="$commit_msg" STANDARDS_STAGE="$stage" sh -c "$command" 2>&1)"; then

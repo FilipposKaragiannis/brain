@@ -26,6 +26,7 @@ project already keeps (`AI/`, `.claude/`, `.codex/`).
 | a check that must pass before a commit or a push, or per commit in CI | `gates[]`: `{name, command, paths, when}`; `when` is `commit`, `push`, `ci` |
 | a command agents must not run unless a commit says so | `gates[]`: `{name, forbid, marker}` |
 | a test level, a fixture, a fake, a declared exception, a hand test | `.standards/testing-guide.md`, the matching section |
+| a smoke, property-based or runtime evidence check, or any test level's slot | its row in the guide's "Levels and commands" table, plus the slot's key: `test`, `mutation`, `gates[]` above, flow `gates`, or a CI workflow `on: schedule` |
 | files that need `[config]` in the commit message | `protected[]` |
 | paths that trigger the security or performance reviewer | `review.security_paths`, `review.performance_paths`, `hot_paths` |
 | a project reviewer or any project agent | the roster `project.roster` names, with `paths` for a reviewer |
@@ -40,19 +41,27 @@ project already keeps (`AI/`, `.claude/`, `.codex/`).
    format` or `prettier` call), the fixtures and fakes the tests share (list the folder and two
    examples), scripts under `tools/` or `scripts/` that look like gates (names with check,
    verify, lint, determinism, golden), client or UI folders a human must run by hand.
-2. Write one recommendation per gap: the exact JSON value or the exact Markdown lines, the
-   evidence as `file:line`, and a confidence word: `recommend` (seen in CI or the README) or
-   `guess` (inferred from names). A gap with no evidence gets "no evidence; ask the owner" and
-   the question to ask.
-3. For a build gate, prefer warnings as errors when the repo sets `TreatWarningsAsErrors` or CI
+2. Read the guide's "Levels and commands" table. For each row with the slot `nothing` or the
+   command `not set up`, and for each level the table lacks (a guide written from an older
+   template has no slot column and no smoke, property-based or runtime evidence row), recommend
+   the slot that runs it and its command: the test command (`test`), the mutation command
+   (`mutation`), a commit gate (`gates[]` in `.standards/config.json`), a verify gate (`gates`
+   in `.flow/config.yaml`) or a scheduled check (a CI workflow `on: schedule`). Or say it stays
+   `nothing` and why (no app to start, no invariant-heavy code).
+3. Write one recommendation per gap and per empty row: the exact JSON value or the exact
+   Markdown lines, the evidence as `file:line`, and a confidence word: `recommend` (seen in CI or
+   the README) or `guess` (inferred from names). A gap with no evidence gets "no evidence; ask
+   the owner" and the question to ask.
+4. For a build gate, prefer warnings as errors when the repo sets `TreatWarningsAsErrors` or CI
    passes `-warnaserror`; say which.
-4. Keep every value runnable from the repository root on both hosts: no aliases, no shell
+5. Keep every value runnable from the repository root on both hosts: no aliases, no shell
    functions, no absolute paths.
 
 ## Output
-A numbered list, one item per gap, in the order the gaps came, each with the
-target (file and key or section), the value, the evidence and the confidence. Then one line
-naming anything the owner should decide that is not a gap (a candidate gate, an empty roster).
+A numbered list, one item per gap, in the order the gaps came, then one item per empty row of
+the levels table, each with the target (file and key or section), the value, the evidence and
+the confidence. Then one line naming anything the owner should decide that is not a gap (a
+candidate gate, an empty roster).
 
 ## Never
 Never edit a file. Never invent a command you did not see run or documented; mark a guess.
