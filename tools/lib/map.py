@@ -10,8 +10,9 @@ import json
 import os
 import re
 import sys
+from typing import Any, Dict, List
 
-from flow_guide import DRIVE, EXTRAS, GATE_HINTS, RUNS, STATIONS  # noqa: E402
+from flow_guide import DRIVE, EXTRAS, GATE_HINTS, RUNS, STATIONS, FlowCommand  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "meta", "skills", "map", "scripts"))
 from project_map import EFFORT_RANK, MARK_COUNT, MARK_GROUP, MARK_LEGEND, agent_card, inject, load_roster, trigger_of  # noqa: E402,F401  (the plugin ships them)
 
@@ -187,13 +188,13 @@ def svg_session(plugins):
     return "\n".join(out)
 
 
-def command_text(command, host):
+def command_text(command: FlowCommand, host: str) -> str:
     """The command as typed: Claude /plugin:skill arguments, Codex $skill arguments."""
     bare_skill = command.skill.split(":", 1)[1]
     return ("/%s" % command.skill if host == "claude" else "$%s" % bare_skill) + ((" " + command.arguments) if command.arguments else "")
 
 
-def command_html(command, ask):
+def command_html(command: FlowCommand, ask: str) -> str:
     return ('<span class="c-claude">%s</span><span class="c-codex">%s</span><span class="c-say">%s</span>'
             % (esc(command_text(command, "claude")), esc(command_text(command, "codex")), esc(ask or command_text(command, "claude"))))
 
@@ -204,7 +205,7 @@ def sh_html(command, ask=""):
             % (esc(command.replace("{host}", "claude")), esc(command.replace("{host}", "codex")), esc(ask or command.replace("{host}", "claude"))))
 
 
-def step_box_html(step):
+def step_box_html(step: Dict[str, Any]) -> str:
     if step.get("command"):
         return '<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % command_html(step["command"], step["ask"])
     if step.get("shell"):
@@ -212,14 +213,14 @@ def step_box_html(step):
     return '<div class="act">%s</div>' % esc(step["action"])
 
 
-def step_meta_html(step, agent_plugin):
+def step_meta_html(step: Dict[str, Any], agent_plugin: Dict[str, str]) -> str:
     tags = ['<span class="ag" style="--pc:var(--c-%s)">%s</span>' % (esc(agent_plugin[agent]), esc(agent)) for agent in step.get("agents", [])]
     if step.get("result"):
         tags.append('<span class="out">&rarr; %s</span>' % esc(step["result"]))
     return '<div class="meta">%s</div>' % "".join(tags) if tags else ""
 
 
-def steps_html(steps, agent_plugin):
+def steps_html(steps: List[Dict[str, Any]], agent_plugin: Dict[str, str]) -> str:
     out = ['<ol class="steps">']
     for number, step in enumerate(steps, 1):
         out.append('<li><span class="n">%d</span><div class="b">%s<p class="say">%s</p>%s</div></li>'
@@ -228,17 +229,17 @@ def steps_html(steps, agent_plugin):
     return "\n".join(out)
 
 
-def stations_html(stations):
+def stations_html(stations: List[str]) -> str:
     return '<div class="also">%s</div>' % "".join(
         '<div><code class="station">%s</code><p>%s</p></div>' % (esc(station), esc(STATIONS[station])) for station in stations)
 
 
-def gate_ask_text(name, gate):
+def gate_ask_text(name: str, gate: Dict[str, Any]) -> str:
     hint = GATE_HINTS.get(name, "")
     return gate["asks"] + " " + hint if hint else gate["asks"]
 
 
-def gates_html(gates):
+def gates_html(gates: Dict[str, Dict[str, Any]]) -> str:
     return '<div class="gates">%s</div>' % "".join(
         '<div class="stop"><b>%s</b><span>%s</span></div>' % (esc(name), esc(gate_ask_text(name, gate))) for name, gate in gates.items())
 
@@ -372,7 +373,7 @@ def chips_html(keys):
         '<button type="button" data-line="%s" aria-pressed="false" style="--lc:var(--l-%s)">%s</button>' % (esc(k), esc(k), esc(LINE_LABEL.get(k, k))) for k in keys)
 
 
-def flows_section_html(profiles, agent_plugin):
+def flows_section_html(profiles: Dict[str, Any], agent_plugin: Dict[str, str]) -> str:
     out = []
     task_keys = ["bugfix", "task-S", "task-M", "task-L"]
     out.append('<section id="flows"><h2><i>01</i>The flows</h2><p class="sub">You file an item. Its kind and size pick a line. The run follows the line and stops at every diamond.</p><div class="stack">')
