@@ -498,10 +498,10 @@ def moved(key: str, transition: Transition) -> str:
 
 
 def moved_by_name(key: str, status_name: str, transition_name: str, current: IssueStatus) -> str:
-    """Jira lists only the transitions out of the current status, so an issue already in a status
-    named as the transition, or in the one the flow last took that transition to, is there."""
-    if current.name.lower() == transition_name.lower():
-        return ""
+    """A listed transition leads to its target, so the issue is there when that is its status. Jira
+    lists only the transitions out of the current status, so with none of that name listed an issue
+    in a status named as the transition, or in the one the flow last took that transition to, is
+    there."""
     transition = next((listed for listed in transitions_of(key) if listed.name == transition_name), None)
     if transition is None:
         return unmoved_when_there(key, status_name, transition_name, current)
@@ -512,7 +512,7 @@ def moved_by_name(key: str, status_name: str, transition_name: str, current: Iss
 
 
 def unmoved_when_there(key: str, status_name: str, transition_name: str, current: IssueStatus) -> str:
-    if read_transition_targets(key).get(transition_name) != current.name:
+    if current.name.lower() != transition_name.lower() and read_transition_targets(key).get(transition_name) != current.name:
         fail("%s%s has no transition named %s; check jira.transitions.%s" % (PREFIX, key, transition_name, status_name))
     return ""
 

@@ -220,6 +220,16 @@ json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_mal
 jira_run "$P/adapters/jira/set-status.sh" "$jira_malformed" in-progress >/dev/null 2>&1; jira_malformed_code=$?
 check "JiraSetStatusOverMalformedStoredTarget_ExitsZero: set-status in-progress exits 0 on an issue whose stored target is not a map, because a value on the tracker is outside data and reads as none stored" [ "$jira_malformed_code" = 0 ]
 check "JiraSetStatusOverMalformedStoredTarget_TakesTheNamedTransition: set-status in-progress moves the issue to the named transition's target though its stored target is not a map, because none stored leaves the move to the transition list" [ "$(jira_status_name "$jira_malformed")" = "In Progress" ]
+echo "jira set-status through a transition named as the current status"
+jira_config https://acme.atlassian.net
+printf '    in-progress: Ready\n' >> .flow/config.yaml
+jira_ready="$(jira_run "$P/adapters/jira/create.sh" task "Ready, with a Ready transition out of it")"
+python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
+jira_data["transitions"].append({"id": "91", "name": "Ready", "to": "Doing", "category": "indeterminate", "from": ["Ready"]})
+jira_data["issues"][sys.argv[2]]["fields"]["status"] = {"name": "Ready", "statusCategory": {"key": "new"}}
+json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_ready#jira:}"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_ready" in-progress >/dev/null 2>&1
+check "JiraSetStatusTransitionNamedAsCurrentStatus_LandsOnItsTarget: set-status in-progress moves an issue in Ready to Doing when jira.transitions.in-progress names a listed Ready transition into Doing, because the setting names a transition, not a status" [ "$(jira_status_name "$jira_ready")" = Doing ]
 jira_assigned="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to me")"
 jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" me >/dev/null 2>&1
 check "JiraAssignMe_AssigneesHoldTokenUser: after assign me the issue's assignees hold the token's user, because me is the account the token belongs to" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = '["flow@acme.test"]' ]
