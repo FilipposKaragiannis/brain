@@ -4,7 +4,8 @@
 # pool whose claimed worktree holds an uncommitted file. A check under jobs.checks is the schedule
 # check-<name> in jobs.sh status, history and install, and the bare name check is none; a run
 # checks the base out fresh from origin under the flow home, never in the pool, removes it however
-# the run ends, and runs beside another check's run.
+# the run ends, and runs beside another check's run. A fail after a pass files one bug, on the local
+# adapter, with the output's tail; a fail after a fail or with no pass before files none.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -17,6 +18,15 @@ poll_delay=0.2
 probe_failure_code=3
 # The seconds the slow check runs unless stopped: far longer than the polls wait.
 slow_check_seconds=60
+# The numbered lines the broken check prints, the first and last of which a bug's tail is checked
+# for; the bytes of the one huge line it prints instead, and the bound its bug's body stays under.
+numbered_output_lines=50
+first_output_line=1
+huge_line_bytes=100000
+bug_body_byte_bound=9000
+# The two-byte characters the broken check prints on one line, enough that a cut of the line's
+# last bytes lands inside one.
+split_character_count=5000
 # The exit code jobs.sh gives a name or a setting it refuses.
 refused_exit=2
 # The runs history prints, and its rows: two header lines, then the newest run, then the one before.
@@ -41,6 +51,26 @@ run_probe() {
   echo "$1" > "$work/probe.exit"; rm -f "$work/probe.report"
   "$check_job" claude --as check-smoke > "$work/run.out" 2>&1
 }
+# check_bugs <name>: the open bugs whose title names the check, oldest first, as JSON.
+check_bugs() {
+  "$local_adapter/list.sh" --kind bug \
+    | python3 -c 'import json,sys; print(json.dumps([item for item in json.load(sys.stdin) if sys.argv[1] in item["title"].split()]))' "$1"
+}
+# bug_count <name>: how many open bugs name the check.
+bug_count() { check_bugs "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# newest_bug <name> <field>: one field of the newest open bug naming the check.
+newest_bug() { check_bugs "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1][sys.argv[1]])' "$2"; }
+# run_broken <mode>: one run of the broken check, its probe passing or printing the mode's output
+# and failing; the run's own exit code is the function's.
+run_broken() {
+  echo "$1" > "$work/broken.mode"
+  "$check_job" claude --as check-broken > "$work/broken-run.out" 2>&1
+}
+# set_bug_adapter <name>: adapters.bug in the config, or none when the name is empty.
+set_bug_adapter() {
+  awk -v adapter="$1" '$0 ~ /^  bug: / { next } { print } $0 == "  default: local" && adapter != "" { print "  bug: " adapter }' \
+    "$flow_home_folder/config.yaml" > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
+}
 jobs_script="$plugin/scripts/jobs.sh"
 check_job="$plugin/jobs/check.sh"
 
@@ -55,6 +85,16 @@ printf 'status %s\n' "\$(git status --porcelain | tr '\n' ' ')" >> "$work/probe.
 printf 'files %s\n' "\$(ls -A | tr '\n' ' ')" >> "$work/probe.report"
 echo "probe ends with \$(cat "$work/probe.exit")"
 exit "\$(cat "$work/probe.exit")"
+SH
+cat > "$work/broken.sh" <<SH
+case "\$(cat "$work/broken.mode")" in
+  pass) exit 0 ;;
+  lines) line_number=$first_output_line
+    while [ "\$line_number" -le $numbered_output_lines ]; do echo "output line \$line_number"; line_number=\$((line_number + 1)); done ;;
+  huge) head -c $huge_line_bytes /dev/zero | tr '\\0' x; echo ;;
+  split) printf '%${split_character_count}s\\n' '' | sed 's/ /é/g' ;;
+esac
+exit 1
 SH
 cat > "$work/slow.sh" <<SH
 pwd > "$work/slow.started"
@@ -79,6 +119,9 @@ jobs:
     slow:
       command: sh $work/slow.sh
       schedule: every 2h
+    broken:
+      command: sh $work/broken.sh
+      schedule: every 30m
 YAML
 claimed_item="$(new_task "Claimed work")"
 claimed_worktree="$("$plugin/scripts/steward.sh" claim "$claimed_item")"
@@ -156,6 +199,43 @@ wait_until '! kill -0 "$slow_run"'
 check "StoppedRun_RemovesItsCheckout: jobs.sh stop mid-run ends the command and the folder goes" \
   '[ -n "$slow_checkout" ] && [ ! -e "$slow_checkout" ]'
 kill "$slow_run" 2>/dev/null
+
+echo "checks: a broken check files one bug"
+run_broken lines
+check "FirstEverFailure_FilesNoBug: with no pass before it, a failing run files nothing" \
+  '[ "$(bug_count broken)" -eq 0 ]'
+run_broken lines
+check "FailAfterFirstEverFail_HistorySaysStillFailing: the first fail is kept, so the next one says the check still fails" \
+  'history_row check-broken "$newest_history_row" | grep -q "; still failing |"'
+run_broken pass; run_broken lines
+check "PassThenFail_FilesOneBug: the first fail after a pass files one bug" \
+  '[ "$(bug_count broken)" -eq 1 ]'
+newest_bug broken body > "$work/lines-bug.body"
+check "FiledBug_BodyHoldsTheLastOutputLine: the output's tail ends the body" \
+  'grep -qx "output line $numbered_output_lines" "$work/lines-bug.body"'
+check "FiledBug_BodyLeavesOutTheFirstOfManyLines: the body holds the tail, not the whole output" \
+  '[ -s "$work/lines-bug.body" ] && ! grep -qx "output line $first_output_line" "$work/lines-bug.body"'
+first_bug="$(newest_bug broken id)"
+run_broken lines
+check "FailAfterFail_FilesNoSecondBug: a check that stays broken keeps its one bug" \
+  '[ "$(bug_count broken)" -eq 1 ]'
+check "FailAfterFail_HistorySaysStillFailingWithTheBug: the run's line names the bug already filed" \
+  '[ -n "$first_bug" ] && history_row check-broken "$newest_history_row" | grep -qF "still failing, bug $first_bug |"'
+run_broken pass; run_broken huge
+check "PassFailPassFail_FilesASecondBug: a check that breaks again after a pass files a new bug" \
+  '[ "$(bug_count broken)" -eq 2 ]'
+newest_bug broken body > "$work/huge-bug.body"
+check "HugeOutputLine_BugBodyStaysUnderTheBound: one huge line is cut, so the body stays small" \
+  'grep -q xxx "$work/huge-bug.body" && [ "$(wc -c < "$work/huge-bug.body")" -lt "$bug_body_byte_bound" ]'
+run_broken pass; run_broken split
+check "OutputCutInsideACharacter_StillFilesTheBug: a cut through a character never stops the bug" \
+  '[ "$(bug_count broken)" -eq 3 ]'
+run_broken pass; set_bug_adapter nowhere; run_broken lines
+check "BugTheTrackerRefuses_RunLineSaysItCouldNotBeFiled: a new.sh that fails is said in the run's line" \
+  'history_row check-broken "$newest_history_row" | grep -q "| failed | failed: exited .*; the bug could not be filed: ."'
+set_bug_adapter ""; run_broken lines
+check "BugNotFiledBefore_IsFiledAtTheNextFail: the state stays passed, so the next fail files the bug" \
+  '[ "$(bug_count broken)" -eq 4 ]'
 
 [ "$fails" -eq 0 ] && { echo "checks: ok"; exit 0; }
 echo "checks: $fails failed"; exit 1

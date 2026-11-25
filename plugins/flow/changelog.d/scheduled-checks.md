@@ -6,3 +6,9 @@ bump: minor
   from a clean checkout of the base under `<flow home>/check-runs/<name>`, never a claimed
   worktree, and `jobs.sh` status, history, logs, run, stop, pause and install take it as any
   schedule. Run flow:init to install the `.flow/jobs/check.sh` wrapper.
+- A check that fails after a pass files one bug through `scripts/new.sh bug`, so
+  `adapters.bug` picks the tracker. Its body holds the command, the base commit, the exit code and
+  the last 40 lines of the output, cut to 8000 bytes; on a public tracker that tail is public. A
+  check that stays broken files no second bug, and its run says `still failing, bug <id>`; the
+  next fail after a pass files a new one. A bug the tracker refuses is said in the run's line and
+  filed at the next fail. Whether a check passed last lives in `<flow home>/log/check-<name>.state`.
