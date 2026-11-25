@@ -82,9 +82,9 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
     `install` take that name. The schedule is the timing alone (`every 30m`, `daily 02:00`,
     `weekly sun 03:00`): no args, no host word, no `--model` or `--effort`, as a check starts no
     session. Its runs take the `jobs.host` word all the same, so that host's CLI must be installed
-    on the machine. `run` and `install` refuse a malformed entry, naming its line in the config,
-    and a missing `.flow/jobs/check.sh`, saying to run flow:init, exit 2; `init --check` names each
-    malformed entry as a gap. Edit the config, show the diff, then install.
+    on the machine. `run` and `install` refuse a malformed entry or a `base` that is no valid
+    branch name, naming its line in the config, and a missing `.flow/jobs/check.sh`, saying to run
+    flow:init, exit 2; `init --check` names each as a gap. Edit the config, show the diff, then install.
 11. The command goes through the config's plain reader, so write it on one line, bare:
     - a space then `#` ends it, inside quotes too (`echo a # b` runs `echo a`);
     - a command that starts and ends with the same quote loses that pair (`'x' && echo 'y'` runs
@@ -227,7 +227,8 @@ Facts to answer with:
   could not be filed: <why>` and is filed at the next fail. The bug is never closed: once the
   check passes again, the next fail after it files a new one.
 - The bug's body holds the check's command and the last 40 lines of its output, cut to 8000
-  bytes. On a public tracker (a GitHub issue on a public repository) both are public: keep
+  bytes, in code blocks indented two spaces, so a `base:` line the check prints never sets the
+  bug's base. On a public tracker (a GitHub issue on a public repository) both are public: keep
   secrets out of the command and out of what it prints.
 - The console shows a check as a card, but its run, pause and install buttons refuse a
   `check-<name>` schedule; `jobs.sh` does those.

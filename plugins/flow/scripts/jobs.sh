@@ -29,7 +29,8 @@
 # The project's own checks are schedules too: each key under jobs.checks (smoke) runs the check job
 # as check-<name> (check-smoke), its command and its schedule under it: jobs.checks.smoke.command and
 # jobs.checks.smoke.schedule, the timing alone. The bare name check is no schedule. run and install
-# refuse a malformed entry (lib/scheduled_checks.sh), or a missing .flow/jobs/check.sh, exit 2.
+# refuse a malformed entry or a base that is no valid branch name (lib/scheduled_checks.sh), or a
+# missing .flow/jobs/check.sh, exit 2.
 # On macOS a schedule is a launchd agent, com.<repo>.flow.<name>, loaded at login: it runs while
 # you are logged in and the Mac is awake; a comments agent starts its run in the background, so
 # its next interval starts a run while one is alive. Elsewhere install prints the crontab lines to add.
@@ -38,6 +39,7 @@ set -u
 . "$FLOW_PLUGIN/lib/host.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
 . "$FLOW_PLUGIN/lib/process.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/scheduled_checks.sh"
 JOBS="next comments intake retro health check"
 log="$(flow_home)/log"; main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"

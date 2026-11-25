@@ -13,7 +13,8 @@
 # The clone goes when the run ends, by a pass, a fail or a stop; one a killed run left goes at the
 # next run's start. The run's line: done: passed at <commit>, exit 0; failed: exited <code> at
 # <commit>: <the output's last line>, exit 1; error: could not check out <base>: <why>, exit 1; a
-# malformed entry is an error naming its line in the config, exit 2.
+# malformed entry, or a base that is no valid branch name, is an error naming its line in the
+# config, exit 2, before git sees the base.
 # Whether the check passed last lives in <flow home>/log/check-<name>.state, as passed, failed or
 # failed <bug id>, since runs.jsonl is cut long before a weekly check's last run would fall out.
 # A fail after a pass files one bug through scripts/new.sh in the main worktree, so adapters.bug
@@ -25,6 +26,7 @@
 set -u
 job=check
 . "$(dirname "$0")/_job.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/scheduled_checks.sh"
 # The characters of the output's last line the run's line keeps, so one long line never fills the
 # run history.
@@ -35,6 +37,9 @@ bug_output_lines=40
 bug_output_bytes=8000
 # The shortest fence markdown takes for a code block.
 shortest_fence_length=3
+# What each line of a code block in a bug's body starts with, its fences too, so markdown takes it
+# off again but no line of the output can start with the base: line a claim reads (lib/base.sh).
+block_indent='  '
 host="${1:-}"; shift || true
 [ $# -eq 0 ] || die "unknown option $1" 2
 check_name="${job#check-}"
@@ -81,17 +86,19 @@ fence_for() {
     'BEGIN { longest = shortest } length($0) > longest { longest = length($0) } END { print longest + 1 }')"
   printf "%${fence_length}s" '' | tr ' ' '`'
 }
+# code_block <text>: the text as a fenced code block it cannot close, each line indented.
+code_block() {
+  _block_fence="$(fence_for "$1")"
+  printf '%s\n%s\n%s\n' "$_block_fence" "$1" "$_block_fence" | sed "s/^/$block_indent/"
+}
 # bug_body <exit code> <time>: the bug's body in the item shape, the output's tail in its notes.
 bug_body() {
-  command_fence="$(fence_for "$check_command")"
-  tail_text="$(output_tail)"
-  tail_fence="$(fence_for "$tail_text")"
-  printf '## Problem\n\nThe scheduled check %s runs this command from a clean checkout of %s at %s:\n\n%s\n%s\n%s\n\nIt passed on its run before, and at %s it exited %s.\n\n' \
-    "$check_name" "$base" "$base_commit_id" "$command_fence" "$check_command" "$command_fence" "$2" "$1"
+  printf '## Problem\n\nThe scheduled check %s runs this command from a clean checkout of %s at %s:\n\n%s\n\nIt passed on its run before, and at %s it exited %s.\n\n' \
+    "$check_name" "$base" "$base_commit_id" "$(code_block "$check_command")" "$2" "$1"
   printf '## Outcome\n\nThe scheduled check %s passes again on %s.\n\n' "$check_name" "$base"
   printf '## Acceptance\n\n- [ ] `jobs.sh run %s` passes\n\n' "$job"
-  printf '## Notes\n\nThe last %s lines of the output, cut to its last %s bytes:\n\n%s\n%s\n%s\n' \
-    "$bug_output_lines" "$bug_output_bytes" "$tail_fence" "$tail_text" "$tail_fence"
+  printf '## Notes\n\nThe last %s lines of the output, cut to its last %s bytes:\n\n%s\n' \
+    "$bug_output_lines" "$bug_output_bytes" "$(code_block "$(output_tail)")"
 }
 # file_bug <exit code>: files the bug for the failed run in the main worktree's tracker and prints
 # its id; when new.sh cannot, prints its last line and returns 1.
