@@ -12,7 +12,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 `local:<kind>/<n>`. Never build the path by hand.
 
 1. **Inputs**: the item, its claimed worktree (clean apart from `.flow/`), `.standards/config.json`
-   (build, format, test, mutation), `.flow/config.yaml` (`gates`, `feel_test_paths`,
+   (build, format, test, mutation), `.flow/config.yaml` (`gates`, `evidence`, `feel_test_paths`,
    `verify.limit`).
 2. **Spawn `verifier`** with the step brief. The brief names `"$P/scripts/verify.sh" <item>`,
    which runs every check once and writes `<reports>/verify.json` and `verify.md`, each check
@@ -24,7 +24,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    in test-pass reuse. A test command
    that passed on the same command and files is not run again: the check is a pass that names the run it
    came from (`--fresh` runs every command). A build always runs; its pass is kept so a push of
-   the same inputs skips it (`scripts/build-passed.sh`). The verifier
+   the same inputs skips it (`scripts/build-passed.sh`). After the gates the run captures the
+   evidence: each `evidence` command, shaped like a gate, is the check `evidence <name>` and
+   writes its files into `<reports>/evidence/` (`$FLOW_EVIDENCE_FOLDER`), which every run empties
+   first; a failed capture fails verify. The verifier
    starts it with `--start`, detached, so it outlives any one shell call, and calls `--wait`
    again and again, each a single call under the host's limit, until it exits 0 (pass) or 1
    (fail); 3 is still running. The run stops at `verify.limit` in `.flow/config.yaml` (default
