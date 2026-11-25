@@ -11,6 +11,8 @@ trap 'sandbox_close $?' EXIT
 . "$here/_verify_fixture.sh"
 
 check_summary() { python3 -c 'import json,sys; print([check["summary"] for check in json.load(open(sys.argv[1]))["checks"] if check["name"]==sys.argv[2]][0])' "$reports/verify.json" "$1"; }
+summary_without_output="$(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report; print(_verify_report.SUMMARY_WITHOUT_OUTPUT)' "$plugin/scripts")"
+broken_pattern='\d+ (passed'
 markdown_row() { grep -F "| $1 | $2 |" "$reports/verify.md"; }
 printing_script() {
   printing_script_path="$work/$1.sh"; printing_script_exit="$2"; shift 2
@@ -38,7 +40,7 @@ new_item gates "  counted:
   silent: 'true'
   broken:
     command: 'sh $broken'
-    summary: '\\d+ (passed'
+    summary: '$broken_pattern'
   failing: 'sh $failing'"
 verify >/dev/null 2>&1
 check "GateWithSummaryPattern_SummaryIsTheMatchingLine: a reviewer sees what the check proved without opening the log" \
@@ -53,10 +55,10 @@ check "ColouredOutput_PatternMatchesTheLineWithoutItsColours: a runner that colo
   '[ "$(check_summary "gate coloured")" = "5 passed" ]'
 check "PatternThatMatchesNoLine_SummaryIsTheLastNonEmptyLine: a pattern that misses falls back to the default, never to nothing" \
   '[ "$(check_summary "gate unmatched")" = "only line" ]'
-check "PassWithNoOutput_SummaryIsOk: a silent pass still shows a result" \
-  '[ "$(check_summary "gate silent")" = ok ]'
-check "PatternThatIsNoRegularExpression_SummarySaysSo: a broken pattern is a config fault the owner can see and fix" \
-  'check_summary "gate broken" | grep -qF "is not a regular expression"'
+check "PassWithNoOutput_SummaryIsTheBuildersNoOutputWord: a silent pass still shows a result" \
+  '[ -n "$summary_without_output" ] && [ "$(check_summary "gate silent")" = "$summary_without_output" ]'
+check "PatternThatIsNoRegularExpression_SummaryNamesThePattern: a broken pattern is a config fault the owner can see and fix" \
+  'check_summary "gate broken" | grep -qF -- "$broken_pattern"'
 check "FailedGateWithNoSummaryPattern_SummaryEndsWithItsLastNonEmptyLine: the default line shows on a fail as on a pass" \
   'check_summary "gate failing" | grep -q "last failure line\$"'
 check "FailedGate_SummaryKeepsTheTailOfItsOutput: the stop gate and the escalation read the cause from it" \

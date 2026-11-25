@@ -39,6 +39,7 @@ ARGUMENTS_WITHOUT_TIMINGS = 10
 ARGUMENTS_WITHOUT_SUMMARY_PATTERNS = 12
 FAILED = "fail"
 SUMMARY_WITHOUT_OUTPUT = "ok"
+FIELDS_PER_SUMMARY_PATTERN = 2
 NAME_SEPARATOR = "\x1f"
 VERDICT_LINE = "Verdict: %s at %s"
 NOT_CHECKED_HEADING = "## Not checked"
@@ -84,7 +85,7 @@ def check_summary(status: str, source: str, pattern: str) -> str:
 
 def summary_patterns(raw: bytes) -> dict:
     fields = [text(field) for field in raw.split(b"\0")][:-1]
-    return dict(zip(fields[0::2], fields[1::2]))
+    return dict(zip(fields[0::FIELDS_PER_SUMMARY_PATTERN], fields[1::FIELDS_PER_SUMMARY_PATTERN]))
 
 
 def checks(records: bytes, patterns: dict) -> list:
@@ -145,8 +146,8 @@ def main(argv):
     if len(argv) > ARGUMENTS_WITHOUT_SUMMARY_PATTERNS:
         with open(argv[ARGUMENTS_WITHOUT_SUMMARY_PATTERNS], "rb") as patterns_file:
             patterns = summary_patterns(patterns_file.read())
-    with open(records, "rb") as f:
-        report_checks = checks(f.read(), patterns)
+    with open(records, "rb") as records_file:
+        report_checks = checks(records_file.read(), patterns)
     if has_timings:
         with open(argv[ARGUMENTS_WITHOUT_TIMINGS], "rb") as f:
             report_checks = timed(report_checks, text(f.read()))

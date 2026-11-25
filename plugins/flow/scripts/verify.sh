@@ -420,7 +420,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" "$summary_patterns" 2>&1 >/dev/null)" \
-  || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
+report_error="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" "$summary_patterns" 2>&1 >/dev/null)" \
+  || report_failed "$(printf '%s\n' "${report_error:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]
