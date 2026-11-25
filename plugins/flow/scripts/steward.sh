@@ -1933,11 +1933,13 @@ cmd_resume() {
   [ -z "$health_gate" ] || exit 4
 }
 
-# The header's usage lines, past the shebang, and the exit code of a call steward.sh refuses: a
-# command it does not know, or one missing its arguments.
-usage_first_line=2
-usage_last_line=56
+# The exit code of a call steward.sh refuses: a command it does not know, or one missing its arguments.
 usage_refused=2
+# The header's title and its indented usage lines, read up to the first line past them so a
+# command added to the header is printed too.
+usage_text() {
+  awk '/^#   steward\.sh / { in_usage = 1 } in_usage && !/^#   / { exit } /^#/ && !/^#!/ { print }' "$1"
+}
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
@@ -1960,5 +1962,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n "${usage_first_line},${usage_last_line}p" "$0"; exit "$usage_refused" ;;
+  *) usage_text "$0"; exit "$usage_refused" ;;
 esac
