@@ -11,19 +11,22 @@
 # are each said once, with no notification. Left alone, and said nothing of: an epic in a
 # repository with no remote, one the tracker cannot read, a base that does not resolve or is not
 # on the remote, and a base that is the task branch of the epic's parent, whose work reaches the
-# epic branch through its PR. A dry run pushes nothing. Sourced, never run.
+# epic branch through its PR. A dry run fetches and pushes nothing. Sourced, never run.
 # shellcheck disable=SC2154 # scripts/steward.sh, which sources it, sets dry, have_remote and behind_base
 EPIC_BASE_KEY_PREFIX=epic-base-
 EPIC_BASE_PUSH_KEY_PREFIX=epic-push-
 EPIC_BASE_MERGE_CONFLICTED=1
 
-epic_base_fetch_branch() {
+# A subshell, so a dry run's read-only fetch_base stays inside it.
+epic_base_fetch_branch() (
   [ -n "$1" ] || return 1
+  # shellcheck disable=SC2329 # fetch_epic_start, in lib/base.sh, calls it
+  if [ "$dry" -eq 1 ]; then fetch_base() { :; }; fi
   epic_base_resolved="$(fetch_epic_start "$1")" || return 1
   epic_base_parent="$(json_get "$1" parent)"
   if [ -n "$epic_base_parent" ] && [ "$(parent_branch "$epic_base_parent")" = "$epic_base_resolved" ]; then return 1; fi
   printf '%s' "$epic_base_resolved"
-}
+)
 
 epic_base_remote_tip() { git -C "$1" rev-parse -q --verify "refs/remotes/origin/$2^{commit}"; }
 

@@ -111,6 +111,16 @@ check "EpicWithABaseLine_HasThatBranchMergedIn: the base: line names the branch 
 check "EpicUnderAnEpicWithABranchAndABaseLine_HasTheEpicBranchAboveMergedIn: an epic branch above wins over a base: line, as it does for a child's base" \
   '[ -n "$(remote_tip "$(epic_of "$parent_epic")")" ] && [ "$(parent_of "$(remote_tip "$(epic_of "$nested_with_a_line")")" "$second_parent")" = "$(remote_tip "$(epic_of "$parent_epic")")" ]'
 
+echo "epic base: a dry run fetches no base"
+new_repo dry-fetch
+remote_branch release
+unfetched_base="$(approved_epic "Replays" --body "base: release")"
+remote_branch "$(epic_of "$unfetched_base")"
+git fetch -q origin "$(epic_of "$unfetched_base")"
+health_pass --dry-run > "$work/dry-fetch.out"
+check "HealthDryRunOnAnEpicWithABaseLine_LeavesTheBaseUnfetched: a dry run only says what it would do, so it changes no remote-tracking ref" \
+  'git -C "$root/app" show-ref --verify --quiet "refs/remotes/origin/$(epic_of "$unfetched_base")" && ! git -C "$root/app" show-ref --verify --quiet refs/remotes/origin/release'
+
 echo "epic base: a base not on the remote is left alone"
 new_repo missing
 missing_line="base: missing"
