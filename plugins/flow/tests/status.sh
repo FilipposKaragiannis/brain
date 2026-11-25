@@ -5,10 +5,11 @@
 # adapter in a throwaway repo. A take that makes the claim assigns the user when nobody holds the
 # item and sets it in progress; a take of a claim already held moves nothing; a raised gate sets
 # needs-you, the merge gate in-review; a clear in each mode sets in-progress again; the last step
-# done sets in-review; a gate dropped and a merge gate cleared at done move nothing. A copy of the
-# plugin whose set-status fails shows a push that fails warns, logs a push failed event, keeps
-# pushed as it was and leaves the step's exit as it was; one whose set-status keeps what it printed
-# shows the same status pushed twice moves the item once.
+# done sets in-review; a gate dropped and a merge gate cleared at done move nothing. A local item
+# file that cannot be written makes set-status exit 1. A copy of the plugin whose set-status fails
+# shows a push that fails warns, logs a push failed event, keeps pushed as it was and leaves the
+# step's exit as it was; one whose set-status keeps what it printed shows the same status pushed
+# twice moves the item once.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -113,6 +114,8 @@ write_frontmatter "$merged_at_done" workflow backlog
 clear_gate "$merged_at_done" "Merged."
 check "MergeGateClearedAtDone_MovesNothing: the item stays where it was put, because the sweep closed it and its card is in review already" \
   '[ "$(category "$merged_at_done")" = todo ]'
+check "MergeGateClearedAtDone_ClearsTheGate: the record's gate reads none, because the clear lands though it pushes nothing" \
+  '[ "$(record get "$merged_at_done" gate)" = none ]'
 
 echo "status: the last step"
 finished="$(new_task "Every step ran")"; take "$finished"
@@ -136,6 +139,14 @@ check "FailingSetStatus_KeepsThePushedStatus: pushed still names the in-progress
   '[ "$(record get "$failing" pushed.status)" = in-progress ]'
 check "FailingSetStatus_LogsAPushFailedEvent: events.log holds a push failed line for the item, because the console lists what the tracker missed" \
   'events_hold "$failing" "push failed"'
+
+echo "status: an item file the local tracker cannot write"
+unwritable="$(new_task "Its folder is read-only")"; unwritable_folder="$(dirname ".flow/items/${unwritable#local:}.md")"
+chmod a-w "$unwritable_folder" ".flow/items/${unwritable#local:}.md"
+"$local_adapter/set-status.sh" "$unwritable" in-progress >/dev/null 2>&1; unwritable_code=$?
+chmod u+w "$unwritable_folder" ".flow/items/${unwritable#local:}.md"
+check "LocalSetStatusOnAnUnwritableFile_ExitsOne: set-status exits 1, because the tracker could not take the status" \
+  '[ "$unwritable_code" = 1 ]'
 
 echo "status: a push repeated"
 repeated="$(new_task "Pushed twice")"
