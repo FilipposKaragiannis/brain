@@ -206,6 +206,15 @@ for schedule_form_check in broken slow smoke weekly; do
 done
 check "CheckOnEveryScheduleFormTheJobsTake_IsInstalled: every 30m, every 2h, daily 02:00 and weekly sun 03:00 are each taken for a check" \
   '[ ! -e "$work/refused-schedule-forms" ]'
+cp "$flow_home_folder/config.yaml" "$work/config-before-unscheduled.yaml"
+printf '    unscheduled:\n      command: true\n' >> "$flow_home_folder/config.yaml"
+unscheduled_line="$(grep -n '^    unscheduled:' "$flow_home_folder/config.yaml" | cut -d: -f1)"
+FLOW_SCHEDULER=cron "$jobs_script" install > "$work/install-unscheduled.out" 2>&1; install_unscheduled_exit=$?
+check "CheckWithNoScheduleBesideAValidOne_IsRefusedByBareInstall: install with no name refuses the entry rather than skip it" \
+  '[ "$install_unscheduled_exit" -eq "$refused_exit" ]'
+check "CheckWithNoScheduleBesideAValidOne_InstallNamesItsLine: the refusal names the entry's config line and that it has no schedule" \
+  'grep -q "config.yaml:$unscheduled_line: jobs.checks.unscheduled: has no schedule" "$work/install-unscheduled.out"'
+mv "$work/config-before-unscheduled.yaml" "$flow_home_folder/config.yaml"
 unset FLOW_SCHEDULER FLOW_LAUNCH_AGENTS
 
 echo "checks: two checks at once, and a stop"

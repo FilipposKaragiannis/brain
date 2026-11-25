@@ -78,9 +78,11 @@ orphans() {
     py name "$n" $JOBS 2>/dev/null && echo "$n"
   done
 }
+# targets <name|all>: the schedules install writes; all takes each one with a schedule, after
+# every check under jobs.checks passes checks_ok, so an entry with no schedule is refused.
 targets() {
   case "${1:-all}" in
-    all) for j in $(schedules); do [ -z "$(spec "$j")" ] || { known "$j"; echo "$j"; }; done ;;
+    all) for j in $(schedules); do checks_ok "$j"; [ -z "$(spec "$j")" ] || { known "$j"; echo "$j"; }; done ;;
     *) known "$1"; echo "$1" ;;
   esac
 }
