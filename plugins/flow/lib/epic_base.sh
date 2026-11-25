@@ -79,12 +79,17 @@ epic_base_merge() {
   esac
 }
 
+epic_base_fetched_base() {
+  [ "$have_remote" -eq 1 ] || return 1
+  epic_base_fetched="$(epic_base_fetch_branch "$(adapter read "$1" 2>/dev/null)")" || return 1
+  [ "$dry" -eq 1 ] || { fetch_base "$(epic_branch "$1")"; fetch_base "$epic_base_fetched"; }
+  base_exists "$epic_base_fetched" || return 1
+  printf '%s' "$epic_base_fetched"
+}
+
 health_epic_base() {
-  [ "$have_remote" -eq 1 ] || return 0
-  epic_base_base_branch="$(epic_base_fetch_branch "$(adapter read "$1" 2>/dev/null)")" || return 0
+  epic_base_base_branch="$(epic_base_fetched_base "$1")" || return 0
   epic_base_repository="$(flow_repository)"
-  [ "$dry" -eq 1 ] || { fetch_base "$(epic_branch "$1")"; fetch_base "$epic_base_base_branch"; }
-  base_exists "$epic_base_base_branch" || return 0
   epic_base_behind="$(git -C "$epic_base_repository" rev-list --count "refs/remotes/origin/$(epic_branch "$1")..refs/remotes/origin/$epic_base_base_branch" 2>/dev/null)" || return 0
   if [ "$epic_base_behind" -le "$behind_base" ]; then health_cleared "$EPIC_BASE_KEY_PREFIX$(item_slug "$1")"; return 0; fi
   epic_base_merge "$1" "$epic_base_repository" "$epic_base_base_branch" "$epic_base_behind"
