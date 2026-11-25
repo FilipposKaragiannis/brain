@@ -140,9 +140,15 @@ def _changes(output: bytes) -> "tuple[_Change, ...]":
     return tuple(_Change(status, path) for status, path in zip(fields, fields))
 
 
-def _plugin_paths_at(commit: str) -> Optional["frozenset[str]"]:
+def _plugin_paths_at(commit: str) -> Union["frozenset[str]", _Refusal]:
     tree = _git_output(("ls-tree", "-r", "-z", "--name-only", commit, "--", _PLUGINS_FOLDER))
-    return None if tree is None else frozenset(_fields(tree))
+    if tree is None:
+        return _Refusal(("fragments: git could not list the plugins at %s" % commit,))
+    return frozenset(_fields(tree))
+
+
+def _unlisted(commits: "tuple[str, ...]") -> _Refusal:
+    return _Refusal(("fragments: git could not list the commits since %s" % ", ".join(commits),))
 
 
 def _work(commits: "tuple[str, ...]") -> Union[_Work, _Refusal]:
@@ -160,15 +166,15 @@ def _work(commits: "tuple[str, ...]") -> Union[_Work, _Refusal]:
         )
     )
     paths_at_head = _plugin_paths_at(_HEAD)
-    paths_at_each_reference = [_plugin_paths_at(commit) for commit in commits]
-    if log is None or paths_at_head is None or None in paths_at_each_reference:
-        return _Refusal(
-            ("fragments: git could not list the commits since %s" % ", ".join(commits),)
-        )
-    paths_at_references = frozenset(
-        path for paths in paths_at_each_reference if paths is not None for path in paths
-    )
-    return _Work(_changes(log), paths_at_head, paths_at_references)
+    if log is None or isinstance(paths_at_head, _Refusal):
+        return _unlisted(commits)
+    paths_at_references: "set[str]" = set()
+    for commit in commits:
+        paths = _plugin_paths_at(commit)
+        if isinstance(paths, _Refusal):
+            return _unlisted(commits)
+        paths_at_references |= paths
+    return _Work(_changes(log), paths_at_head, frozenset(paths_at_references))
 
 
 def _plugins(paths_at_head: "frozenset[str]") -> "list[str]":
