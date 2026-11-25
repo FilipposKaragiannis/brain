@@ -2,7 +2,7 @@
 # The detached verify run (scripts/verify.sh --start): its record and its end. Sourced after
 # lib/flow.sh by scripts/verify.sh and scripts/steward.sh. The record is <reports>/verify.run, one
 # `key value` line each: pid (the run's own session and process group), started (epoch seconds),
-# head (the short commit it checks) and limit (seconds).
+# head (the full commit it checks) and limit (seconds).
 . "$FLOW_PLUGIN/lib/process.sh"
 
 # The seconds a stopped run gets to end before what is left of its group is killed.
@@ -27,7 +27,7 @@ verify_run_record() {
 # session, its output to the run output, records it and prints its pid. Says why on stderr and
 # returns 1 when it cannot start or record the run. verify.sh --start calls it.
 verify_run_start() {
-  spawned_started="$(date +%s)"; spawned_head="$(git rev-parse --short HEAD)"
+  spawned_started="$(date +%s)"; spawned_head="$(git rev-parse HEAD)"
   spawned_pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" spawn "$2" sh "$FLOW_PLUGIN/scripts/verify.sh" "$4" --detached ${5:+--base "$5"} ${6:+--fresh})" &&
     [ -n "$spawned_pid" ] || { echo "flow: could not start the verify run of $4" >&2; return 1; }
   verify_run_record "$1" "$spawned_pid" "$spawned_started" "$spawned_head" "$3" ||

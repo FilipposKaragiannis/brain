@@ -32,7 +32,7 @@ fake_run() {
 }
 # write_run_record <reports> <pid> [started] [limit]: a verify.run in lib/verify.sh's format.
 write_run_record() {
-  printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "${3:-$(date +%s)}" "$(git -C "$worktree" rev-parse --short HEAD)" "${4:-7200}" > "$1/verify.run"
+  printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "${3:-$(date +%s)}" "$(git -C "$worktree" rev-parse HEAD)" "${4:-7200}" > "$1/verify.run"
 }
 
 # new_item <dir> <gates yaml>: a fresh repo with the gates, a claimed item with one committed

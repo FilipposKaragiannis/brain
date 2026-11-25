@@ -11,7 +11,11 @@ in the same order: the whole seconds the check ran, a tab, and the run a reused 
 the run's total `seconds`; a line that is missing or no number counts as 0. Bytes that are not
 UTF-8 are replaced, never fatal. The summary is the last five non-empty lines of its source on one line, without control
 characters, terminal colours or terminal hyperlinks (OSC 8: the target goes and the link's text
-stays; one cut short with no terminator goes to the end), cut to 400 characters. Writes
+stays; one cut short with no terminator goes to the end), cut to 400 characters. <head> is the
+full commit the run checked. verify.md opens with the verdict line, `Verdict: <status> at <head>`,
+which verify.json holds as `verdict`; then the checks, then a `## Not checked` section, which says
+none when empty. verify.json holds `proofs` and `not_checked` as lists, empty until a run fills
+them; an evidence file a proof names lives under `evidence/` in the reports folder. Writes
 verify.json and verify.md through a temp file and a rename each, so a reader sees the old report
 or the new one, never a part.
 """
@@ -27,6 +31,9 @@ SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 ARGUMENTS_WITHOUT_TIMINGS = 10
 NAME_SEPARATOR = "\x1f"
+VERDICT_LINE = "Verdict: %s at %s"
+NOT_CHECKED_HEADING = "## Not checked"
+NOT_CHECKED_NONE = "None."
 FEEL_TEST_REASONS = MappingProxyType({
     "true": "a changed file matches `feel_test_paths`",
     "not_ruled_out": "verify could not list every changed file, so a change under `feel_test_paths` cannot be ruled out",
@@ -110,16 +117,20 @@ def main(argv):
             report_checks = timed(report_checks, text(f.read()))
     with open(changed, "rb") as f:
         files = [name for name in text(f.read()).split(NAME_SEPARATOR) if name]
+    verdict = VERDICT_LINE % (status, head)
     report = {
         "status": status,
+        "verdict": verdict,
         "checks": report_checks,
         "attempts": int(attempts),
         "base": base,
         "head": head,
         "changed_files": files,
         "feel_test": feel in FEEL_TEST_REASONS,
+        "proofs": [],
+        "not_checked": [],
     }
-    md = ["## Verify: %s (attempt %s)" % (status, attempts), ""]
+    md = [verdict, "", "## Checks (attempt %s)" % attempts, ""]
     if has_timings:
         report["seconds"] = whole_seconds(argv[ARGUMENTS_WITHOUT_TIMINGS + 1])
         md += ["| check | status | time | summary |", "|---|---|---|---|"]
@@ -131,6 +142,7 @@ def main(argv):
     md += ["", "Base `%s` (%s), head `%s`, %d changed files. Log: `%s`." % (base, merge_base, head, len(files), log)]
     if report["feel_test"]:
         md.append("**Feel-test needed:** %s." % FEEL_TEST_REASONS[feel])
+    md += ["", NOT_CHECKED_HEADING, "", NOT_CHECKED_NONE]
     write_atomic(os.path.join(reports, "verify.json"), json.dumps(report, indent=2) + "\n")
     write_atomic(os.path.join(reports, "verify.md"), "\n".join(md) + "\n")
 
