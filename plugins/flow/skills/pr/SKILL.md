@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim in claim.json when the item's state.base is set (the parent rule when it is empty, for claims made before the base was recorded), the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
+description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim in claim.json when the item's state.base is set (the parent rule when it is empty, for claims made before the base was recorded), the house PR body that opens with the verify verdict and has three sections in a fixed order, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
 disable-model-invocation: true
 ---
 

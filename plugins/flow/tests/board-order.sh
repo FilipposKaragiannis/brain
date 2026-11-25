@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2154 # the fixture sourced below sets plugin, work, local_adapter and fails
 # board-order.sh: the sections board.sh prints, on the local adapter in throwaway repos. What waits
 # on the owner leads, even ahead of the health notes and when nothing waits; the pool follows the
 # running and ready items; an empty section prints at most its heading line, never a table
@@ -20,6 +21,7 @@ first_heading() { grep -m 1 '^## ' "$1"; }
 
 echo "board order: what waits on you leads, the pool follows the items"
 new_repo busy
+# shellcheck disable=SC2034 # the check's condition reads it
 ready="$(new_task "Ready to start")"
 gated="$(new_task "Asks the owner")"
 running="$(new_task "Runs now")"
