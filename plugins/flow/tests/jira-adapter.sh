@@ -202,16 +202,17 @@ jira_started="$(jira_run "$P/adapters/jira/create.sh" task "Started, then refuse
 jira_run "$P/adapters/jira/set-status.sh" "$jira_started" in-progress >/dev/null 2>&1
 jira_run "$P/adapters/jira/set-status.sh" "$jira_started" needs-you >/dev/null 2>&1; jira_refused_code=$?
 check "JiraSetStatusRefusedMove_ExitsOne: set-status needs-you exits 1 when Jira refuses the named transition's move, because the issue did not move" [ "$jira_refused_code" = 1 ]
+check "JiraSetStatusRefusedMove_LeavesTheIssueWhereItWas: set-status needs-you leaves the issue in the status the earlier named transition led to when Jira refuses the move, because a refused POST changes nothing on the tracker" [ "$(jira_status_name "$jira_started")" = "In Progress" ]
 jira_run "$P/adapters/jira/set-status.sh" "$jira_started" in-progress > "$work/jira/restarted.out" 2>/dev/null; jira_restarted_code=$?
 check "JiraSetStatusRepeatAfterRefusedMove_ExitsZero: set-status in-progress again exits 0 after Jira refused another named move, because a refused move leaves the issue where the earlier transition took it" [ "$jira_restarted_code" = 0 ]
 check "JiraSetStatusRepeatAfterRefusedMove_PrintsNothing: set-status in-progress again prints nothing after Jira refused another named move, because the issue did not move" [ ! -s "$work/jira/restarted.out" ]
-jira_malformed="$(jira_run "$P/adapters/jira/create.sh" task "Started, with a malformed stored target")"
-jira_run "$P/adapters/jira/set-status.sh" "$jira_malformed" in-progress >/dev/null 2>&1
+jira_malformed="$(jira_run "$P/adapters/jira/create.sh" task "Unstarted, with a malformed stored target")"
 python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
 jira_data["issues"][sys.argv[2]]["properties"]["flow-transition-target"] = "not a map"
 json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_malformed#jira:}"
-jira_run "$P/adapters/jira/set-status.sh" "$jira_malformed" in-progress >/dev/null 2> "$work/jira/malformed.err"
-check_all "JiraSetStatusMalformedStoredTarget_SaysNoTraceback: set-status reads a stored target that is not a map as none stored, because a value on the tracker is outside data" '[ -s "$work/jira/malformed.err" ] && ! grep -q Traceback "$work/jira/malformed.err"'
+jira_run "$P/adapters/jira/set-status.sh" "$jira_malformed" in-progress >/dev/null 2>&1; jira_malformed_code=$?
+check "JiraSetStatusOverMalformedStoredTarget_ExitsZero: set-status in-progress exits 0 on an issue whose stored target is not a map, because a value on the tracker is outside data and reads as none stored" [ "$jira_malformed_code" = 0 ]
+check "JiraSetStatusOverMalformedStoredTarget_TakesTheNamedTransition: set-status in-progress moves the issue to the named transition's target though its stored target is not a map, because none stored leaves the move to the transition list" [ "$(jira_status_name "$jira_malformed")" = "In Progress" ]
 jira_assigned="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to me")"
 jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" me >/dev/null 2>&1
 check "JiraAssignMe_AssigneesHoldTokenUser: after assign me the issue's assignees hold the token's user, because me is the account the token belongs to" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = '["flow@acme.test"]' ]
