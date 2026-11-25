@@ -261,8 +261,10 @@ carries no `open_blockers`.
 `set-status` reads the issue's transitions (`GET .../issue/<KEY>/transitions`) and takes the one
 `jira.transitions.<name>` names, and exits 1 when the issue has none of that name. Jira lists only
 the transitions out of the issue's status, so before it moves the issue it stores that transition's
-target status in the issue's `flow-transition-target` property, and an issue already in that
-status counts as there: a repeat prints nothing and exits 0. An issue moved there by hand before
+target status in the issue's `flow-transition-target` property, a map of transition names to their
+target statuses that each move merges into, so a move Jira refuses forgets no other transition's
+target. An issue already in a transition's stored target counts as there: a repeat prints nothing
+and exits 0. A property that is not such a map holds no target. An issue moved there by hand before
 the flow ever took that transition has no stored target, so it still exits 1. Unset, `ready`
 and `in-progress` take the first transition into their status category, and an issue already in
 that category stays where it is; any other status, or one no transition leads to, is a no-op that

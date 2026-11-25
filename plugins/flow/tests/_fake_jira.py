@@ -10,7 +10,8 @@ search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an is
 fields.assignee object, as Jira returns one. The assignee PUT stores the signed-in user for that
 user's account id, a bare account id for another, and none for null. A transition leads to the
 status its to names, else to the status of its own name, and Jira lists it only out of the statuses
-its from names, else out of every status."""
+its from names, else out of every status. A transition whose refused holds a message answers its POST
+with a 400 that says it, as a Jira validator or a required screen would, and the issue stays put."""
 import json, re, sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -225,6 +226,8 @@ if m:
         chosen = next((transition for transition in transitions_out_of(issue) if transition["id"] == body["transition"]["id"]), None)
         if not chosen:
             refuse(400, "Transition id %s is not valid for this issue." % body["transition"]["id"])
+        if chosen.get("refused"):
+            refuse(400, chosen["refused"])
         issue["fields"]["status"] = {"name": target_of(chosen), "statusCategory": {"key": chosen["category"]}}
         answer(204)
     if rest == "/assignee" and method == "PUT":

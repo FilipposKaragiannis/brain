@@ -512,23 +512,27 @@ def moved_by_name(key: str, status_name: str, transition_name: str, current: Iss
 
 
 def unmoved_when_there(key: str, status_name: str, transition_name: str, current: IssueStatus) -> str:
-    if read_transition_target(key, transition_name) != current.name:
+    if read_transition_targets(key).get(transition_name) != current.name:
         fail("%s%s has no transition named %s; check jira.transitions.%s" % (PREFIX, key, transition_name, status_name))
     return ""
 
 
-def read_transition_target(key: str, transition_name: str) -> str:
+def read_transition_targets(key: str) -> dict:
+    """The property is outside data, so a value that is not a map of names to status names holds none."""
     status, issue = call("GET", "/rest/api/3/issue/" + key, query={"fields": "status", "properties": TRANSITION_TARGET_PROPERTY})
     expect(status, issue, "read %s%s" % (PREFIX, key))
-    remembered = (issue.get("properties") or {}).get(TRANSITION_TARGET_PROPERTY) or {}
-    return remembered.get("to", "") if remembered.get("transition") == transition_name else ""
+    stored = (issue.get("properties") or {}).get(TRANSITION_TARGET_PROPERTY)
+    if not isinstance(stored, dict):
+        return {}
+    return {name: target for name, target in stored.items() if isinstance(target, str)}
 
 
 def store_transition_target(key: str, transition: Transition) -> None:
     """Stored on the issue before the move, so a later set-status on any machine knows the issue is
-    there once Jira no longer lists the transition."""
-    target = {"transition": transition.name, "to": transition.to_name}
-    status, answer = call("PUT", "/rest/api/3/issue/%s/properties/%s" % (key, TRANSITION_TARGET_PROPERTY), target)
+    there once Jira no longer lists the transition. Merged into the targets already stored, so a move
+    Jira refuses forgets no other transition's target."""
+    targets = {**read_transition_targets(key), transition.name: transition.to_name}
+    status, answer = call("PUT", "/rest/api/3/issue/%s/properties/%s" % (key, TRANSITION_TARGET_PROPERTY), targets)
     expect(status, answer, "remember where %s takes %s%s" % (transition.name, PREFIX, key))
 
 
