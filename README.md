@@ -96,7 +96,10 @@ sets an item at a gate down and picks the next ready one; `notify.idle` says onc
 ready), `retro` weekly, `health` every 15 minutes
 (`steward.sh health`: clears a dead run, releases an empty claim, resumes cut-off work, syncs clean
 task branches, reminds on old gates, clears stale or wrong planned holds and names the ones
-waiting over a day, says when the pool is full; no model while all is well); each takes the host as its first
+waiting over a day, says when the pool is full; no model while all is well), and `check`, the
+project's own commands set under `jobs.checks` in `.flow/config.yaml`, each on its own schedule
+`check-<name>` (run from a clean checkout of the base with no setup and no model; a check that
+passed and then fails files one bug, its output's tail in the body); each takes the host as its first
 argument (`jobs.host`), locks against overlap and logs to `.flow/log/`; the sessions a job starts,
 and the `next` steps with no agent, take the model and effort of that host's pair, `jobs.claude.model`/`jobs.claude.effort` or
 `jobs.codex.model`/`jobs.codex.effort`, passed as written (empty is the host's default). Scheduling is the host's job (Claude

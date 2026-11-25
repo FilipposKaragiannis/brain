@@ -31,6 +31,7 @@ done
 FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
+. "$plugin/lib/scheduled_checks.sh"
 . "$plugin/lib/base.sh"
 . "$plugin/lib/branch.sh"
 . "$plugin/lib/worktree_command.sh"
@@ -260,6 +261,12 @@ if [ ! -f .flow/config.yaml ]; then
       echo "    # comments: every 30m"
       echo "    # intake: daily 02:00"
       echo "    # retro: weekly sun 03:00"
+      echo "  # The project's own checks: the check job runs each as the schedule check-<name>, from a"
+      echo "  # clean checkout of the base with no setup, so a command installs what it needs."
+      echo "  # checks:"
+      echo "  #   smoke:                  # a lowercase letter, then lowercase letters and digits"
+      echo "  #     command: npm ci && npm run smoke"
+      echo "  #     schedule: daily 02:00  # every 30m, daily 02:00 or weekly sun 03:00, with no args"
       echo "  # health:                   # what the health job does with a claim, and when it speaks up"
       echo "  #   grace: 10m              # a run record with no live process for this long is a dead run"
       echo "  #   max_resumes: 3          # resumes of a dead run in a row, while the step does not advance"
@@ -287,10 +294,10 @@ install_file "$plugin/templates/plugin.sh" .flow/plugin.sh 644
 tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' > "$tmp"
 install_file "$tmp" .flow/notify.sh 755
 install_file "$plugin/templates/run-unattended.sh" .flow/run-unattended.sh 755
-for j in comments health intake next retro; do
-  tmp="$scratch/job-$j"
-  printf '#!/bin/sh\n# Written by flow:init. Scheduled job: %s.sh <claude|codex> [args]. Logs to .flow/log/%s.log.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/jobs/%s.sh" "$@"\n' "$j" "$j" "$j" > "$tmp"
-  install_file "$tmp" ".flow/jobs/$j.sh" 755
+for job_name in check comments health intake next retro; do
+  job_wrapper="$scratch/job-$job_name"
+  printf '#!/bin/sh\n# Written by flow:init. Scheduled job: %s.sh <claude|codex> [args]. Logs to .flow/log/%s.log.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/jobs/%s.sh" "$@"\n' "$job_name" "$job_name" "$job_name" > "$job_wrapper"
+  install_file "$job_wrapper" ".flow/jobs/$job_name.sh" 755
 done
 
 # 3. Claude worktree hooks. A plugin's WorktreeCreate hook does not fire for `claude --worktree`
@@ -394,6 +401,10 @@ EOF_BRANCH
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
+  # A check that cannot run fails each time its schedule comes round, or never runs at all.
+  while IFS= read -r scheduled_check_problem; do [ -z "$scheduled_check_problem" ] || gap "$scheduled_check_problem"; done <<EOF_CHECKS
+$(checks_problems)
+EOF_CHECKS
   # A scope the tracker's list refuses stops every read of that tracker.
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_SCOPES
 $(scope_problems)

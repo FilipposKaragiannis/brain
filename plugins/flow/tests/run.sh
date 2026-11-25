@@ -486,6 +486,16 @@ sh "$here/holds.sh" > "$work/holds.out" 2>&1; code=$?
 check "holds: $(tail -n 1 "$work/holds.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/holds.out"
 
+echo "a project's own checks run on their schedules (tests/checks.sh)"
+sh "$here/checks.sh" > "$work/checks.out" 2>&1; code=$?
+check "checks: $(tail -n 1 "$work/checks.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/checks.out"
+
+echo "a scheduled check that cannot run is refused (tests/check-gaps.sh)"
+sh "$here/check-gaps.sh" > "$work/check-gaps.out" 2>&1; code=$?
+check "check gaps: $(tail -n 1 "$work/check-gaps.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/check-gaps.out"
+
 echo "a claimed item waits while a native blocker is open (tests/blockers.sh)"
 sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
 check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
@@ -1920,7 +1930,7 @@ FLOW_HOME="$home2" "$J" uninstall next-codex > "$work/uninstall.out" 2>&1
 check "uninstall takes a schedule the config no longer names, and status drops it" sh -c "grep -q '^next-codex: unscheduled' '$work/uninstall.out' && [ ! -f '$work/agents/$lbl.next-codex.plist' ] && grep -q 'bootout gui/.*/$lbl.next-codex' '$LAUNCH_LOG' && ! FLOW_HOME='$home2' '$J' status | grep -q next-codex"
 printf 'jobs:\n  schedule:\n    next_codex: every 30m\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install > "$work/install.out" 2>&1; code=$?
-check "install refuses a bad schedule name, exit 2, saying what a name is" sh -c "[ $code = 2 ] && grep -q 'flow: no job next_codex: a schedule is one of next comments intake retro health, or one of them, a dash and a label' '$work/install.out' && [ ! -f '$work/agents/$lbl.next_codex.plist' ]"
+check "install refuses a bad schedule name, exit 2, saying what a name is" sh -c "[ $code = 2 ] && grep -q 'flow: no job next_codex: a schedule is one of next comments intake retro health check, or one of them, a dash and a label' '$work/install.out' && [ ! -f '$work/agents/$lbl.next_codex.plist' ]"
 printf 'jobs:\n  schedule:\n    next-1: every 30m\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-1 > "$work/install.out" 2>&1; code=$?
 check "install refuses a label that does not start with a letter: next-1 is a worker of next" sh -c "[ $code = 2 ] && grep -q \"the schedule name next-1 has the label '1'\" '$work/install.out' && [ ! -f '$work/agents/$lbl.next-1.plist' ]"
