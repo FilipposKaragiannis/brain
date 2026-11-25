@@ -277,9 +277,9 @@ remote_branch "$(epic_of "$locked")"; remote_commit "$(epic_of "$locked")" packa
 start_step "$locked"
 locked_worktree="$(claimed_worktree_of "$locked")"
 check "EpicCloseoutWhoseBranchChangesASetupPath_RunsTheSetupAtTheEpicTip: a check that needs installed files runs against the epic's own lockfile" \
-  '[ -n "$locked_worktree" ] && [ "$(cat "$locked_worktree/installed/from")" = "$(remote_tip "$(epic_of "$locked")")" ]'
+  '[ "$(cat "$locked_worktree/installed/from")" = "$(remote_tip "$(epic_of "$locked")")" ]'
 check "EpicCloseoutInAGrownPool_HoldsTheWorktreeCopyFiles: the closeout worktree is a pool worktree set up like any other" \
-  '[ -n "$locked_worktree" ] && [ -f "$locked_worktree/local.env" ]'
+  '[ -f "$locked_worktree/local.env" ]'
 
 echo "epic closeout: an epic with no epic branch closes out in the main checkout"
 github_repository branchless
@@ -287,7 +287,7 @@ plain="$("$local_adapter/create.sh" epic "Testimonials" --body x)"
 "$local_adapter/write-state.sh" "$plain" step=closeout profile=epic
 plain_worktree="$("$plugin/scripts/next.sh" "$plain" --json 2>/dev/null | json_value worktree)"
 check "EpicCloseoutWithNoEpicBranch_StartsInTheMainCheckout: there is no branch of the epic's own to check out" \
-  '[ -n "$plain_worktree" ] && [ "$(cd "$plain_worktree" && pwd -P)" = "$(cd "$root/app" && pwd -P)" ]'
+  '[ "$(resolved_folder "$plain_worktree" closeout)" = "$(resolved_folder "$root/app" main)" ]'
 check "EpicCloseoutWithNoEpicBranch_ClaimsNoPoolWorktree: a claim would hold a worktree nothing runs in" \
   '[ -z "$(claimed_worktree_of "$plain")" ]'
 step_result "$plain" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
@@ -336,6 +336,23 @@ check "EpicCloseoutInAPoolWorktreeWhosePullRequestCannotBeOpened_RaisesAnEscalat
   '[ "$(state "$unopened" gate)" = escalation ]'
 check "EpicCloseoutWhosePullRequestCannotBeOpened_ReleasesItsWorktree: the owner opens the PR by hand, and the closeout after the gate claims the tip again" \
   '[ -z "$(claimed_worktree_of "$unopened")" ]'
+
+echo "epic closeout: a tracker that refuses to close an epic whose branch holds nothing new"
+github_repository unclosed_branch
+sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
+printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
+unclosed="$("$plugin/adapters/github/create.sh" epic "Charity shield" --body x)"
+remote_branch "$(epic_of "$unclosed")"
+"$plugin/adapters/github/write-state.sh" "$unclosed" step=closeout profile=epic
+start_step "$unclosed"
+step_result "$unclosed" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
+printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
+finish_step "$unclosed"
+rm -f "$FAKE_GH_DIR/fail"
+check "EpicCloseoutInAPoolWorktreeTheTrackerRefusesToClose_RaisesAnEscalationGate: the closeout reached its end, or the check below proves nothing" \
+  '[ "$("$plugin/adapters/github/read.sh" "$unclosed" | json_value state.gate)" = escalation ]'
+check "EpicCloseoutTheTrackerRefusesToClose_ReleasesItsWorktree: clearing the gate runs the closeout again, which claims the tip again" \
+  '[ -z "$(claimed_worktree_of "$unclosed")" ]'
 
 echo "epic closeout: a local epic branch that differs from the remote"
 github_repository local_copies
@@ -387,7 +404,7 @@ check "KeptEpicCloseoutClaimBehindItsBase_GetsNoBaseMergeFromTheHealthJob: a loc
 remote_commit "$(epic_of "$kept")" kept-later.txt
 start_step "$kept"
 check "EpicCloseoutRetriedWhileItsClaimIsKept_RunsInTheKeptWorktree: the claim the epic holds is the one the retry uses" \
-  '[ -n "$kept_worktree" ] && [ "$(claimed_worktree_of "$kept")" = "$kept_worktree" ]'
+  '[ "$(claimed_worktree_of "$kept")" = "${kept_worktree:-no kept worktree}" ]'
 check "EpicCloseoutRetriedWhileItsClaimIsKept_StartsAtTheNewRemoteTip: the retry verifies what the pull request merges now" \
   '[ "$(git -C "${kept_worktree:-$work/no-kept-worktree}" rev-parse HEAD)" = "$(remote_tip "$(epic_of "$kept")")" ]'
 
