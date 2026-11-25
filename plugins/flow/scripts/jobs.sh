@@ -30,7 +30,8 @@
 # as check-<name> (check-smoke), its command and its schedule under it: jobs.checks.smoke.command and
 # jobs.checks.smoke.schedule, the timing alone. The bare name check is no schedule. run and install
 # refuse a malformed entry or a base that is no valid branch name (lib/scheduled_checks.sh), or a
-# missing .flow/jobs/check.sh, exit 2.
+# missing .flow/jobs/check.sh, exit 2; install with no name refuses jobs.checks set as a value and
+# a jobs.schedule.check-<name> key too.
 # On macOS a schedule is a launchd agent, com.<repo>.flow.<name>, loaded at login: it runs while
 # you are logged in and the Mac is awake; a comments agent starts its run in the background, so
 # its next interval starts a run while one is alive. Elsewhere install prints the crontab lines to add.
@@ -79,10 +80,14 @@ orphans() {
   done
 }
 # targets <name|all>: the schedules install writes; all takes each one with a schedule, after
-# every check under jobs.checks passes checks_ok, so an entry with no schedule is refused.
+# the config's checks pass checks_problems and each check under jobs.checks passes checks_ok, so
+# an entry with no schedule, jobs.checks set as a value or a jobs.schedule.check-<name> key is refused.
 targets() {
   case "${1:-all}" in
-    all) for j in $(schedules); do checks_ok "$j"; [ -z "$(spec "$j")" ] || { known "$j"; echo "$j"; }; done ;;
+    all)
+      checks_said="$(checks_problems)"
+      [ -z "$checks_said" ] || { printf '%s\n' "$checks_said" | sed 's/^/flow: /' >&2; exit 2; }
+      for j in $(schedules); do checks_ok "$j"; [ -z "$(spec "$j")" ] || { known "$j"; echo "$j"; }; done ;;
     *) known "$1"; echo "$1" ;;
   esac
 }

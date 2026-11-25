@@ -2,8 +2,9 @@
 # check-gaps.sh: a scheduled check that cannot run, in a throwaway repo with a bare origin and the
 # local adapter. init --check names each malformed jobs.checks entry, jobs.checks set as a value,
 # a jobs.schedule.check-<name> key and a base no check can check out as a gap at its line in the
-# config; jobs.sh run refuses a check with no command, and run and install refuse one whose base is
-# no valid branch name; a config whose checks can all run is no gap.
+# config; jobs.sh run refuses a check with no command, run and install refuse one whose base is
+# no valid branch name, and bare install refuses a jobs.schedule.check-<name> key; a config whose
+# checks can all run is no gap.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -117,6 +118,15 @@ echo "check gaps: run refuses a malformed check"
 "$jobs_script" run check-nocommand > "$work/run-malformed.out" 2>&1; run_malformed_exit=$?
 check "CheckWithNoCommand_IsRefusedByRun: a check with no command cannot run, so run refuses it" \
   '[ "$run_malformed_exit" -eq "$refused_exit" ]'
+
+echo "check gaps: bare install refuses a check under jobs.schedule"
+printf 'base: main\njobs:\n  schedule:\n    health: every 15m\n    check-smoke: daily 02:00\n' > "$flow_home_folder/config.yaml"
+misplaced_line="$(config_line check-smoke)"
+FLOW_SCHEDULER=cron "$jobs_script" install > "$work/install-misplaced.out" 2>&1; install_misplaced_exit=$?
+check "CheckUnderJobsScheduleBesideAJob_IsRefusedByBareInstall: install with no name refuses the key rather than install the job alone" \
+  '[ "$install_misplaced_exit" -eq "$refused_exit" ]'
+check "CheckUnderJobsScheduleBesideAJob_BareInstallNamesItsLine: the refusal names the jobs.schedule key and its config line" \
+  'grep -q "config.yaml:$misplaced_line: jobs.schedule.check-smoke: " "$work/install-misplaced.out"'
 
 echo "check gaps: good checks are none"
 good_config main > "$flow_home_folder/config.yaml"
