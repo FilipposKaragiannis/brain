@@ -21,7 +21,7 @@ cwd="$(json_get "$payload" cwd)"
 [ -f "$(config_file)" ] || die "no .flow/config.yaml in this repository; run flow:init or start without --worktree"
 item="$(slug_item "$name")"
 if [ -n "$item" ]; then
-  item_json="$(adapter read "$item" </dev/null)" || die "cannot read $item"
+  item_json="$(item_read "$item")" || die "cannot read $item"
   path="$(claim_at_base "$item" "$item_json")" || exit 1
 else
   path="$("$FLOW_PLUGIN/scripts/steward.sh" claim "adhoc:${name:-session}")" || exit 1
