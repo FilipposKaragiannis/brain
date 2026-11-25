@@ -252,7 +252,9 @@ closeout_brief="$(json_value reports < "$(run_file "$verified")")/brief-closeout
 check "EpicCloseoutWithAnEpicBranch_RunsWithTheEpicBranchCheckedOut: verify.sh refuses a HEAD that is not the item's branch, and a detached tip is none" \
   '[ "$(git -C "${closeout_worktree:-$work/no-closeout-worktree}" symbolic-ref --short -q HEAD)" = "$(epic_of "$verified")" ]'
 check "EpicCloseoutWithAnEpicBranch_NamesTheEpicBranchInTheBrief: the verifier works on the branch the brief names" \
-  'grep -F -- "- Worktree:" "$closeout_brief" | grep -qF "on branch \`$(epic_of "$verified")\`"'
+  'grep -qF "\`$(epic_of "$verified")\`" "$closeout_brief"'
+check "EpicCloseoutWithAnEpicBranch_HoldsItsPoolClaimWhileItRuns: the pool shows the closeout's claim, so a released one reads differently" \
+  '[ "$(pool_claim_state_of "$verified")" = claimed ]'
 step_result "$verified" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
 finish_step "$verified"
 check "EpicCloseoutThatPassedWithWorkToMerge_WaitsAtTheMergeGate: the epic's pull request merges only once the owner says so" \
@@ -358,9 +360,9 @@ step_result "$unclosed" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_S
 printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
 finish_step "$unclosed"
 rm -f "$FAKE_GH_DIR/fail"
-check "EpicCloseoutInAPoolWorktreeTheTrackerRefusesToClose_RaisesAnEscalationGate: the owner closes the epic the tracker refused to close, or clears the gate to try again" \
+check "EpicCloseoutInAPoolWorktreeThatTheTrackerRefusesToClose_RaisesAnEscalationGate: the owner closes the epic the tracker refused to close, or clears the gate to try again" \
   '[ "$("$plugin/adapters/github/read.sh" "$unclosed" | json_value state.gate)" = escalation ]'
-check "EpicCloseoutTheTrackerRefusesToClose_ReleasesItsWorktree: clearing the gate runs the closeout again, which claims the tip again" \
+check "EpicCloseoutThatTheTrackerRefusesToClose_ReleasesItsWorktree: clearing the gate runs the closeout again, which claims the tip again" \
   '[ "$(pool_claim_state_of "$unclosed")" = unclaimed ]'
 
 echo "epic closeout: a local epic branch that differs from the remote"
@@ -376,9 +378,8 @@ ahead="$(epic_with_work "Ahead")"
 git fetch -q origin "$(epic_of "$ahead"):$(epic_of "$ahead")"
 git update-ref "refs/heads/$(epic_of "$ahead")" "$(git commit-tree -p "$(epic_of "$ahead")" -m unpushed "$(epic_of "$ahead")^{tree}")"
 "$local_adapter/write-state.sh" "$ahead" step=closeout profile=epic
-start_step "$ahead"
 # shellcheck disable=SC2034 # read in a check's condition, which check runs whole
-ahead_code=$?
+start_step "$ahead"; ahead_code=$?
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_IsRefused: its unpushed commits are not in the pull request, so the remote tip would not be what passed" \
   '[ "$ahead_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_ClaimsNoWorktree: a refused closeout holds nothing" \
@@ -387,9 +388,8 @@ held="$(epic_with_work "Held")"
 git fetch -q origin "$(epic_of "$held"):$(epic_of "$held")"
 git worktree add -q "$root/elsewhere" "$(epic_of "$held")"
 "$local_adapter/write-state.sh" "$held" step=closeout profile=epic
-start_step "$held"
 # shellcheck disable=SC2034 # read in a check's condition, which check runs whole
-held_code=$?
+start_step "$held"; held_code=$?
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_IsRefused: git checks a branch out in one worktree at a time" \
   '[ "$held_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_ClaimsNoWorktree: a refused closeout holds nothing" \
@@ -397,9 +397,8 @@ check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_ClaimsNoWorktree: a refu
 unasked="$(epic_with_work "Unasked")"
 "$local_adapter/write-state.sh" "$unasked" step=closeout profile=epic
 git remote set-url origin "$work/no-such-remote.git"
-start_step "$unasked"
 # shellcheck disable=SC2034 # read in a check's condition, which check runs whole
-unasked_code=$?
+start_step "$unasked"; unasked_code=$?
 check "EpicCloseoutWhoseRemoteCannotBeAsked_IsRefused: not seeing the epic branch is no proof it has none" \
   '[ "$unasked_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWhoseRemoteCannotBeAsked_StartsNoRun: a closeout in the main checkout would grade the base instead of the epic" \
