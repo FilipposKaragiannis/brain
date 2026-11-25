@@ -79,8 +79,8 @@ card_before="$(stored_issue_field 5 project_status)"; labels_before="$(stored_is
 "$github_adapter/set-status.sh" 'gh#5' in-progress > "$work/no-board.out" 2>/dev/null; no_board_code=$?
 check "SetStatusWithNoBoard_ExitsZero: set-status with neither github.project nor github.claim_label exits 0, because a tracker with no place for a status is no failure" '[ "$no_board_code" = 0 ]'
 check "SetStatusWithNoBoard_PrintsNothing: set-status with neither github.project nor github.claim_label prints nothing, because nothing moved" '[ ! -s "$work/no-board.out" ]'
-check "SetStatusWithNoBoard_LeavesTheCard: the issue's card keeps its Status, because with no github.project the flow has no board to move it on" '[ "$card_before" != null ] && [ "$(stored_issue_field 5 project_status)" = "$card_before" ]'
-check "SetStatusWithNoBoard_LeavesTheLabels: the issue keeps its labels, because with no github.claim_label no label stands for the status" '[ "$labels_before" != "[]" ] && [ "$(stored_issue_field 5 labels)" = "$labels_before" ]'
+check "SetStatusWithNoBoard_LeavesTheCard: the issue's card keeps its Status, because with no github.project the flow has no board to move it on" '[ -n "$card_before" ] && [ "$(stored_issue_field 5 project_status)" = "$card_before" ]'
+check "SetStatusWithNoBoard_LeavesTheLabels: the issue keeps its labels, because with no github.claim_label no label stands for the status" '[ -n "$labels_before" ] && [ "$labels_before" != "[]" ] && [ "$(stored_issue_field 5 labels)" = "$labels_before" ]'
 github_config "  claim_label: $claim_label"
 "$github_adapter/set-status.sh" 'gh#4' in-progress > "$work/claimed.out" 2>/dev/null
 check "ClaimLabelInProgress_PutsTheLabelOn: set-status in-progress puts github.claim_label on the issue, because the label is the status without a project" 'labels_hold "gh#4" "$claim_label"'
