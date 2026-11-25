@@ -31,6 +31,7 @@ done
 FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
+. "$plugin/lib/scheduled_checks.sh"
 . "$plugin/lib/base.sh"
 . "$plugin/lib/branch.sh"
 . "$plugin/lib/worktree_command.sh"
@@ -400,6 +401,10 @@ EOF_BRANCH
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
+  # A check that cannot run fails each time its schedule comes round, or never runs at all.
+  while IFS= read -r scheduled_check_problem; do [ -z "$scheduled_check_problem" ] || gap "$scheduled_check_problem"; done <<EOF_CHECKS
+$(checks_problems)
+EOF_CHECKS
   # A scope the tracker's list refuses stops every read of that tracker.
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_SCOPES
 $(scope_problems)

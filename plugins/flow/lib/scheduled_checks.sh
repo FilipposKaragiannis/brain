@@ -3,7 +3,7 @@
 # check's name, with a command and a schedule under it. The check job (jobs/check.sh) runs one as
 # the schedule check-<name>, in a clean checkout of the base under <flow home>/check-runs, a folder
 # of its own: <flow home>/checks is verify's kept-pass store (lib/checks.sh), which sweeps its old
-# files. Sourced after lib/flow.sh and lib/host.sh by scripts/jobs.sh and jobs/check.sh.
+# files. Sourced after lib/flow.sh and lib/host.sh by scripts/jobs.sh, jobs/check.sh and init.sh.
 
 check_runs_folder() { printf '%s/check-runs' "$(flow_home)"; }
 
@@ -50,4 +50,19 @@ check_problem() {
   check_problem_reason="$(check_entry_problem "$1")"
   [ -n "$check_problem_reason" ] || check_problem_reason="$(check_fields_problem "$1")"
   [ -z "$check_problem_reason" ] || printf '%s: jobs.checks.%s: %s\n' "$(host_cfg_where "jobs.checks.$1")" "$1" "$check_problem_reason"
+}
+
+# checks_problems: one line per check the config sets that cannot run, as check_problem words it:
+# jobs.checks set as a value, then each entry under it, then each jobs.schedule.check-<name> key,
+# which jobs.sh leaves out of its schedules.
+checks_problems() {
+  [ -z "$(cfg jobs.checks)" ] \
+    || printf '%s: jobs.checks: is no map: each check is a name under it, with a command and a schedule\n' "$(host_cfg_where jobs.checks)"
+  for listed_check_name in $(yaml_keys "$(config_file)" jobs.checks); do check_problem "$listed_check_name"; done
+  for scheduled_name in $(yaml_keys "$(config_file)" jobs.schedule); do
+    case "$scheduled_name" in check-*)
+      printf '%s: jobs.schedule.%s: a check is set under jobs.checks.%s, not jobs.schedule\n' \
+        "$(host_cfg_where "jobs.schedule.$scheduled_name")" "$scheduled_name" "${scheduled_name#check-}" ;;
+    esac
+  done
 }
