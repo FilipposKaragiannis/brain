@@ -207,7 +207,8 @@ claim_base_option() {
   printf '%s' "$option_base"
 }
 
-# claim_at_base <item> <item-json>: claims a pool worktree for the item and prints its path. A new
+# claim_at_base <item> <item-json>: claims a pool worktree for the item (its JSON from item_read)
+# and prints its path. A new
 # claim starts from the base fetch_item_base resolves, and the events log says which and why; an
 # item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
 # branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
