@@ -260,13 +260,23 @@ cmd_claim() {
   else
     git -C "$free" switch -q -c "$branch" "$ref" || die "cannot create $branch from $ref in $free"
   fi
-  mkdir -p "$free/.flow"
-  json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
-    "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
+  record_claim_unlock_and_set_up "$free" "$item" "$branch" "$base" "claimed $(basename "$free")"
+}
+
+# record_claim_unlock_and_set_up <worktree> <item> <branch> <base> <event>: for a claim taken under
+# claim_lock, <worktree> already on <branch>. The lock is lifted before the setup, which can take
+# minutes; <event> is the item's last_event. Prints <worktree>.
+record_claim_unlock_and_set_up() {
+  record_claim_worktree="$1"; record_claim_item="$2"; record_claim_branch="$3"; record_claim_base="$4"; record_claim_event="$5"
+  record_claim_name="$(basename "$record_claim_worktree")"
+  mkdir -p "$record_claim_worktree/.flow"
+  json_obj "item=$record_claim_item" "worktree=$record_claim_worktree" "name=$record_claim_name" "branch=$record_claim_branch" \
+    "base=$record_claim_base" "step=" "claimed_at=$(now_iso)" "host=$(host_name)" > "$record_claim_worktree/.flow/claim.json"
   flow_unlock
-  set_up_again_when_outdated "$free" >&2
-  write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
-  printf '%s\n' "$free"
+  set_up_again_when_outdated "$record_claim_worktree" >&2
+  write_state "$record_claim_item" "worktree=$record_claim_name" "base=$record_claim_base" "branch=$record_claim_branch" \
+    "last_event=$(now_iso) $record_claim_event"
+  printf '%s\n' "$record_claim_worktree"
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a

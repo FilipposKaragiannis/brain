@@ -55,14 +55,7 @@ tip_claim_new() {
   ! claimed_branch "$2" || refuse_claim "$1" "another claim holds $2" "$claim_refused"
   tip_claim_new_worktree="$(free_worktree)" || exit $?
   git -C "$tip_claim_new_worktree" switch -q -C "$2" "$3" || die "cannot switch $tip_claim_new_worktree to $2 at $3"
-  mkdir -p "$tip_claim_new_worktree/.flow"
-  json_obj "item=$1" "worktree=$tip_claim_new_worktree" "name=$(basename "$tip_claim_new_worktree")" "branch=$2" "base=$4" "step=" \
-    "claimed_at=$(now_iso)" "host=$(host_name)" > "$tip_claim_new_worktree/.flow/claim.json"
-  flow_unlock
-  set_up_again_when_outdated "$tip_claim_new_worktree" >&2
-  write_state "$1" "worktree=$(basename "$tip_claim_new_worktree")" "base=$4" "branch=$2" \
-    "last_event=$(now_iso) claimed $(basename "$tip_claim_new_worktree") on $2 at its remote tip"
-  printf '%s\n' "$tip_claim_new_worktree"
+  record_claim_unlock_and_set_up "$tip_claim_new_worktree" "$1" "$2" "$4" "claimed $(basename "$tip_claim_new_worktree") on $2 at its remote tip"
 }
 
 cmd_claim_tip() {
