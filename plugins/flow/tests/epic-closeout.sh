@@ -373,4 +373,22 @@ check "EpicCloseoutWhoseRemoteCannotBeAsked_IsRefused: not seeing the epic branc
 check "EpicCloseoutWhoseRemoteCannotBeAsked_StartsNoRun: a closeout in the main checkout would grade the base instead of the epic" \
   '[ ! -f "$(run_file "$unasked")" ]'
 
+echo "epic closeout: a closeout claim kept after its run ended without advance.sh"
+github_repository kept
+kept="$(epic_with_work "Kept")"
+"$local_adapter/write-state.sh" "$kept" step=closeout profile=epic
+start_step "$kept"
+kept_worktree="$(claimed_worktree_of "$kept")"
+rm -f "$(run_file "$kept")"
+remote_commit main first-fixture.txt; remote_commit main second-fixture.txt
+"$plugin/scripts/steward.sh" health >/dev/null 2>&1
+check "KeptEpicCloseoutClaimBehindItsBase_GetsNoBaseMergeFromTheHealthJob: a local merge would put the epic branch ahead of its remote tip, which the closeout's retry refuses" \
+  '[ "$(git rev-parse "refs/heads/$(epic_of "$kept")")" = "$(remote_tip "$(epic_of "$kept")")" ]'
+remote_commit "$(epic_of "$kept")" kept-later.txt
+start_step "$kept"
+check "EpicCloseoutRetriedWhileItsClaimIsKept_RunsInTheKeptWorktree: the claim the epic holds is the one the retry uses" \
+  '[ -n "$kept_worktree" ] && [ "$(claimed_worktree_of "$kept")" = "$kept_worktree" ]'
+check "EpicCloseoutRetriedWhileItsClaimIsKept_StartsAtTheNewRemoteTip: the retry verifies what the pull request merges now" \
+  '[ "$(git -C "${kept_worktree:-$work/no-kept-worktree}" rev-parse HEAD)" = "$(remote_tip "$(epic_of "$kept")")" ]'
+
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi

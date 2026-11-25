@@ -956,7 +956,8 @@ health_ago() { hpy ago "$1"; }
 # with its remote branch (fast-forward when only behind; push when only ahead of a branch that
 # exists and jobs.health.push is true, else say it once) and with its base (merge it in once the
 # branch is more than behind_base commits behind, has no PR and waits at no gate: a PR's conflicts
-# are the comments job's). Leave in $health_sync the refs a merge needs an agent for, one per line: the remote
+# are the comments job's; never into an epic's own branch, which lib/epic_base.sh keeps up on the
+# remote, since a local merge would put a closeout's claim ahead of the tip claim-tip takes). Leave in $health_sync the refs a merge needs an agent for, one per line: the remote
 # branch when the two diverged, the base when its merge conflicts.
 health_branch_state() {
   hb_item="$1"; hb_path="$2"; hb_branch="$3"; hb_base="$(base_ref "$4")"; hb_pr="$5"; health_sync=""
@@ -981,6 +982,7 @@ health_branch_state() {
     fi
   fi
   [ -z "$hb_pr" ] || return 0
+  [ "$hb_branch" != "$(epic_branch "$hb_item")" ] || return 0
   hb_late="$(git -C "$hb_path" rev-list --count "HEAD..$hb_base" 2>/dev/null)"
   [ "${hb_late:-0}" -gt "$behind_base" ] || return 0
   # A diverged branch goes to the agent whole: the base merge waits for the remote one.

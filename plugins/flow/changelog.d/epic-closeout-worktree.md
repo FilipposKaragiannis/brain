@@ -10,3 +10,6 @@ bump: patch
   remote holds, at its remote tip. A local copy behind the tip moves up to it; one ahead of it,
   diverged from it or checked out in another worktree is refused with why, exit 4. So is a
   closeout whose remote cannot be asked for the epic branch.
+- The health job no longer merges the base into an epic's own branch in a claimed worktree, as it
+  does for a task branch that has fallen behind: the epic branch takes its base on the remote, and
+  a local merge would leave a closeout's kept claim ahead of the tip its retry takes.
