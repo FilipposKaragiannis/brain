@@ -227,7 +227,11 @@ github_repository checked_out
 verified="$(epic_with_work "Cup final")"
 "$local_adapter/write-state.sh" "$verified" step=closeout profile=epic
 closeout_worktree="$("$plugin/scripts/next.sh" "$verified" --json 2>/dev/null | json_value worktree)"
-check "EpicCloseoutWithAnEpicBranch_StartsInAWorktreeOnTheEpicBranch: the verifier checks the epic's work, which only its branch holds" \
-  '[ "$(git -C "$closeout_worktree" symbolic-ref --short -q HEAD)" = "$(epic_of "$verified")" ]'
+claimed_worktree="$("$plugin/scripts/steward.sh" find "$verified" 2>/dev/null)"
+resolved_folder() { if [ -n "$1" ]; then (cd "$1" && pwd -P); else printf 'no %s folder' "$2"; fi; }
+check "EpicCloseoutWithAnEpicBranch_StartsInThePoolWorktreeClaimedForTheEpic: the main checkout stays on main, so the epic's work needs a pool worktree of its own" \
+  '[ "$(resolved_folder "$closeout_worktree" closeout)" = "$(resolved_folder "$claimed_worktree" claimed)" ]'
+check "EpicCloseoutWithAnEpicBranch_StartsAtTheRemoteTipOfTheEpicBranch: the pull request merges the remote tip, so that commit is the one the verifier must check" \
+  '[ "$(git -C "${closeout_worktree:-$work/no-closeout-worktree}" rev-parse HEAD)" = "$(remote_tip "$(epic_of "$verified")")" ]'
 
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi
