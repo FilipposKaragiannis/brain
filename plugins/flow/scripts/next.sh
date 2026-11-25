@@ -10,7 +10,7 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
 # an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
@@ -30,6 +30,7 @@
 . "$FLOW_PLUGIN/lib/branch.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
+EXIT_AT_GATE=4
 item=""; as_json=0; embed=0; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -75,7 +76,7 @@ elif [ -z "$item" ]; then
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
   notes="$home/runs/.notes.$$"; rm -f "$notes"
   listed="$(FLOW_READY_NOTES="$notes"; export FLOW_READY_NOTES
-    for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | python3 -I -c '
+    for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | cached_python3 -I -c '
 import json, os, sys
 seen, out = set(), []
 for line in sys.stdin:
@@ -96,7 +97,7 @@ fi
 # claim and the run record happen under one lock. The brief is written after it is released.
 flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
 if [ -z "$item" ]; then
-  item="$(printf '%s\n%s\n' "$ready" "$notready" | python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$home/runs" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
+  item="$(printf '%s\n%s\n' "$ready" "$notready" | cached_python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$home/runs" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
   case "$code" in
     0) ;;
     3|5) echo "$item" >&2; exit "$code" ;;
@@ -118,7 +119,12 @@ profile="$(state_get "$data" profile)"
 [ -n "$profile" ] || die "no profile for kind $kind size $size"
 gate="$(state_get "$data" gate)"
 if [ -n "$gate" ] && [ "$gate" != "none" ]; then
-  pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" 4
+  pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" "$EXIT_AT_GATE"
+fi
+gate_record="$home/gates/$(item_slug "$item").json"
+recorded_gate=""; [ ! -f "$gate_record" ] || recorded_gate="$(json_get "$(cat "$gate_record")" gate)"
+if [ -n "$recorded_gate" ]; then
+  pass_over "$item has a $recorded_gate gate recorded on this host ($gate_record) that its tracker does not show, so no step runs. Answer it, then: gate.sh clear $item; or, if it was answered on another host, delete that file" "$EXIT_AT_GATE"
 fi
 step="$(state_get "$data" step)"
 [ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"
@@ -188,10 +194,10 @@ else
   base="$(state_get "$data" base)"; base_name_valid "$base" || base="$config_base"
 fi
 reports="$(reports_dir "$item" "$worktree")"; mkdir -p "$reports"
-touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
+touches="$(json_list "$data" state.touches | cached_python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
-owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
+owner="${FLOW_RUN_PID:-$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
 # A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
 case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "reports=$reports" "host=$(host_name)" \

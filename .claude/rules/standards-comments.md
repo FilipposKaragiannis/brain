@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.sh"
+  - "**/*.py"
 ---
 # 6. Comments and documentation
 

@@ -27,7 +27,11 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    result. Check the base before any `git` or `gh` command takes it: it does not start with
    `-`, it matches `^[A-Za-z0-9._/-]+$`, and `git check-ref-format --branch <b>` accepts it;
    otherwise stop with status `fail` naming it.
-3. Push: `git push -u origin <branch>`.
+3. Nothing to merge: when the tree is clean and `git diff --quiet <base>...HEAD` passes (with
+   `origin/<base>` when the remote has the base), the branch holds no change, so open no PR and
+   push nothing: stop with status `done`, no `pr` key, and a summary that says why the item needs
+   no PR. The orchestrator closes the item with that summary and releases the worktree. A branch
+   with changes is never `done` without a PR. Otherwise push: `git push -u origin <branch>`.
 4. Body: the repo template when one exists, else the house template: Summary with the
    smallest view that makes the point (pseudocode, call tree, file tree, diff sketch or
    Mermaid, one of them), Evidence before and after from the verify report, Merge danger
@@ -58,8 +62,9 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
 
 ## Output
 The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
-summary, the base and why, draft or ready, and the reviewers asked; status `fail` when verify is
-not pass, the base fails step 2 or the push is rejected.
+summary, the base and why, draft or ready, and the reviewers asked; status `done` with no `pr`
+key only when the branch has nothing to merge (step 3), the summary saying why; status `fail`
+when verify is not pass, the base fails step 2 or the push is rejected.
 
 ## Never
 Never open a PR when verify is not pass. With `state.base` set, never pick a base other than the
