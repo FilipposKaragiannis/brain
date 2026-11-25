@@ -7,7 +7,7 @@
 # twin verify.md for the PR body. head is the full commit the run checked; verdict is the first
 # line of verify.md, `Verdict: pass at <head>` or `Verdict: fail at <head>`, on every report verify
 # writes, the minimal fail report too, and verify.md ends with a `## Not checked` section that says
-# none when empty. Evidence files live under <reports>/evidence/.
+# none when empty. Evidence files live under <reports>/evidence/, which the evidence list fills.
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
@@ -19,7 +19,10 @@
 # mutation is the off switch (a skipped check); a mutation command with {files} runs on the changed
 # source files only, like a format command, and is skipped when none changed. A project gate is
 # `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
-# matches a glob; otherwise a skipped check). feel_test is true when a changed file matches
+# matches a glob; otherwise a skipped check). After the gates, each entry of the `evidence` list in
+# .flow/config.yaml, shaped like a gate, runs as the check `evidence <name>` with
+# FLOW_EVIDENCE_FOLDER set to <reports>/evidence, where it writes its files; no gate sees that
+# variable, and a failed capture fails verify. feel_test is true when a changed file matches
 # feel_test_paths in the flow config. Never edits anything. The report is built from data by
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
@@ -397,6 +400,18 @@ for name in $(yaml_keys "$(config_file)" gates); do
   [ -n "$command" ] || continue
   if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
+done
+evidence_names="$(yaml_keys "$(config_file)" evidence)"
+if [ -n "$evidence_names" ] && ! mkdir -p "$reports/evidence"; then
+  record evidence fail "" "the evidence folder $reports/evidence cannot be made" 0 ""; failed evidence; evidence_names=""
+fi
+[ -z "$evidence_names" ] || export FLOW_EVIDENCE_FOLDER="$reports/evidence"
+for evidence_name in $evidence_names; do
+  evidence_command="$(cfg "evidence.$evidence_name")"; evidence_paths=""
+  if [ -z "$evidence_command" ]; then evidence_command="$(cfg "evidence.$evidence_name.command")"; evidence_paths="$(cfg "evidence.$evidence_name.paths")"; fi
+  [ -n "$evidence_command" ] || continue
+  if [ -n "$evidence_paths" ] && ! in_scope "$evidence_paths"; then skipped "evidence $evidence_name" "no changed file under its paths"; continue; fi
+  run_check "evidence $evidence_name" "$evidence_command" gate
 done
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
