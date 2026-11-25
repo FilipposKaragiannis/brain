@@ -193,7 +193,7 @@ def command_text(command, host):
     return ("/%s" % command.skill if host == "claude" else "$%s" % bare_skill) + ((" " + command.arguments) if command.arguments else "")
 
 
-def command_html(command, ask=""):
+def command_html(command, ask):
     return ('<span class="c-claude">%s</span><span class="c-codex">%s</span><span class="c-say">%s</span>'
             % (esc(command_text(command, "claude")), esc(command_text(command, "codex")), esc(ask or command_text(command, "claude"))))
 
