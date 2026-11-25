@@ -7,7 +7,8 @@
 # twin verify.md for the PR body. head is the full commit the run checked; verdict is the first
 # line of verify.md, `Verdict: pass at <head>` or `Verdict: fail at <head>`, on every report verify
 # writes, the minimal fail report too, and verify.md ends with a `## Not checked` section that says
-# none when empty. Evidence files live under <reports>/evidence/, which the evidence list fills.
+# none when empty. Evidence files live under <reports>/evidence/, which every run removes first and
+# the evidence list fills.
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
@@ -38,8 +39,8 @@
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
 # short. Returns at once, exit 0. It records the run in <reports>/verify.run (lib/verify.sh) and
-# first removes the earlier verify.json and verify.md, so no report of an earlier run reads as this
-# one's. A run of the item still going is not started again: --start says so and exits 0. The run
+# first removes the earlier verify.json, verify.md and evidence/, so no report or evidence of an
+# earlier run reads as this one's. A run of the item still going is not started again: --start says so and exits 0. The run
 # lasts at most verify.limit from the flow config (s, m, h or d; default 2h): past it, its whole
 # process group is stopped and the report is a fail naming the check that was running, the limit
 # and any check that failed before it. A run stopped by a signal, or ended with no report, also
@@ -141,10 +142,12 @@ say_live_run() {
   live_started="$(verify_run_field "$reports" started)"
   echo "verify: a run of $item is already going (pid $live_run_pid, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
 }
-# make_run_files: removes the earlier run's record, reports, log and output, and makes the log and
-# the output new, never written through a link someone left at a name.
+# make_run_files: removes the earlier run's record, reports, evidence, log and output, and makes the
+# log and the output new, never written through a link someone left at a name: the evidence folder
+# is named without a trailing slash, so a link there goes and the folder it points at stays.
 make_run_files() {
   rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out" "$failed_file"
+  rm -rf "$reports/evidence"
   (set -C; : > "$log" && : > "$run_out")
 }
 # may_start: takes the item's verify lock, so two starts never run the checks twice. False, saying
@@ -228,7 +231,7 @@ esac
 
 name_separator="$(printf '\037')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
-rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
+rm -f "$log" "$failed_file"; rm -rf "$reports/evidence"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"

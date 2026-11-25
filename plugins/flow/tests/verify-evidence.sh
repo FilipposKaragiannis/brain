@@ -2,8 +2,9 @@
 # verify-evidence.sh: the evidence list in .flow/config.yaml runs after the gates as the checks
 # `evidence <name>`, each writing its files into FLOW_EVIDENCE_FOLDER, <reports>/evidence; a capture
 # that fails fails verify, one whose paths match no changed file is skipped, a config with no
-# evidence key adds no check and no folder, and no gate sees the folder. On the local adapter in
-# throwaway repos.
+# evidence key adds no check and no folder, and no gate sees the folder. A started run and a plain
+# run both remove the earlier run's evidence, and a link left at that name goes without its target.
+# On the local adapter in throwaway repos.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -19,6 +20,11 @@ check_names() { python3 -c 'import json,sys; print("\n".join(check["name"] for c
 check_status() { python3 -c 'import json,sys; print("".join(check["status"] for check in json.load(open(sys.argv[1]))["checks"] if check["name"]==sys.argv[2]))' "$reports/verify.json" "$1"; }
 last_check_line_starting_with() { check_names | grep -n "^$1" | tail -n 1 | cut -d: -f1; }
 append_evidence() { printf 'evidence:\n%s\n' "$1" >> "$root/app/.flow/config.yaml"; }
+leave_earlier_evidence() { mkdir -p "$reports/evidence" && printf 'png\n' > "$reports/evidence/old.png"; }
+# A --start call returns at once, and a held gate starts within seconds; past these bounds the
+# check fails instead of hanging the suite.
+start_return_seconds=30
+gate_start_seconds=20
 
 echo "a capture writes its file into the evidence folder"
 new_item shot "  ok: 'true'"
@@ -71,5 +77,38 @@ check "CaptureInTheSameRun_SeesTheEvidenceFolder: the folder must be set in this
   '[ "$(cat "$work/capture-saw")" = "$reports/evidence" ]'
 check "GateBeforeTheCaptures_DoesNotSeeTheEvidenceFolder: a gate writing into the folder would mix its files with the evidence" \
   '[ "$(cat "$work/gate-saw")" = unset ]'
+
+echo "a started run removes the earlier run's evidence"
+new_item cleared "$(held_gate cleared)"
+leave_earlier_evidence
+(verify --start >/dev/null 2>&1; echo "$?" > "$work/cleared-start.code") &
+check "StartWithAnEarlierEvidenceFile_ReturnsAtOnce: the row below must read the folder while the run goes" \
+  'until_true "$start_return_seconds" "[ -s $work/cleared-start.code ]"'
+check "StartedRun_GateIsHeld: the gate must still run, or the row below cannot tell a cleared start from an ended run" \
+  'until_true "$gate_start_seconds" "[ -s $work/cleared.count ]"'
+check "StartAfterAnEarlierRun_RemovesTheEarlierEvidence: no file of an earlier run may read as this run's proof" \
+  '[ ! -e "$reports/evidence/old.png" ]'
+touch "$work/release-cleared"
+wait_until_ended
+
+echo "a plain run removes the earlier run's evidence and keeps its own"
+new_item fresh "  ok: 'true'"
+append_evidence "  new: 'sh $work/capture.sh new.png'"
+leave_earlier_evidence
+verify >/dev/null 2>&1
+check "PlainRunAfterAnEarlierRun_RemovesTheEarlierEvidence: a direct run starts as clean as a started one" \
+  '[ ! -e "$reports/evidence/old.png" ]'
+check "PlainRunAfterAnEarlierRun_KeepsItsOwnCapture: the clearing comes before the captures, never after" \
+  '[ -f "$reports/evidence/new.png" ]'
+
+echo "a link left at the evidence folder"
+new_item linked "  ok: 'true'"
+mkdir -p "$work/outside" && printf 'png\n' > "$work/outside/kept.png"
+ln -s "$work/outside" "$reports/evidence"
+verify >/dev/null 2>&1
+check "LinkAtTheEvidenceFolder_IsRemoved: a run never writes its evidence through a link someone left" \
+  '[ ! -L "$reports/evidence" ]'
+check "LinkAtTheEvidenceFolder_LeavesItsTargetFilesAlone: clearing the evidence never reaches outside the reports" \
+  '[ -f "$work/outside/kept.png" ]'
 
 if [ "$fails" -eq 0 ]; then echo "verify-evidence: ok"; else echo "verify-evidence: $fails failed"; exit 1; fi
