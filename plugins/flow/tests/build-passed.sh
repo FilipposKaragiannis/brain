@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034,SC2154 # _base_fixture.sh and _verify_fixture.sh set plugin, work, here, worktree and root; the checks' conditions read the names set here
 # build-passed.sh: the build pass verify keeps and a push reads, on the local adapter in throwaway
 # repos. scripts/build-passed.sh prints the run of a pass verify kept for the same build command and
 # the files under its paths; a missing pass, a failed build, a changed command, a changed file under

@@ -19,7 +19,7 @@ key="$(commit_key "$index")"
 passed_seen check-format "$key" && exit 0
 hooks_folder="$(cd "$(dirname "$0")" && pwd)"
 names="$(mktemp)" || exit 0
-trap 'rm -f "$names"; [ -z "${discarded_index_folder:-}" ] || rm -rf "$discarded_index_folder"' EXIT
+trap 'rm -f "$names"; [ -z "$index" ] || rm -rf "$(dirname "$index")"' EXIT
 commit_files_null_byte_separated "$index" "$seg" > "$names"
 [ -s "$names" ] || exit 0
 failed=""

@@ -29,8 +29,8 @@ gate_fails="$work/gate-fails"
 once=1
 twice=2
 
-cd "$work"
-git init -q -b main repo && cd repo
+cd "$work" || exit 1
+git init -q -b main repo && cd repo || exit 1
 git config user.email t@t && git config user.name t
 mkdir -p .standards
 cat > .standards/config.json <<JSON
