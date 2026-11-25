@@ -31,6 +31,10 @@
 # a name holds U+001F, a failed `changed files` check names why (scripts/_change_list.py and
 # scripts/_verify_base.py), every check with paths runs, no kept pass is reused and feel_test is
 # true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is not a valid name.
+# A check's summary is one line of its output: the last line its `summary` pattern matches, else
+# its last non-empty line; a failed check's is the tail of its output. A gate map takes `summary:`;
+# build, test and mutation take theirs under verify.summary.build, .test and .mutation in the flow
+# config, every test command the test one.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -229,17 +233,18 @@ rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the v
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
-records=""; changed_list=""; timings=""; change_list_summary_file=""; chosen_base_file=""
+records=""; changed_list=""; timings=""; change_list_summary_file=""; chosen_base_file=""; summary_patterns=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"} ${summary_patterns:+"$summary_patterns"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"} ${summary_patterns:+"$summary_patterns"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_summary_file:+"$change_list_summary_file"} ${chosen_base_file:+"$chosen_base_file"} ${summary_patterns:+"$summary_patterns"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 change_list_summary_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 chosen_base_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+summary_patterns="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
 config_base="$(cfg_or base main)"
 changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" --log="$log" --summary="$change_list_summary_file" \
@@ -313,36 +318,39 @@ log_check_files() {
 }
 
 run_check() {
-  # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
-  name="$1"; command="$2"; kind="$3"; files="${4:-}"
+  # run_check <name> <command> <kind: gate|signal> <summary pattern> [files]: true when the
+  # command passed.
+  name="$1"; command="$2"; kind="$3"; check_summary_pattern="$4"; files="${5:-}"
   IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
   printf '\n== %s: %s\n' "$name" "$command" >> "$log"
   log_check_files "$@"
   check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
-  if run_with_names "$command" "$@" >> "$log" 2>&1; then check_status="pass"; summary="ok"
+  if run_with_names "$command" "$@" >> "$log" 2>&1; then check_status="pass"
   else
     check_status="fail"; [ "$kind" = "signal" ] && check_status="signal"
-    summary="$(tail -c "+$log_start" "$log")"
   fi
+  summary="$(tail -c "+$log_start" "$log")"
+  [ -z "$check_summary_pattern" ] || printf '%s\000%s\000' "$name" "$check_summary_pattern" >> "$summary_patterns"
   [ "$check_status" = "fail" ] && failed "$name"
   record "$name" "$check_status" "$command" "$summary" "$(( $(now_seconds) - check_started ))" ""
   [ "$check_status" = "pass" ]
 }
 
 scoped_check() {
-  # scoped_check <name> <command> <globs, one per line> <build|test>: a build or test command.
+  # scoped_check <name> <command> <globs, one per line> <build|test> <summary pattern>: a build or
+  # test command.
   # With globs it runs only when a changed file matches one. A test pass kept for the same command
   # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
   # --fresh runs the command whatever is kept.
   if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
-  set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
+  set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4" "$5"
   inputs_key="$(check_key "$2" "$3")"
   if [ "$4" = test ] && [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
   fi
-  if run_check "$1" "$2" gate; then check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
+  if run_check "$1" "$2" gate "$5"; then check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
   else check_drop "$inputs_key"; fi
 }
 
@@ -351,9 +359,9 @@ planned_checks() {
   # plan holds for the kind, as a scoped check.
   planned_count="$(json_length "$planned" "$1")"
   if [ "${planned_count:-0}" -eq 0 ]; then skipped "$2" "no $1 command in .standards/config.json"; return; fi
-  planned_index=0
+  planned_index=0; planned_summary_pattern="$(cfg "verify.summary.$1")"
   while [ "$planned_index" -lt "$planned_count" ]; do
-    scoped_check "$(json_get "$planned" "$1.$planned_index.name")" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")" "$1"
+    scoped_check "$(json_get "$planned" "$1.$planned_index.name")" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")" "$1" "$planned_summary_pattern"
     planned_index=$((planned_index + 1))
   done
 }
@@ -376,27 +384,27 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
     files="$(printf '%s' "$changed_units" | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" existing "$prefix" "$extensions")"
-    if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
+    if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "" "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
   i=$((i + 1))
 done
 [ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule$listed_files_only"
 planned_checks test tests
-mutation="$(json_get "$std" mutation)"
+mutation="$(json_get "$std" mutation)"; mutation_summary_pattern="$(cfg verify.summary.mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
   case "$mutation" in
-    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
-    *) run_check mutation "$mutation" signal ;;
+    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$mutation_summary_pattern" "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
+    *) run_check mutation "$mutation" signal "$mutation_summary_pattern" ;;
   esac
 fi
 for name in $(yaml_keys "$(config_file)" gates); do
-  command="$(cfg "gates.$name")"; paths=""
-  if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; fi
+  command="$(cfg "gates.$name")"; paths=""; gate_summary_pattern=""
+  if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; gate_summary_pattern="$(cfg "gates.$name.summary")"; fi
   [ -n "$command" ] || continue
   if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
-  run_check "gate $name" "$command" gate
+  run_check "gate $name" "$command" gate "$gate_summary_pattern"
 done
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
@@ -412,7 +420,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
+err="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" "$summary_patterns" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]
