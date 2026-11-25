@@ -26,9 +26,9 @@ answers prints one JSON line {"id", "text"} per given item the owner answered wi
 comment; answers.sh passes the gated ones and clears the gates. me prints the names `me` stands
 for, one per line: the account id of the token's user, then jira.email. jira.scope (scope_filter
 in lib/flow.sh, FLOW_SCOPE_*) is ANDed into every search: list, its children counts, read's
-children count and in-scope, which answers runs per item; in-scope exits 0 when the issue is
-inside it, 1 when not. vocabulary prints the project's issue types and the options of the
-jira.fields.area field.
+children count, in-scope and answers, which also skips a Done issue; in-scope exits 0 when the
+issue is inside it, 1 when not. vocabulary prints the project's issue types and the options of
+the jira.fields.area field.
 
 set-status moves the issue through the transition jira.transitions.<name> names
 (FLOW_JIRA_TRANSITION_*); unset, ready takes the first transition into the status category new and
@@ -660,11 +660,14 @@ def answer_after_gate(comments, allowed):
 
 
 def cmd_answers(args):
-    keys = [key for key in (key_of(item_id) for item_id in args) if inside_scope(key)]
+    keys = [key_of(item_id) for item_id in args]
     if not keys:
         return
+    conditions = ["key in (%s)" % ", ".join(keys), "project = %s" % jql_text(setting("PROJECT"))] + scope_conditions()
+    issues, _ = search(" AND ".join(conditions + ["statusCategory != Done"]), ["summary"], len(keys))
+    open_keys = {issue["key"] for issue in issues}
     allowed = answerers()
-    for key in keys:
+    for key in (key for key in keys if key in open_keys):
         text = answer_after_gate(comments_of(key), allowed)
         if text is not None:
             print(json.dumps({"id": PREFIX + key, "text": text}))

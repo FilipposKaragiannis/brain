@@ -87,6 +87,13 @@ jira_area_config '  answer_from: [stranger@acme.test]
 '
 check_all "JiraAnswerFromEmail_Counts: an /answer by an email in jira.answer_from clears the gate, because answer_from names who may answer" '[ "$(jira_run "$P/adapters/jira/answers.sh" "$jira_gated")" = "$jira_gated" ]'
 check_all "JiraBareAnswer_TakesTheRecommendations: /answer alone records the answer as recommended, because a bare answer accepts the recommendations" '[ "$(jira_run "$P/scripts/state.sh" get "$jira_gated" answer)" = "as recommended" ]'
+jira_closed="$(jira_run "$P/adapters/jira/create.sh" task "Closed with a gate")"
+jira_run "$P/scripts/gate.sh" raise "$jira_closed" ambiguity "1. Which way?" >/dev/null 2>&1
+jira_comment_as "$jira_closed" stranger@acme.test "/answer this way"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["issues"][sys.argv[2]]["fields"]["status"] = {"name": "Closed", "statusCategory": {"key": "done"}}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${jira_closed#jira:}"
+check_all "JiraAnswerOnDoneIssue_PrintsNothing: answers prints no id for a Done issue the owner answered, because a closed issue's answer is not taken" '[ -z "$(jira_run "$P/adapters/jira/answers.sh" "$jira_closed")" ]'
+check_all "JiraAnswerOnDoneIssue_GateIsLeft: answers leaves the gate on a Done issue the owner answered, because clearing it would move the closed issue back to in progress" '[ "$(jira_run "$P/scripts/state.sh" get "$jira_closed" gate)" = ambiguity ]'
 echo "jira tracker scope (fake curl)"
 jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
 if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]

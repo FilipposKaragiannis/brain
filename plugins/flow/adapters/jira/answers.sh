@@ -4,8 +4,8 @@
 # "**Gate: <gate>**" comment whose first word is /answer, by the user the API token belongs to or
 # an account id or email in jira.answer_from; the rest of the comment is the answer ("/answer"
 # alone means as recommended). An id whose record holds no gate, or the merge gate (it clears
-# when the PR is merged), or whose issue is outside jira.scope (scope_filter in lib/flow.sh), is
-# left alone. gate.sh comments "Gate cleared: ..." on the issue, the owner's receipt, since Jira's
+# when the PR is merged), or whose issue is Done or outside jira.scope (scope_filter in
+# lib/flow.sh), is left alone. gate.sh comments "Gate cleared: ..." on the issue, the owner's receipt, since Jira's
 # REST API has no reactions. The item's id prints once it is cleared. No ids prints nothing; an id
 # that is not a Jira item's exits 2.
 [ $# -gt 0 ] || exit 0

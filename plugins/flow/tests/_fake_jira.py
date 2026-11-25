@@ -110,6 +110,7 @@ me = signed_in.group(1) if signed_in else ""
 JQL_CLAUSES = [
     (re.compile(r'project = "([^"]+)"'), lambda i, m: i["key"].startswith(m.group(1) + "-")),
     (re.compile(r'key = "([A-Z][A-Z0-9_]*-\d+)"'), lambda i, m: i["key"] == m.group(1)),
+    (re.compile(r"key in \(([^)]*)\)"), lambda i, m: i["key"] in [k.strip() for k in m.group(1).split(",")]),
     (re.compile(r"parent = ([A-Z][A-Z0-9_]*-\d+)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") == m.group(1)),
     (re.compile(r"parent in \(([^)]*)\)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") in [k.strip() for k in m.group(1).split(",")]),
     (re.compile(r"statusCategory != Done"), lambda i, m: status_of(i)["statusCategory"]["key"] != "done"),
