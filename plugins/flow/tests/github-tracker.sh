@@ -117,16 +117,19 @@ python3 -I "$P/adapters/github/_mutate.py" field acme/widgets 36 Size M 2>"$work
 check_all "gh field write survives one 502" '[ "$(python3 -c "import json; print(next(i[\"fields\"].get(\"Size\",\"\") for i in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"] if i[\"number\"]==36))")" = "M" ] && grep -q "trying again" "$work/gh-err"'
 rm -f "$FAKE_GH_DIR/fail"
 : > "$FAKE_GH_DIR/calls.log"
+# card_history <number>: every Status the fake gh's project has held on the issue's card, oldest first.
+card_history() { python3 -c 'import json,sys
+stored = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2]))
+print(json.dumps(stored.get("project_status_history", [])))' "$FAKE_GH_DIR/issues.json" "$1"; }
+history_before="$(card_history 33)"
 "$P/adapters/github/write-state.sh" 'gh#33' size=L gate=ambiguity
 check "gh write-state: size goes to the field, not a label" sh -c "[ \"\$('$P/adapters/github/read.sh' 'gh#33' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"size\"])')\" = L ] && ! grep -q 'size:L' '$FAKE_GH_DIR/calls.log'"
-# card_writes: how many times the project card's Status was written since calls.log was emptied.
-card_writes() { grep -c updateProjectV2ItemFieldValue "$FAKE_GH_DIR/calls.log"; }
-check "WriteStateOfAGate_LeavesTheCard: a gate label written to the tracker writes no card Status, because the card follows the flow record through set-status" [ "$(card_writes)" -eq 0 ]
+check "WriteStateOfAGate_LeavesTheCard: a gate label written to the tracker leaves the card's Status history as it was, because the card follows the flow record through set-status" [ "$(card_history 33)" = "$history_before" ]
 cp .flow/config.yaml "$work/config.mirrored" && printf 'tracker_state: labels\n' >> .flow/config.yaml
 sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "gh#34"' >/dev/null 2>&1
-: > "$FAKE_GH_DIR/calls.log"
+history_before="$(card_history 34)"
 "$P/scripts/gate.sh" raise 'gh#34' ambiguity "Which way?" implement >/dev/null 2>&1
-check "GateRaiseWithLabelsAndProject_WritesTheCardOnce: a gate raised on a claimed item writes its card Status once, because the push moves the card and the label write leaves it" [ "$(card_writes)" -eq 1 ]
+check "GateRaiseWithLabelsAndProject_WritesTheCardOnce: a gate raised on a claimed item adds one Status to its card's history, because the push moves the card and the label write leaves it" [ "$(card_history 34 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" -eq "$(printf '%s' "$history_before" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)) + 1)')" ]
 mv "$work/config.mirrored" .flow/config.yaml
 chore="$("$P/scripts/new.sh" task "Tidy" --size M --type Chore --body "## Acceptance
 - x")"

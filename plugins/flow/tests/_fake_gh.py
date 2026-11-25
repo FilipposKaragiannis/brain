@@ -166,7 +166,8 @@ elif args[0] == "api" and "graphql" in args:
         i = by_node(var["c"]); i["project_item"] = "PI_%d" % i["number"]; save()
         print(json.dumps({"data": {"addProjectV2ItemById": {"item": {"id": i["project_item"]}}}}))
     elif "updateProjectV2ItemFieldValue" in q:
-        i = next(i for i in data["issues"] if i.get("project_item") == var["i"]); i["project_status"] = var["o"][3:]; save(); print('{"data":{}}')
+        i = next(i for i in data["issues"] if i.get("project_item") == var["i"]); i["project_status"] = var["o"][3:]
+        i["project_status_history"] = i.get("project_status_history", []) + [i["project_status"]]; save(); print('{"data":{}}')
     elif "addSubIssue" in q:
         p_node = args[args.index("p=") + 1] if "p=" in args else [a for a in args if a.startswith("p=")][0][2:]
         c_node = [a for a in args if a.startswith("c=")][0][2:]

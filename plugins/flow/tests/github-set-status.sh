@@ -43,7 +43,10 @@ stored_issue_field() { python3 -c 'import json,sys
 stored = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2]))
 print(json.dumps(stored[sys.argv[3]]))' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
 labels_hold() { github_field "$1" labels | python3 -c 'import json,sys; sys.exit(sys.argv[1] not in json.load(sys.stdin))' "$2"; }
-card_writes() { grep -c updateProjectV2ItemFieldValue "$FAKE_GH_DIR/calls.log"; }
+# card_history <number>: every Status the fake gh's project has held on the issue's card, oldest first.
+card_history() { python3 -c 'import json,sys
+stored = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2]))
+print(json.dumps(stored.get("project_status_history", [])))' "$FAKE_GH_DIR/issues.json" "$1"; }
 code_of() { "$@" >/dev/null 2>&1; echo $?; }
 
 echo "github set-status on a project"
@@ -64,9 +67,9 @@ ROWS
 "$github_adapter/set-status.sh" 'gh#3' ready >/dev/null 2>&1
 check "SetStatusWithoutCard_AddsTheCard: set-status of an issue with no card on the project puts one there, because the card is where the status lives" '[ -n "$(github_field "gh#3" project.item)" ]'
 check "SetStatusWithoutCard_SetsItsStatus: the added card has the Status asked for, because adding it is only the first half of the move" '[ "$(github_field "gh#3" project.status)" = "Next up" ]'
-: > "$FAKE_GH_DIR/calls.log"
+history_before="$(card_history 2)"
 "$github_adapter/set-status.sh" 'gh#2' in-progress >/dev/null 2>&1
-check "SetStatusAlreadyThere_WritesNoCard: set-status of a card at the Status asked for writes nothing to the project, because a push repeats on every step and must not cost a write each time" '[ "$(card_writes)" = 0 ]'
+check "SetStatusAlreadyThere_WritesNoCard: set-status of a card at the Status asked for leaves the card's Status history as it was, because a push repeats on every step and must not cost a write each time" '[ "$(card_history 2)" = "$history_before" ]'
 github_config "  project: 1
   status:
     review: Nowhere"
