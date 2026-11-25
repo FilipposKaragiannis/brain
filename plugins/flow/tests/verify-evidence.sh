@@ -37,6 +37,18 @@ check "CaptureThatExitsZero_IsAPassedEvidenceCheck: the report names the capture
 check "CaptureCheck_ComesAfterTheLastGate: evidence is captured from the change the gates passed" \
   '[ "$(last_check_line_starting_with "evidence shot")" -gt "$(last_check_line_starting_with "gate ")" ]'
 
+echo "every configured capture runs, in either form"
+new_item both "  ok: 'true'"
+append_evidence "  plain: 'sh $work/capture.sh plain.png'
+  mapped:
+    command: 'sh $work/capture.sh mapped.png'
+    paths: [change.txt]"
+verify >/dev/null 2>&1
+check "TwoCaptures_FirstLeavesItsFile: every configured capture runs, not only one" \
+  '[ -f "$reports/evidence/plain.png" ]'
+check "CaptureMapWithPathsMatchingAChangedFile_LeavesItsFile: a map entry runs when its paths match, as a gate does" \
+  '[ -f "$reports/evidence/mapped.png" ]'
+
 echo "a capture that fails fails verify"
 new_item broken "  ok: 'true'"
 append_evidence "  broken: 'sh $work/broken-capture.sh'"
@@ -54,8 +66,10 @@ append_evidence "  scoped:
     command: 'sh $work/capture.sh scoped.png'
     paths: [src/**]"
 verify >/dev/null 2>&1
+check "ScopedRun_ReportListsChecks: an empty check list would pass the row below on nothing" \
+  '[ -n "$(check_names)" ]'
 check "ScopedRun_ChangeListIsComplete: an incomplete list runs every check with paths, so the rows below would prove nothing" \
-  'scoped_names="$(check_names)" && [ -n "$scoped_names" ] && ! printf "%s\\n" "$scoped_names" | grep -qx "changed files"'
+  '! check_names | grep -qx "changed files"'
 check "CaptureWithPathsMatchingNoChangedFile_IsASkippedEvidenceCheck: the report says why no evidence came" \
   '[ "$(check_status "evidence scoped")" = skipped ]'
 check "CaptureWithPathsMatchingNoChangedFile_WritesNothing: a skipped capture must not run" \
@@ -64,8 +78,10 @@ check "CaptureWithPathsMatchingNoChangedFile_WritesNothing: a skipped capture mu
 echo "a config with no evidence key"
 new_item plain "  ok: 'true'"
 verify >/dev/null 2>&1
+check "ConfigWithNoEvidenceKey_ReportListsChecks: an empty check list would pass the row below on nothing" \
+  '[ -n "$(check_names)" ]'
 check "ConfigWithNoEvidenceKey_HasNoEvidenceCheck: a project that captures nothing keeps its check list" \
-  'plain_names="$(check_names)" && [ -n "$plain_names" ] && ! printf "%s\\n" "$plain_names" | grep -q "^evidence"'
+  '! check_names | grep -q "^evidence"'
 check "ConfigWithNoEvidenceKey_MakesNoEvidenceFolder: a project that captures nothing gets no folder" \
   '[ ! -e "$reports/evidence" ]'
 
