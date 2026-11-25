@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds a repo whose feature branch drops the LINQ from a declared hot path, committed with the
 # message given as $1, so the claim cases differ only in what the commit claims.
-set -e
+set -eu
 commit_message="${1:?the feature commit message}"
 git init -q -b main .
 git config user.email eval@example.com
