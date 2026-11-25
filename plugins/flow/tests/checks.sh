@@ -66,6 +66,10 @@ run_broken() {
   echo "$1" > "$work/broken.mode"
   "$check_job" claude --as check-broken > "$work/broken-run.out" 2>&1
 }
+# set_base <branch>: base in the config.
+set_base() {
+  sed "s/^base: .*/base: $1/" "$flow_home_folder/config.yaml" > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
+}
 # set_bug_adapter <name>: adapters.bug in the config, or none when the name is empty.
 set_bug_adapter() {
   awk -v adapter="$1" '$0 ~ /^  bug: / { next } { print } $0 == "  default: local" && adapter != "" { print "  bug: " adapter }' \
@@ -122,6 +126,9 @@ jobs:
     broken:
       command: sh $work/broken.sh
       schedule: every 30m
+    weekly:
+      command: true
+      schedule: weekly sun 03:00
 YAML
 claimed_item="$(new_task "Claimed work")"
 claimed_worktree="$("$plugin/scripts/steward.sh" claim "$claimed_item")"
@@ -129,6 +136,7 @@ printf 'work in progress\n' > "$claimed_worktree/uncommitted-work.txt"
 claimed_worktree_before="$(git -C "$claimed_worktree" rev-parse HEAD; git -C "$claimed_worktree" status --porcelain; cat "$claimed_worktree/uncommitted-work.txt")"
 remote_commit main pushed-to-origin.txt
 origin_main="$(git -C "$root/origin.git" rev-parse main)"
+mkdir -p "$flow_home_folder/checks" && printf 'kept pass\n' > "$flow_home_folder/checks/kept-pass"
 
 echo "checks: a check's checkout"
 run_probe 0
@@ -150,6 +158,8 @@ check "PassingRun_RemovesItsCheckout: the folder goes when the run ends" \
   '[ -n "$pass_checkout" ] && [ ! -e "$pass_checkout" ]'
 run_probe "$probe_failure_code"; failing_run_exit=$?
 fail_checkout="$(report_line "$work/probe.report" pwd)"
+check "CheckRuns_LeaveVerifysKeptPassStoreAlone: a check's folder is its own, so a file verify kept stays" \
+  '[ -f "$flow_home_folder/checks/kept-pass" ]'
 check "FailingCheck_EndsTheRunFailed: a command that exits non-zero fails the run" \
   '[ "$failing_run_exit" -ne 0 ]'
 check "FailingRun_RemovesItsCheckout: the folder goes when the run fails too" \
@@ -184,6 +194,12 @@ mkdir -p .flow/jobs && printf '#!/bin/sh\nexec "%s" "$@"\n' "$check_job" > .flow
 check_plist="$work/agents/com.app.flow.check-smoke.plist"
 check "CheckWithItsWrapper_InstallsAnAgentThatRunsTheCheckJobAsItsSchedule: the agent runs the wrapper with the host and --as check-smoke" \
   'python3 -c "import plistlib,sys; command=plistlib.load(open(sys.argv[1], \"rb\"))[\"ProgramArguments\"][-1]; assert command.split()[-4:] == [\".flow/jobs/check.sh\", \"claude\", \"--as\", \"check-smoke\"], command" "$check_plist"'
+for schedule_form_check in broken slow smoke weekly; do
+  "$jobs_script" install "check-$schedule_form_check" > "$work/install-$schedule_form_check.out" 2>&1 \
+    || echo "$schedule_form_check" >> "$work/refused-schedule-forms"
+done
+check "CheckOnEveryScheduleFormTheJobsTake_IsInstalled: every 30m, every 2h, daily 02:00 and weekly sun 03:00 are each taken for a check" \
+  '[ ! -e "$work/refused-schedule-forms" ]'
 unset FLOW_SCHEDULER FLOW_LAUNCH_AGENTS
 
 echo "checks: two checks at once, and a stop"
@@ -236,6 +252,12 @@ check "BugTheTrackerRefuses_RunLineSaysItCouldNotBeFiled: a new.sh that fails is
 set_bug_adapter ""; run_broken lines
 check "BugNotFiledBefore_IsFiledAtTheNextFail: the state stays passed, so the next fail files the bug" \
   '[ "$(bug_count broken)" -eq 4 ]'
+run_broken pass; set_base no-such-base; run_broken lines
+check "CheckoutThatCannotBeMade_FilesNoBug: the command never ran, so a pass before it is no regression" \
+  '[ "$(bug_count broken)" -eq 4 ]'
+set_base main; run_broken lines
+check "CheckoutErrorAfterAPass_KeepsThePassOnRecord: the next real fail after it is a fail after a pass, so it files the bug" \
+  '[ "$(bug_count broken)" -eq 5 ]'
 
 echo "checks: init names a malformed check"
 init_script="$plugin/skills/init/scripts/init.sh"
@@ -304,6 +326,10 @@ printf 'base: main\njobs:\n  checks: smoke\n' > "$flow_home_folder/config.yaml"
 init_gaps "$work/init-scalar-checks.out"
 check "ChecksSetAsAValue_IsAnInitGapAtItsLine: jobs.checks holds the checks by name, so init names a value there and its line" \
   'gap_named "$work/init-scalar-checks.out" jobs.checks checks'
+{ cat "$work/fixture-config.yaml"; printf '    nocommand:\n      schedule: daily 02:00\n'; } > "$flow_home_folder/config.yaml"
+"$jobs_script" run check-nocommand > "$work/run-malformed.out" 2>&1; run_malformed_exit=$?
+check "CheckWithNoCommand_IsRefusedByRun: a check with no command cannot run, so run refuses it" \
+  '[ "$run_malformed_exit" -eq "$refused_exit" ]'
 cp "$work/fixture-config.yaml" "$flow_home_folder/config.yaml"
 init_gaps "$work/init-good.out"; good_init_exit=$?
 check "OnlyGoodChecks_AreNoInitGap: init names no jobs.checks entry when every check can run" \
