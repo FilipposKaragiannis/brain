@@ -27,6 +27,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    throwaway worktree: `git fetch origin`, `git worktree add --detach <tmp> origin/epic/<n>`,
    `git merge --no-edit -m "chore: merge <default> into epic/<n>" origin/<default>`, the
    project's build, `git push origin HEAD:epic/<n>` (never force), `git worktree remove <tmp>`.
+   A PR that carries that merge is merged with a merge commit, never squashed.
    A conflict or a red build aborts it and removes the worktree: raise the gate below with what
    conflicted or failed. Then carry the rest of the answer on the PR's branch. Any other answer
    that asks for work outside that branch (another branch, the PR's base for anything but that
