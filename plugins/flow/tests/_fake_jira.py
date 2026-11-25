@@ -8,7 +8,9 @@ type) and the createmeta of each type (the option fields' allowedValues) feed vo
 createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them. A
 search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
 fields.assignee object, as Jira returns one. The assignee PUT stores the signed-in user for that
-user's account id, a bare account id for another, and none for null."""
+user's account id, a bare account id for another, and none for null. A transition leads to the
+status its to names, else to the status of its own name, and Jira lists it only out of the statuses
+its from names, else out of every status."""
 import json, re, sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -52,6 +54,15 @@ def refuse(status, message):
 
 def status_of(issue):
     return issue["fields"]["status"]
+
+
+def target_of(transition: dict) -> str:
+    return transition.get("to", transition["name"])
+
+
+def transitions_out_of(issue: dict) -> list:
+    return [transition for transition in transitions
+            if "from" not in transition or status_of(issue)["name"] in transition["from"]]
 
 
 def view(issue, wanted, properties):
@@ -207,13 +218,14 @@ if m:
         start, size = int(query.get("startAt", 0)), int(query.get("maxResults", 50))
         answer(200, {"startAt": start, "maxResults": size, "total": len(issue["comments"]), "comments": issue["comments"][start:start + size]})
     if rest == "/transitions" and method == "GET":
-        answer(200, {"transitions": [{"id": t["id"], "name": t["name"], "to": {"name": t["name"], "statusCategory": {"key": t["category"]}}}
-                                     for t in transitions]})
+        answer(200, {"transitions": [{"id": transition["id"], "name": transition["name"],
+                                      "to": {"name": target_of(transition), "statusCategory": {"key": transition["category"]}}}
+                                     for transition in transitions_out_of(issue)]})
     if rest == "/transitions" and method == "POST":
-        chosen = next((t for t in transitions if t["id"] == body["transition"]["id"]), None)
+        chosen = next((transition for transition in transitions_out_of(issue) if transition["id"] == body["transition"]["id"]), None)
         if not chosen:
             refuse(400, "Transition id %s is not valid for this issue." % body["transition"]["id"])
-        issue["fields"]["status"] = {"name": chosen["name"], "statusCategory": {"key": chosen["category"]}}
+        issue["fields"]["status"] = {"name": target_of(chosen), "statusCategory": {"key": chosen["category"]}}
         answer(204)
     if rest == "/assignee" and method == "PUT":
         signed_user, account_id = user_of(login), body.get("accountId")

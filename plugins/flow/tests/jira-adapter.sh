@@ -176,6 +176,20 @@ jira_run "$P/adapters/jira/set-status.sh" "$jira_unplaced" needs-you >/dev/null 
 jira_run "$P/adapters/jira/set-status.sh" "$jira_unplaced" needs-you >/dev/null 2>&1; jira_unplaced_code=$?
 check "JiraSetStatusNoTransition_ExitsZero: set-status needs-you with no jira.transitions.needs-you exits 0, because a status the tracker has no place for is no failure" [ "$jira_unplaced_code" = 0 ]
 check "JiraSetStatusNoTransition_SaidOnce: two set-status needs-you with no transition leave one events.log line, because the owner needs telling once, not on every gate" [ "$(grep -c "no transition for needs-you: set jira.transitions.needs-you" "$(flow_home)/events.log")" = 1 ]
+echo "jira set-status through a transition named apart from the status it leads to"
+jira_review_transition="Submit for review"; jira_review_status="In Review"
+python3 -c 'import json,sys; jira_data=json.load(open(sys.argv[1]))
+jira_data["transitions"].append({"id": "71", "name": sys.argv[2], "to": sys.argv[3], "category": "indeterminate", "from": ["To Do", "In Progress"]})
+json.dump(jira_data, open(sys.argv[1], "w"))' "$work/jira/jira.json" "$jira_review_transition" "$jira_review_status"
+jira_config https://acme.atlassian.net
+printf '    in-review: %s\n' "$jira_review_transition" >> .flow/config.yaml
+jira_submitted="$(jira_run "$P/adapters/jira/create.sh" task "Submitted for review")"
+jira_run "$P/adapters/jira/set-status.sh" "$jira_submitted" in-review >/dev/null 2>&1
+check "JiraSetStatusTransitionNamedApart_LandsOnItsTarget: set-status in-review lands on the status the jira.transitions.in-review transition leads to, because a transition's name need not be its status's" [ "$(jira_status_name "$jira_submitted")" = "$jira_review_status" ]
+jira_run "$P/adapters/jira/set-status.sh" "$jira_submitted" in-review > "$work/jira/resubmitted.out" 2>/dev/null; jira_resubmitted_code=$?
+check "JiraSetStatusTransitionNamedApartRepeated_ExitsZero: a second set-status in-review exits 0 though Jira lists no transition of that name out of the status it led to, because the issue is there already" [ "$jira_resubmitted_code" = 0 ]
+check "JiraSetStatusTransitionNamedApartRepeated_PrintsNothing: a second set-status in-review prints nothing, because the issue did not move" [ ! -s "$work/jira/resubmitted.out" ]
+check "JiraSetStatusTransitionNamedApartRepeated_StaysInItsStatus: a second set-status in-review leaves the issue in the status the transition led to, because a push repeats on every step" [ "$(jira_status_name "$jira_submitted")" = "$jira_review_status" ]
 jira_assigned="$(jira_run "$P/adapters/jira/create.sh" task "Assigned to me")"
 jira_run "$P/adapters/jira/assign.sh" "$jira_assigned" me >/dev/null 2>&1
 check "JiraAssignMe_AssigneesHoldTokenUser: after assign me the issue's assignees hold the token's user, because me is the account the token belongs to" [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_assigned" | jget assignees)" = '["flow@acme.test"]' ]

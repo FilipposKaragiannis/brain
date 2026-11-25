@@ -49,6 +49,7 @@ from _http import call, expect, fail  # noqa: E402
 PREFIX = "jira:"
 KEY = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9]+$")
 STATE_PROPERTY = "flow-state"
+TRANSITION_TARGET_PROPERTY = "flow-transition-target"
 STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "pr_host", "touches",
               "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from",
               "base", "branch"]
@@ -498,13 +499,37 @@ def moved(key: str, transition: Transition) -> str:
 
 def moved_by_name(key: str, status_name: str, transition_name: str, current: IssueStatus) -> str:
     """Jira lists only the transitions out of the current status, so an issue already in a status
-    named as the transition is there."""
+    named as the transition, or in the one the flow last took that transition to, is there."""
     if current.name.lower() == transition_name.lower():
         return ""
     transition = next((listed for listed in transitions_of(key) if listed.name == transition_name), None)
     if transition is None:
+        return unmoved_when_there(key, status_name, transition_name, current)
+    if transition.to_name == current.name:
+        return ""
+    store_transition_target(key, transition)
+    return moved(key, transition)
+
+
+def unmoved_when_there(key: str, status_name: str, transition_name: str, current: IssueStatus) -> str:
+    if read_transition_target(key, transition_name) != current.name:
         fail("%s%s has no transition named %s; check jira.transitions.%s" % (PREFIX, key, transition_name, status_name))
-    return "" if transition.to_name == current.name else moved(key, transition)
+    return ""
+
+
+def read_transition_target(key: str, transition_name: str) -> str:
+    status, issue = call("GET", "/rest/api/3/issue/" + key, query={"fields": "status", "properties": TRANSITION_TARGET_PROPERTY})
+    expect(status, issue, "read %s%s" % (PREFIX, key))
+    remembered = (issue.get("properties") or {}).get(TRANSITION_TARGET_PROPERTY) or {}
+    return remembered.get("to", "") if remembered.get("transition") == transition_name else ""
+
+
+def store_transition_target(key: str, transition: Transition) -> None:
+    """Stored on the issue before the move, so a later set-status on any machine knows the issue is
+    there once Jira no longer lists the transition."""
+    target = {"transition": transition.name, "to": transition.to_name}
+    status, answer = call("PUT", "/rest/api/3/issue/%s/properties/%s" % (key, TRANSITION_TARGET_PROPERTY), target)
+    expect(status, answer, "remember where %s takes %s%s" % (transition.name, PREFIX, key))
 
 
 def moved_by_category(key: str, status_name: str, current: IssueStatus, events_log: str, now: str) -> str:
