@@ -7,5 +7,5 @@
 jobs_workers() {
   set -- "$(cfg jobs.workers)"
   for _jw in $(yaml_keys "$(config_file)" jobs.workers); do set -- "$@" "$_jw=$(cfg "jobs.workers.$_jw")"; done
-  python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" workers "$(host_cfg_where jobs.workers)" "$@"
+  cached_python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" workers "$(host_cfg_where jobs.workers)" "$@"
 }

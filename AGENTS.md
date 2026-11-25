@@ -22,12 +22,13 @@ point one at a real project, its worktrees or the owner's console settings.
 - The token is in `<folder>/state/token`. Run the script again to reset the demo.
 - Stop the demo console when you are done; leave no daemon running.
 
-<!-- standards:begin v1.7.0 -->
-# Coding standards (standards plugin v1.7.0)
-Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched
-code only; existing code is not refactored to meet a rule (U-05). A [judgement] breach is
-declared in the commit message, the PR body and the review (U-02). Language conventions:
-`.standards/rules/csharp.md`. Project rules outside this block win where they are stricter.
+<!-- standards:begin v1.9.1 -->
+# Coding standards (standards plugin v1.9.1)
+Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched code
+only; existing code is not refactored to meet a rule (U-05). A [judgement] breach is declared in the
+commit message, the PR body and the review (U-02). Language conventions, one file per configured
+language: `.standards/rules/shell.md` (Shell) and `.standards/rules/python.md` (Python). Project
+rules outside this block win where they are stricter.
 
 ## Hard rules (a breach blocks)
 - D-03 Compose, don't inherit.
@@ -103,7 +104,7 @@ checkout it runs from, its worktrees, the owner's home or any real config. Every
 in `tools/lib/sandbox.sh`, and a plugin app's `npm test` in `tools/lib/sandboxed.sh`: both clear
 git's repository variables (`GIT_DIR` and the rest, which a git hook exports) and the git, Claude,
 Codex and flow config pointers, give the run a throwaway home, and fail it when the checkout
-changes. A new suite starts with the same two lines as `plugins/flow/tests/run.sh`;
+changes. A new suite starts with the same two lines as `plugins/flow/tests/core-board.sh`;
 `tools/lint.sh` checks every suite and app test script. A command gate in
 `.standards/config.json` runs without git's repository variables too (`check-gates.sh`).
 

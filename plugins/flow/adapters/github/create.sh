@@ -4,8 +4,8 @@
 # Bug, task Task, or --type), else epic adds the epic label and bug the bug label. The size goes to
 # the github.fields.size issue field when set, else a size: label; the area to github.fields.area
 # when set, else nowhere (the body names it); the priority to github.fields.priority when set,
-# else nowhere, said on stderr. A parent makes it a native
-# sub-issue; blockers become native dependency edges (and stay readable in the body).
+# else a priority: label. A parent makes it a native sub-issue; blockers become native dependency
+# edges (and stay readable in the body).
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: create <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--parent gh#N]" 2
 kind="$1"; title="$2"; shift 2
@@ -30,6 +30,7 @@ else
   case "$kind" in epic) labels="epic" ;; bug) labels="bug" ;; esac
 fi
 [ -n "$size" ] && [ -z "$GH_SIZE_FIELD" ] && { ensure_label "size:$size"; labels="${labels:+$labels,}size:$size"; }
+[ -n "$priority" ] && [ -z "$GH_PRIORITY_FIELD" ] && { ensure_label "$GH_PRIORITY_LABEL$priority"; labels="${labels:+$labels,}$GH_PRIORITY_LABEL$priority"; }
 tail=""
 [ -n "$parent" ] && tail="$tail
 Parent #$(issue_number "$parent")"
@@ -38,14 +39,11 @@ Blocked by $(printf '%s\n' "$blocked" | tr ',' '\n' | while read -r b; do [ -n "
 [ -n "$labels" ] && set -- --label "$labels" || set --
 url="$(printf '%s\n%s\n' "$body" "$tail" | gh_once issue create -R "$repo" --title "$title" --body-file - "$@")" || die "cannot create the issue"
 n="${url##*/}"
-[ -n "$type" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
-[ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }
+[ -n "$type" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
+[ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }
 area_field="$GH_AREA_FIELD"
-if [ -n "$priority" ]; then
-  if [ -n "$GH_PRIORITY_FIELD" ]; then python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_PRIORITY_FIELD" "$priority" || echo "flow: could not set the priority of gh#$n" >&2
-  else echo "flow: github.fields.priority is not set, so gh#$n has no priority $priority" >&2; fi
-fi
-[ -n "$area" ] && [ -n "$area_field" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$area_field" "$area" || echo "flow: could not set the area of gh#$n" >&2; }
+[ -n "$priority" ] && [ -n "$GH_PRIORITY_FIELD" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_PRIORITY_FIELD" "$priority" || echo "flow: could not set the priority of gh#$n" >&2; }
+[ -n "$area" ] && [ -n "$area_field" ] && { cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$area_field" "$area" || echo "flow: could not set the area of gh#$n" >&2; }
 if [ -n "$parent" ]; then
   pid="$(gh issue view "$(issue_number "$parent")" -R "$repo" --json id -q .id)"
   cid="$(gh issue view "$n" -R "$repo" --json id -q .id)"

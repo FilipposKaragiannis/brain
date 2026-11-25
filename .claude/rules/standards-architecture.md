@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.sh"
+  - "**/*.py"
 ---
 # 1b. Architecture
 

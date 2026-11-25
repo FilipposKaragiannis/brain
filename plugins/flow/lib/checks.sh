@@ -14,7 +14,7 @@ checks_store() { printf '%s/checks' "$(flow_home)"; }
 # check_key <command> <globs, one per line>: the key of the command's inputs at HEAD, empty when a
 # file under the globs has an uncommitted change or the key cannot be worked out.
 check_key() {
-  printf '%s\n' "$2" | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" key "$1" 2>/dev/null
+  printf '%s\n' "$2" | cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" key "$1" 2>/dev/null
 }
 
 # check_key_valid <key>: true for a key _checks.py prints, so nothing else names a file in the store.
