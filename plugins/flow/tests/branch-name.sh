@@ -107,6 +107,14 @@ check "WorktreeSessionOnARetitledItem_ClaimsTheRecordedBranch: the hook reads th
   '[ "$(git -C "$hooked_worktree" branch --show-current)" = "$hooked_branch" ]'
 check "WorktreeSessionOnARetitledItem_StderrHasNoAdapterAloneGuardLine: the hook asks the record of an item read with it, so the guard never fires" \
   '! grep -qF "asked of an item read from its adapter alone" "$work/hooked.err"'
+unparsed="$(new_task "Drill timer")"
+"$plugin/scripts/steward.sh" claim "$unparsed" >/dev/null 2>&1
+"$plugin/scripts/steward.sh" release "$unparsed" >/dev/null 2>&1
+printf 'not a record\n' > "$(branch_lib record_file "$unparsed")"
+unparsed_status=0
+printf '{"name":"%s","cwd":"%s"}' "$(slug "$unparsed")" "$PWD" | "$plugin/hooks/worktree-create.sh" >/dev/null 2>&1 || unparsed_status=$?
+check "WorktreeSessionOnAnItemWhoseRecordDoesNotParse_FailsTheHook: a session never opens on a branch named from the adapter's read alone when the record holds the item's branch" \
+  '[ "$unparsed_status" -ne 0 ]'
 
 legacy="$(new_task "Drill timer")"
 git branch "flow/$(slug "$legacy")" main
