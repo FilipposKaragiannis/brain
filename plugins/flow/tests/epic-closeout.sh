@@ -17,6 +17,8 @@ ln -s "$plugin/tests/fake-gh.sh" "$work/github/gh"
 PATH="$work/github:$PATH"; export PATH
 
 CLOSEOUT_SUMMARY="Every acceptance line is proven."
+MAX_ATTEMPTS="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$plugin/profiles.json")"
+CLAIM_REFUSED=4
 github_repository() {
   new_repo "$1"
   printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
@@ -246,8 +248,10 @@ check "EpicCloseoutWithAnEpicBranch_NamesTheEpicBranchInTheBrief: the verifier w
   'grep -F -- "- Worktree:" "$closeout_brief" | grep -qF "on branch \`$(epic_of "$verified")\`"'
 step_result "$verified" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
 finish_step "$verified"
+check "EpicCloseoutThatPassedWithWorkToMerge_WaitsAtTheMergeGate: the closeout reached its end, or the check below proves nothing" \
+  '[ "$(state "$verified" gate)" = merge ]'
 check "EpicCloseoutThatPassedWithWorkToMerge_ReleasesItsWorktree: the sweep closes an epic at the merge gate only while no claim holds it" \
-  '[ "$(state "$verified" gate)" = merge ] && [ -z "$(claimed_worktree_of "$verified")" ]'
+  '[ -z "$(claimed_worktree_of "$verified")" ]'
 
 echo "epic closeout: the closeout worktree's base is the branch the epic started from"
 github_repository started
@@ -263,10 +267,10 @@ check "EpicCloseoutOfAnEpicUnderAnEpicWithABranch_ClaimsWithThatBranchAsItsBase:
 
 echo "epic closeout: the closeout worktree is set up for the epic's tip"
 github_repository set_up
-printf 'worktree_copy:\n  - local.env\nworktree_setup:\n  - mkdir -p installed && git rev-parse HEAD > installed/from\nworktree_setup_paths:\n  - "**/package-lock.json"\n' >> .flow/config.yaml
+printf 'worktree_name: ../grown-{n}\nworktree_copy:\n  - local.env\nworktree_setup:\n  - mkdir -p installed && git rev-parse HEAD > installed/from\nworktree_setup_paths:\n  - "**/package-lock.json"\n' >> .flow/config.yaml
 printf 'installed/\nlocal.env\n' >> .git/info/exclude
 printf 'secret\n' > local.env
-for pool_folder in wt-1 wt-2 wt-3; do "$plugin/scripts/steward.sh" setup "$root/$pool_folder" >/dev/null 2>&1; done
+for pool_folder in wt-1 wt-2 wt-3; do "$plugin/scripts/steward.sh" reserve "$root/$pool_folder" --name owner >/dev/null 2>&1; done
 locked="$("$local_adapter/create.sh" epic "Locked squads" --body x)"
 remote_branch "$(epic_of "$locked")"; remote_commit "$(epic_of "$locked")" package-lock.json
 "$local_adapter/write-state.sh" "$locked" step=closeout profile=epic
@@ -274,7 +278,7 @@ start_step "$locked"
 locked_worktree="$(claimed_worktree_of "$locked")"
 check "EpicCloseoutWhoseBranchChangesASetupPath_RunsTheSetupAtTheEpicTip: a check that needs installed files runs against the epic's own lockfile" \
   '[ -n "$locked_worktree" ] && [ "$(cat "$locked_worktree/installed/from")" = "$(remote_tip "$(epic_of "$locked")")" ]'
-check "EpicCloseoutWorktree_HoldsTheWorktreeCopyFiles: the closeout worktree is a pool worktree set up like any other" \
+check "EpicCloseoutInAGrownPool_HoldsTheWorktreeCopyFiles: the closeout worktree is a pool worktree set up like any other" \
   '[ -n "$locked_worktree" ] && [ -f "$locked_worktree/local.env" ]'
 
 echo "epic closeout: an epic with no epic branch closes out in the main checkout"
@@ -302,26 +306,36 @@ closeout_with() {
 level_epic="$("$local_adapter/create.sh" epic "Level" --body x)"
 remote_branch "$(epic_of "$level_epic")"
 closeout_with "$level_epic" "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}" 0
+check "EpicCloseoutThatPassedWithNothingToMerge_ClosesTheEpic: the closeout reached its end, or the check below proves nothing" \
+  '[ "$(item_status "$level_epic")" = closed ]'
 check "EpicCloseoutThatPassedWithNothingToMerge_ReleasesItsWorktree: a closed epic keeps no worktree" \
-  '[ "$(item_status "$level_epic")" = closed ] && [ -z "$(claimed_worktree_of "$level_epic")" ]'
+  '[ -z "$(claimed_worktree_of "$level_epic")" ]'
 asking="$(epic_with_work "Asking")"
 closeout_with "$asking" '{"status":"gate","gate":"ambiguity","message":"Which cup counts?"}' 0
+check "EpicCloseoutThatStopsAtAGate_WaitsAtThatGate: the closeout reached its end, or the check below proves nothing" \
+  '[ "$(state "$asking" gate)" = ambiguity ]'
 check "EpicCloseoutThatStopsAtAGate_ReleasesItsWorktree: the owner may take days to answer, and the closeout after it claims the tip again" \
-  '[ "$(state "$asking" gate)" = ambiguity ] && [ -z "$(claimed_worktree_of "$asking")" ]'
+  '[ -z "$(claimed_worktree_of "$asking")" ]'
 failing="$(epic_with_work "Failing")"
 closeout_with "$failing" '{"status":"fail","summary":"A check failed."}' 0
+check "EpicCloseoutThatFails_CountsAnAttempt: the closeout reached its end, or the check below proves nothing" \
+  '[ "$(state "$failing" attempts)" = 1 ]'
 check "EpicCloseoutThatFails_ReleasesItsWorktree: the health job would merge the base into a claimed branch no run holds" \
-  '[ "$(state "$failing" attempts)" = 1 ] && [ -z "$(claimed_worktree_of "$failing")" ]'
+  '[ -z "$(claimed_worktree_of "$failing")" ]'
 exhausted="$(epic_with_work "Exhausted")"
-closeout_with "$exhausted" '{"status":"fail","summary":"A check failed again."}' 2
+closeout_with "$exhausted" '{"status":"fail","summary":"A check failed again."}' "$((MAX_ATTEMPTS - 1))"
+check "EpicCloseoutThatFailsItsLastAttempt_RaisesAnEscalationGate: the closeout reached its end, or the check below proves nothing" \
+  '[ "$(state "$exhausted" gate)" = escalation ]'
 check "EpicCloseoutThatFailsItsLastAttempt_ReleasesItsWorktree: the escalation gate waits on the owner, not on a worktree" \
-  '[ "$(state "$exhausted" gate)" = escalation ] && [ -z "$(claimed_worktree_of "$exhausted")" ]'
+  '[ -z "$(claimed_worktree_of "$exhausted")" ]'
 unopened="$(epic_with_work "Unopened")"
 printf '9\nGitHub is down\n' > "$FAKE_GH_DIR/fail"
 closeout_with "$unopened" "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}" 0
 rm -f "$FAKE_GH_DIR/fail"
+check "EpicCloseoutInAPoolWorktreeWhosePullRequestCannotBeOpened_RaisesAnEscalationGate: the closeout reached its end, or the check below proves nothing" \
+  '[ "$(state "$unopened" gate)" = escalation ]'
 check "EpicCloseoutWhosePullRequestCannotBeOpened_ReleasesItsWorktree: the owner opens the PR by hand, and the closeout after the gate claims the tip again" \
-  '[ "$(state "$unopened" gate)" = escalation ] && [ -z "$(claimed_worktree_of "$unopened")" ]'
+  '[ -z "$(claimed_worktree_of "$unopened")" ]'
 
 echo "epic closeout: a local epic branch that differs from the remote"
 github_repository local_copies
@@ -338,7 +352,7 @@ git update-ref "refs/heads/$(epic_of "$ahead")" "$(git commit-tree -p "$(epic_of
 "$local_adapter/write-state.sh" "$ahead" step=closeout profile=epic
 start_step "$ahead"; ahead_code=$?
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_IsRefused: its unpushed commits are not in the pull request, so the remote tip would not be what passed" \
-  '[ "$ahead_code" = 4 ]'
+  '[ "$ahead_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_ClaimsNoWorktree: a refused closeout holds nothing" \
   '[ -z "$(claimed_worktree_of "$ahead")" ]'
 held="$(epic_with_work "Held")"
@@ -347,7 +361,7 @@ git worktree add -q "$root/elsewhere" "$(epic_of "$held")"
 "$local_adapter/write-state.sh" "$held" step=closeout profile=epic
 start_step "$held"; held_code=$?
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_IsRefused: git checks a branch out in one worktree at a time" \
-  '[ "$held_code" = 4 ]'
+  '[ "$held_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_ClaimsNoWorktree: a refused closeout holds nothing" \
   '[ -z "$(claimed_worktree_of "$held")" ]'
 unasked="$(epic_with_work "Unasked")"
@@ -355,7 +369,7 @@ unasked="$(epic_with_work "Unasked")"
 git remote set-url origin "$work/no-such-remote.git"
 start_step "$unasked"; unasked_code=$?
 check "EpicCloseoutWhoseRemoteCannotBeAsked_IsRefused: not seeing the epic branch is no proof it has none" \
-  '[ "$unasked_code" = 4 ]'
+  '[ "$unasked_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWhoseRemoteCannotBeAsked_StartsNoRun: a closeout in the main checkout would grade the base instead of the epic" \
   '[ ! -f "$(run_file "$unasked")" ]'
 
