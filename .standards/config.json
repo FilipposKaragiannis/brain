@@ -100,6 +100,13 @@
         "tools/cost.sh",
         "tools/test.sh"
       ]
+    },
+    {
+      "name": "fragments",
+      "command": "python3 -I tools/lib/fragments_needed.py {verify_base} origin/main",
+      "paths": [
+        "plugins/**"
+      ]
     }
   ],
   "mutation": "",
