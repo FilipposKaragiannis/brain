@@ -233,6 +233,35 @@ claim_at_base() {
   printf '%s\n' "$claimed_worktree"
 }
 
+# The exit code of git ls-remote --exit-code when the remote holds no matching ref.
+ls_remote_no_match=2
+
+# claim_epic_branch <epic> <epic-json>: claims the pool worktree an epic's closeout runs in, on its
+# epic branch at the tip the remote holds (steward.sh claim-tip), with the epic's start
+# (fetch_epic_start) as its base, and prints its path. Prints nothing when the repository has no
+# origin or the remote answers that it has no epic branch: the closeout runs in the main checkout.
+# A remote that cannot be asked, or a start that does not resolve, writes why to the epic's
+# last_event and stderr and returns 4: not seeing the branch is no proof it holds nothing. Else the
+# exit code of steward.sh claim-tip.
+claim_epic_branch() {
+  git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1 || return 0
+  claim_epic_branch_name="$(epic_branch "$1")"
+  git -C "$(flow_repository)" ls-remote --exit-code --heads origin "$claim_epic_branch_name" >/dev/null 2>&1; claim_epic_branch_asked=$?
+  [ "$claim_epic_branch_asked" -ne "$ls_remote_no_match" ] || return 0
+  if [ "$claim_epic_branch_asked" -ne 0 ]; then
+    record_epic_claim_refusal "$1" "the remote could not be asked for $claim_epic_branch_name, so its closeout has no branch to check"; return 4
+  fi
+  claim_epic_branch_start="$(fetch_epic_start "$2")" || { record_epic_claim_refusal "$1" "$claim_epic_branch_start"; return 4; }
+  claim_epic_branch_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim-tip "$1" "$claim_epic_branch_name" --base "$claim_epic_branch_start")" || return
+  printf '%s\t%s\tclaim\t%s at its remote tip, base %s (the epic start)\n' "$(now_iso)" "$1" "$claim_epic_branch_name" "$claim_epic_branch_start" >> "$(flow_home)/events.log"
+  printf '%s\n' "$claim_epic_branch_worktree"
+}
+
+record_epic_claim_refusal() {
+  adapter write-state "$1" "last_event=$(now_iso) $2" >/dev/null
+  echo "$1: $2" >&2
+}
+
 # base_missing <branch>: true when the repository has an origin and refs/remotes/origin/<branch> is
 # absent. No fetch: the board and init read what the last fetch saw, so they stay fast and work
 # offline. With no origin nothing is missing.

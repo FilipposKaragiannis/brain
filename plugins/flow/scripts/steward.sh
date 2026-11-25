@@ -15,6 +15,13 @@
 #                                                created. A new claim of an item outside its
 #                                                tracker's scope exits 2 (adhoc: names have no
 #                                                tracker, no scope)
+#   steward.sh claim-tip <item> <branch> [--base <branch>]
+#                                                claim a free pool worktree on <branch>, which
+#                                                must be on the remote, at the tip the remote
+#                                                holds (an epic's closeout: lib/remote_tip_claim.sh);
+#                                                print its path. A local <branch> behind the tip
+#                                                moves up to it; one ahead or diverged, or checked
+#                                                out elsewhere, exits 4 with why
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh owner <branch>                    print the item whose pool claim holds the branch
 #                                                as its task branch, or nothing
@@ -128,6 +135,7 @@
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
 . "$FLOW_PLUGIN/lib/slow_steps.sh"
 . "$FLOW_PLUGIN/lib/epic_base.sh"
+. "$FLOW_PLUGIN/lib/remote_tip_claim.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -1917,6 +1925,7 @@ cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
   claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>] [--branch <name>]" 2; cmd_claim "$@" ;;
+  claim-tip) [ $# -ge 2 ] || die "usage: claim-tip <item> <branch> [--base <branch>]" 2; cmd_claim_tip "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
   owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
@@ -1934,5 +1943,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,49p' "$0"; exit 2 ;;
+  *) sed -n '2,56p' "$0"; exit 2 ;;
 esac
