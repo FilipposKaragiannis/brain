@@ -128,7 +128,7 @@ rm -rf "$seed"/plugins/*/changelog.d
 cp -R "$here/fixtures/release/demo" "$seed/plugins/demo"
 "$seed/tools/generate.sh" >/dev/null
 repo="$work/repo"; demo="$repo/plugins/demo"; today="$(date +%F)"
-fresh() { rm -rf "$repo"; cp -R "$seed" "$repo"; mkdir -p "$demo/changelog.d"; }
+fresh() { rm -rf "$repo"; cp -R "$seed" "$repo"; git init -q "$repo"; mkdir -p "$demo/changelog.d"; }
 version() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$1/plugin.source.json"; }
 release() { out="$("$repo/tools/release.sh" "$@" 2>"$work/release.err")"; code=$?; }
 package_versions() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(' '.join([d['version']] + ([d['packages']['']['version']] if 'packages' in d else [])))" "$1"; }
@@ -179,7 +179,7 @@ demo 1.4.2 -> 1.4.3" ]
 fresh
 release
 check "no fragments: nothing to release, exit 0" [ "$code-$out" = "0-release: nothing to release" ]
-check "no fragments: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "no fragments: nothing written" diff -r -x changelog.d -x .git "$seed" "$repo"
 
 fresh
 printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
@@ -187,7 +187,7 @@ printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
 release demo
 check "a malformed fragment: exit 2" [ "$code" -eq 2 ]
 check "a malformed fragment: the file and the reason" grep -q '^release: plugins/demo/changelog.d/b-bad.md: a blank line and then the bullets must follow the bump line$' "$work/release.err"
-check "a malformed fragment: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "a malformed fragment: nothing written" diff -r -x changelog.d -x .git "$seed" "$repo"
 check "a malformed fragment: the good one is kept" [ -f "$demo/changelog.d/a-fix.md" ]
 
 fresh
@@ -205,7 +205,7 @@ printf 'bump: minor\n\n- A feature.\n' > "$demo/changelog.d/a-feature.md"
 release --dry-run demo
 check "dry run: exit 0 and the plugin line first" [ "$code-$(printf '%s\n' "$out" | head -1)" = "0-demo 1.4.2 -> 1.5.0" ]
 check "dry run: prints the section" sh -c "printf '%s' \"\$0\" | grep -q '^- A feature.\$'" "$out"
-check "dry run: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "dry run: nothing written" diff -r -x changelog.d -x .git "$seed" "$repo"
 check "dry run: the fragment stays" [ -f "$demo/changelog.d/a-feature.md" ]
 
 echo "lint checks the changelog fragments"
@@ -256,6 +256,20 @@ json.dump(package, open(sys.argv[1], "w"), indent=2)
 PY2
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "AppTestScriptOutsideSandbox_FailsLint: lint exits 1 and names an app whose test script skips tools/lib/sandboxed.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
+fresh
+flow_dispatcher="$repo/plugins/flow/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "FlowDispatcherHoldingOnlyTheDispatch_IsNotNamedByLint: the flow run.sh that only hands the run to flow_suites.py needs no sandbox lines" sh -c "! printf '%s' \"\$0\" | grep -q 'plugins/flow/tests/run.sh'" "$out"
+check "LintOnTheCommittedTree_Passes: exit 0 and no rule named, because the committed baseline records today's findings" \
+  sh -c '[ "$1" -eq 0 ] && ! printf "%s" "$2" | grep -Eqw "SC[0-9]{4}|[EFIBS][0-9]{3,4}|SIM[0-9]{3}"' sh "$code" "$out"
+mkdir -p "$demo/tests"
+cp "$flow_dispatcher" "$demo/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "SuiteCopyingTheFlowDispatcher_FailsLint: lint exits 1 and names any other file that holds the dispatch outside the sandbox" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+rm "$demo/tests/run.sh"
+printf 'touch "$HOME/setup-outside-the-sandbox"\n' >> "$flow_dispatcher"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "FlowDispatcherWithALineBesideTheDispatch_FailsLint: lint exits 1 and names the flow run.sh once it runs anything but the dispatch" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'flow dispatcher holds more than the dispatch.*plugins/flow/tests/run.sh'" "$out"
 
 echo "test.sh fails a part named on the command line that cannot run"
 # The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.

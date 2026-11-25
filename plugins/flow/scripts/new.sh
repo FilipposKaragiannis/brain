@@ -7,7 +7,8 @@
 # follow-ups here.
 # --type names the tracker's issue type (Feature, Chore) where the adapter has types; --area the
 # item's area (github.fields.area on GitHub, an area field on a local item); --priority its
-# priority (github.fields.priority on GitHub, a priority field on a local item).
+# priority (github.fields.priority on GitHub, else a priority: label; a priority field on a local
+# item).
 # A child (--parent) takes the parent's priority and area unless it names its own, so a split
 # item's children are ready as soon as the parent would be. A child left without a priority that
 # ready.needs asks for is said on stderr: it is never ready until one is set.

@@ -43,7 +43,8 @@ project that wants its own copies this file to `.flow/intake.md` (or the path in
 - **Notes:** the note's own words in `## Notes`, quoted, with the section.
 - **Priority:** suggest it, never set it. One line in `## Notes`:
   `Suggested priority: P<n>, <the reason in one clause>.` The owner sets the field, and an item
-  without one is not ready.
+  without one is not ready. On a tracker with no priority field, the owner's `priority:<name>`
+  label is the priority.
 
 ## Needs the owner
 

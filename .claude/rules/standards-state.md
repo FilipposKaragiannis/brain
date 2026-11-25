@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.sh"
+  - "**/*.py"
 ---
 # 2. State and data
 

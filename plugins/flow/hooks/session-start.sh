@@ -12,7 +12,7 @@ root="$(repo_root)" || exit 0
 # The flow home is the main worktree's .flow: it is not committed, so a linked worktree has none.
 home="$(cd "$root" && flow_home)"
 [ -f "$home/config.yaml" ] || exit 0
-python3 -I "$FLOW_PLUGIN/scripts/_plugins.py" sync "$root" 2>/dev/null || true
+cached_python3 -I "$FLOW_PLUGIN/scripts/_plugins.py" sync "$root" 2>/dev/null || true
 init="$FLOW_PLUGIN/skills/init/scripts/init.sh"
 stamp="$home/stamp"
 if [ ! -f "$stamp" ]; then

@@ -25,7 +25,7 @@ if [ -n "$item" ]; then
   path="$(claim_at_base "$item" "$item_json")" || exit 1
 else
   path="$("$FLOW_PLUGIN/scripts/steward.sh" claim "adhoc:${name:-session}")" || exit 1
-  session_pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)"
+  session_pid="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)"
   claim="$(cat "$path/.flow/claim.json")"
   [ -z "$session_pid" ] || json_set "$claim" pid "$session_pid" > "$path/.flow/claim.json"
 fi
