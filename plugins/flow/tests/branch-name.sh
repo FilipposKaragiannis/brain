@@ -97,6 +97,16 @@ check "TitleRenamedAfterTheClaim_ReclaimTakesTheRecordedBranch: a title edit nev
   '[ "$(claim_branch_of "$renamed")" = "$renamed_branch" ]'
 check "TitleRenamedAfterTheClaim_ReclaimHoldsTheEarlierWork: the re-claim is on the branch that holds the first claim's commit" \
   '[ -f "$("$plugin/scripts/steward.sh" find "$renamed")/work.txt" ]'
+hooked="$(new_task "Drill timer")"
+hooked_branch="task/task-$(number_of "$hooked")-drill-timer"
+"$plugin/scripts/steward.sh" claim "$hooked" >/dev/null 2>&1
+"$plugin/scripts/steward.sh" release "$hooked" >/dev/null 2>&1
+retitle "$hooked" "Penalty clock"
+hooked_worktree="$(printf '{"name":"%s","cwd":"%s"}' "$(slug "$hooked")" "$PWD" | "$plugin/hooks/worktree-create.sh" 2> "$work/hooked.err" | tail -n 1)"
+check "WorktreeSessionOnARetitledItem_ClaimsTheRecordedBranch: the hook reads the item with its record, so a title edit never renames the branch a session opens on" \
+  '[ "$(git -C "$hooked_worktree" branch --show-current)" = "$hooked_branch" ]'
+check "WorktreeSessionOnARetitledItem_StderrHasNoAdapterAloneGuardLine: the hook asks the record of an item read with it, so the guard never fires" \
+  '! grep -qF "asked of an item read from its adapter alone" "$work/hooked.err"'
 
 legacy="$(new_task "Drill timer")"
 git branch "flow/$(slug "$legacy")" main
