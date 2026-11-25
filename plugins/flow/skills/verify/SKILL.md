@@ -23,7 +23,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    commit id that way, never as a ref, since a ref can take any name. The resolved command participates
    in test-pass reuse. A test command
    that passed on the same command and files is not run again: the check is a pass that names the run it
-   came from (`--fresh` runs every command). The verifier
+   came from (`--fresh` runs every command). A build always runs; its pass is kept so a push of
+   the same inputs skips it (`scripts/build-passed.sh`). The verifier
    starts it with `--start`, detached, so it outlives any one shell call, and calls `--wait`
    again and again, each a single call under the host's limit, until it exits 0 (pass) or 1
    (fail); 3 is still running. The run stops at `verify.limit` in `.flow/config.yaml` (default
