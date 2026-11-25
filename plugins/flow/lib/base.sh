@@ -4,6 +4,11 @@
 # scripts/gate.sh, hooks/worktree-create.sh and skills/init/scripts/init.sh.
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
 
+# The exit codes of a claim (steward.sh claim and claim-tip, claim_epic_branch) that the call or
+# the config refuses, that finds no free worktree, and that waits for what holds it to clear.
+# shellcheck disable=SC2034 # read by scripts/next.sh, scripts/steward.sh and the claim libs
+claim_call_refused=2 claim_pool_full=3 claim_refused=4
+
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
 
@@ -231,35 +236,6 @@ claim_at_base() {
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$1" --base "$claim_base" ${claim_task_branch:+--branch "$claim_task_branch"})" || return
   printf '%s\t%s\tclaim\tbase %s (%s)\n' "$(now_iso)" "$1" "$claim_base" "$claim_why" >> "$(flow_home)/events.log"
   printf '%s\n' "$claimed_worktree"
-}
-
-# The exit code of git ls-remote --exit-code when the remote holds no matching ref.
-ls_remote_no_match=2
-
-# claim_epic_branch <epic> <epic-json>: claims the pool worktree an epic's closeout runs in, on its
-# epic branch at the tip the remote holds (steward.sh claim-tip), with the epic's start
-# (fetch_epic_start) as its base, and prints its path. Prints nothing when the repository has no
-# origin or the remote answers that it has no epic branch: the closeout runs in the main checkout.
-# A remote that cannot be asked, or a start that does not resolve, writes why to the epic's
-# last_event and stderr and returns 4: not seeing the branch is no proof it holds nothing. Else the
-# exit code of steward.sh claim-tip.
-claim_epic_branch() {
-  git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1 || return 0
-  claim_epic_branch_name="$(epic_branch "$1")"
-  git -C "$(flow_repository)" ls-remote --exit-code --heads origin "$claim_epic_branch_name" >/dev/null 2>&1; claim_epic_branch_asked=$?
-  [ "$claim_epic_branch_asked" -ne "$ls_remote_no_match" ] || return 0
-  if [ "$claim_epic_branch_asked" -ne 0 ]; then
-    record_epic_claim_refusal "$1" "the remote could not be asked for $claim_epic_branch_name, so its closeout has no branch to check"; return 4
-  fi
-  claim_epic_branch_start="$(fetch_epic_start "$2")" || { record_epic_claim_refusal "$1" "$claim_epic_branch_start"; return 4; }
-  claim_epic_branch_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim-tip "$1" "$claim_epic_branch_name" --base "$claim_epic_branch_start")" || return
-  printf '%s\t%s\tclaim\t%s at its remote tip, base %s (the epic start)\n' "$(now_iso)" "$1" "$claim_epic_branch_name" "$claim_epic_branch_start" >> "$(flow_home)/events.log"
-  printf '%s\n' "$claim_epic_branch_worktree"
-}
-
-record_epic_claim_refusal() {
-  adapter write-state "$1" "last_event=$(now_iso) $2" >/dev/null
-  echo "$1: $2" >&2
 }
 
 # base_missing <branch>: true when the repository has an origin and refs/remotes/origin/<branch> is

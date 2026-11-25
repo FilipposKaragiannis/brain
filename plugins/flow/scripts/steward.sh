@@ -1923,11 +1923,15 @@ cmd_resume() {
   [ -z "$health_gate" ] || exit 4
 }
 
+# The header's last usage line, and the exit code of a call steward.sh refuses: a command it does
+# not know, or one missing its arguments.
+usage_last_line=56
+usage_refused=2
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
   claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>] [--branch <name>]" 2; cmd_claim "$@" ;;
-  claim-tip) [ $# -ge 2 ] || die "usage: claim-tip <item> <branch> [--base <branch>]" 2; cmd_claim_tip "$@" ;;
+  claim-tip) [ $# -ge 2 ] || die "usage: claim-tip <item> <branch> [--base <branch>]" "$usage_refused"; cmd_claim_tip "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
   owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
@@ -1945,5 +1949,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,56p' "$0"; exit 2 ;;
+  *) sed -n "2,${usage_last_line}p" "$0"; exit "$usage_refused" ;;
 esac
