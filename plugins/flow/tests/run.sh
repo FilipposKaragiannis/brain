@@ -491,6 +491,11 @@ sh "$here/checks.sh" > "$work/checks.out" 2>&1; code=$?
 check "checks: $(tail -n 1 "$work/checks.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/checks.out"
 
+echo "a scheduled check that cannot run is refused (tests/check-gaps.sh)"
+sh "$here/check-gaps.sh" > "$work/check-gaps.out" 2>&1; code=$?
+check "check gaps: $(tail -n 1 "$work/check-gaps.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/check-gaps.out"
+
 echo "a claimed item waits while a native blocker is open (tests/blockers.sh)"
 sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
 check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]

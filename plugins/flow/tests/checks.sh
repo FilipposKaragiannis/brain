@@ -6,6 +6,7 @@
 # checks the base out fresh from origin under the flow home, never in the pool, removes it however
 # the run ends, and runs beside another check's run. A fail after a pass files one bug, on the local
 # adapter, with the output's tail; a fail after a fail or with no pass before files none.
+# tests/check-gaps.sh has the entries init and run refuse.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -258,82 +259,6 @@ check "CheckoutThatCannotBeMade_FilesNoBug: the command never ran, so a pass bef
 set_base main; run_broken lines
 check "CheckoutErrorAfterAPass_KeepsThePassOnRecord: the next real fail after it is a fail after a pass, so it files the bug" \
   '[ "$(bug_count broken)" -eq 5 ]'
-
-echo "checks: init names a malformed check"
-init_script="$plugin/skills/init/scripts/init.sh"
-# config_line <key>: the line of the config that sets the key, the first one when two share it.
-config_line() { grep -n "^ *$1:" "$flow_home_folder/config.yaml" | head -1 | cut -d: -f1; }
-# init_gaps <file>: init --check on the config now in place, its output in the file.
-init_gaps() { "$init_script" --check > "$1" 2>&1; }
-# gap_named <output> <entry> <key>: true when init named the entry as a gap at the key's line.
-gap_named() {
-  entry_line="$(config_line "$3")"
-  [ -n "$entry_line" ] && grep -qF "init: gap: .flow/config.yaml:$entry_line: $2: " "$1"
-}
-cp "$flow_home_folder/config.yaml" "$work/fixture-config.yaml"
-cat > "$flow_home_folder/config.yaml" <<YAML
-adapters:
-  default: local
-base: main
-pool:
-  - ../wt-1
-jobs:
-  schedule:
-    health: every 15m
-    check-x: daily 02:00
-  checks:
-    dashed-name:
-      command: true
-      schedule: daily 02:00
-    Upper:
-      command: true
-      schedule: daily 02:00
-    nocommand:
-      schedule: daily 02:00
-    noschedule:
-      command: true
-    nightly:
-      command: true
-      schedule: nightly
-    withargs:
-      command: true
-      schedule: daily 02:00 --workers 2
-    listed:
-      command: [ -f README.md ]
-      schedule: daily 02:00
-    scalar: true
-YAML
-init_gaps "$work/init-malformed.out"
-check "CheckNameWithADash_IsAnInitGapAtItsLine: init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.dashed-name dashed-name'
-check "CheckNameWithAnUppercaseLetter_IsAnInitGapAtItsLine: init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.Upper Upper'
-check "CheckWithNoCommand_IsAnInitGapAtItsLine: init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.nocommand nocommand'
-check "CheckWithNoSchedule_IsAnInitGapAtItsLine: init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.noschedule noschedule'
-check "CheckWithAnUnreadableSchedule_IsAnInitGapAtItsLine: nightly is no schedule, so init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.nightly nightly'
-check "CheckWithScheduleArgs_IsAnInitGapAtItsLine: a check's schedule is the timing alone, so init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.withargs withargs'
-check "CheckCommandStartingWithABracket_IsAnInitGapAtItsLine: the config reads it as a list, so init names the entry and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.listed listed'
-check "CheckSetAsAValue_IsAnInitGapAtItsLine: an entry holds a command and a schedule, so init names a scalar one and its line" \
-  'gap_named "$work/init-malformed.out" jobs.checks.scalar scalar'
-check "CheckUnderJobsSchedule_IsAnInitGapAtItsLine: a check is set under jobs.checks, so init names the jobs.schedule key and its line" \
-  'gap_named "$work/init-malformed.out" jobs.schedule.check-x check-x'
-printf 'base: main\njobs:\n  checks: smoke\n' > "$flow_home_folder/config.yaml"
-init_gaps "$work/init-scalar-checks.out"
-check "ChecksSetAsAValue_IsAnInitGapAtItsLine: jobs.checks holds the checks by name, so init names a value there and its line" \
-  'gap_named "$work/init-scalar-checks.out" jobs.checks checks'
-{ cat "$work/fixture-config.yaml"; printf '    nocommand:\n      schedule: daily 02:00\n'; } > "$flow_home_folder/config.yaml"
-"$jobs_script" run check-nocommand > "$work/run-malformed.out" 2>&1; run_malformed_exit=$?
-check "CheckWithNoCommand_IsRefusedByRun: a check with no command cannot run, so run refuses it" \
-  '[ "$run_malformed_exit" -eq "$refused_exit" ]'
-cp "$work/fixture-config.yaml" "$flow_home_folder/config.yaml"
-init_gaps "$work/init-good.out"; good_init_exit=$?
-check "OnlyGoodChecks_AreNoInitGap: init names no jobs.checks entry when every check can run" \
-  '[ "$good_init_exit" -ne "$refused_exit" ] && [ -s "$work/init-good.out" ] && ! grep -q "^init: gap: [^ ]*: jobs\.\(checks\|schedule\.check-\)" "$work/init-good.out"'
 
 [ "$fails" -eq 0 ] && { echo "checks: ok"; exit 0; }
 echo "checks: $fails failed"; exit 1
