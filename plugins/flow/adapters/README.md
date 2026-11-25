@@ -13,7 +13,7 @@ fake backend, and `tests/run.sh` runs it for every adapter.
 | `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`, `jira:`) |
 | `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
 | `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh`, `me.sh`, `set-status.sh`, `assign.sh` | yes | the operations below, executable |
-| `sync.sh`, `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
+| `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
 
 Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for `die`, `cfg`,
 `flow_home` and the JSON helpers, and says what went wrong as one `flow: ...` line on stderr.
@@ -59,7 +59,6 @@ prefix.
 | `me` | | the names `me` stands for in a pick filter, a tracker scope and `ready.assignee`, one per line: GitHub the `gh` login; Jira the token user's account id, then `jira.email`; local the git `user.email`, then `user.name`, lower case, and nothing (exit 0) when git has neither. Exit 1 when the tracker cannot say |
 | `set-status` | `<id> <backlog\|ready\|in-progress\|needs-you\|in-review>` | `<id> <native name>` when it moved the item to the status, the tracker's own name for it; nothing when the item is there already or the tracker has no place for a status. Any other name exits 2. Local writes the item file's `workflow`, which its `category` reads |
 | `assign` | `<id> <me\|none>` | `<id> <name>` when it changed the item: `me` adds the first name `me` prints beside any other assignee, `none` takes that name off and leaves any other; nothing when the item already says so. Any other target exits 2, and so does an id another adapter owns; local keeps an `[a, b]` list a list |
-| `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round. A tracker whose board shows the flow state already (Jira's labels) has none |
 | `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
 | `answers` | | optional: clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts; never the merge gate) through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it, and a Slack gate message says to answer on the issue |
 
@@ -219,8 +218,7 @@ notes say `elsewhere` (with `machine`) first, then `gate`, then `status` (with `
 
 A GitHub board whose columns have other names than `Backlog`, `Ready`, `In progress`, `In review`
 and `Needs you` reads every carded item `blocked` and hides it: set `github.status.backlog`,
-`.ready`, `.running`, `.review` and `.gate` to the board's names. After `sync` moves an epic's card
-to In progress, the epic reads `in-progress` until the next `sync`.
+`.ready`, `.running`, `.review` and `.gate` to the board's names.
 
 GitHub's `set-status` moves the issue's card on `github.project` to the Status of
 `github.status.<key>`: `backlog` and `ready` by their own keys, `in-progress` by `running`,
@@ -275,10 +273,8 @@ in `jira.answer_from`; Jira's REST API has no reactions, so the `Gate cleared: .
 `gate.sh` writes is the receipt. `vocabulary` lists the project's issue types without sub-tasks
 (`GET /rest/api/3/project/<KEY>`) and, for a `jira.fields.area` field of options, the values a new
 task may pick (`GET /rest/api/3/issue/createmeta/<KEY>/issuetypes/<id>`); a free-text area field
-has none. There is no `sync`: GitHub's moves a card on a Projects board, a second place that does
-not follow the issue, while a Jira board's columns are the issues' own workflow statuses, whose
-transitions each project shapes (with screens and conditions) and `jira.transitions.<name>`
-maps. The flow state shows on the card as the `step:` and `gate:` labels, which a board's quick
+has none. A Jira board's columns are the issues' own workflow statuses, whose transitions each
+project shapes (with screens and conditions) and `jira.transitions.<name>` maps. The flow state shows on the card as the `step:` and `gate:` labels, which a board's quick
 filters and swimlanes can use, and `close` takes the item to Done.
 
 ## Where the two adapters differed

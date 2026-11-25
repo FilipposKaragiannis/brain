@@ -137,7 +137,7 @@ check "the prefix file holds one non-empty line" '[ -n "$prefix" ] && [ "$(wc -l
 for op in list list-ready read in-scope create close comment link-pr write-state me set-status assign; do
   check "$op.sh is there and executable" '[ -x "$A/$op.sh" ]'
 done
-for op in sync vocabulary answers; do
+for op in vocabulary answers; do
   if [ -e "$A/$op.sh" ]; then check "the optional $op.sh is executable" '[ -x "$A/$op.sh" ]'; fi
 done
 check "slug.sed is there" '[ -f "$A/slug.sed" ]'
@@ -277,10 +277,6 @@ fi
 if [ -x "$A/vocabulary.sh" ]; then
   echo " vocabulary"
   check "vocabulary prints types and areas as lists" '"$A/vocabulary.sh" | python3 -c "import json,sys; v=json.load(sys.stdin); sys.exit(0 if isinstance(v[\"types\"], list) and isinstance(v[\"areas\"], list) else 1)"'
-fi
-if [ -x "$A/sync.sh" ]; then
-  echo " sync"
-  check "sync of every item exits 0" '[ "$(code_of "$A/sync.sh")" = 0 ]'
 fi
 
 echo " routing"

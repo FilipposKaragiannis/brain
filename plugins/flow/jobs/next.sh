@@ -66,8 +66,6 @@ if [ -n "$pick" ]; then
 fi
 # plan: one host:count word per host whose workers this run starts; empty for one run in place.
 # A paused run never reads it, and a bad jobs.workers stops the run before the tracker is touched.
-# A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
-# so an item whose last missing field was just set shows as ready before a worker looks.
 # Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
 # can be picked in this same schedule. Then the sweep frees the worktrees whose PR the owner
 # merged (steward.sh sweep), so the pool has room before a worker claims.
@@ -86,9 +84,6 @@ if [ -z "$worker" ]; then
     flow_unlock
   fi
   job_sweep || true
-  for a in $(adapters_configured); do
-    [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
-  done
 fi
 if [ -n "$plan" ]; then
   [ -z "$item" ] || die "--workers runs the queue; drop the item, or run one worker for it" 2

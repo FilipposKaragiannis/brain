@@ -2,28 +2,18 @@
 
   _mutate.py field <repo> <number> <field> <option>   set a single-select issue field
   _mutate.py type <repo> <number> <type>              set the issue type
-  _mutate.py sync <repo> <project>                    stdin: adapter items, one per line
   _mutate.py status <repo> <project> <status>         stdin: one adapter item
   _mutate.py vocabulary <repo> <area field> <types>   the issue types and the area options, as JSON
 
-sync moves each open item's card in the project to the Status its flow state implies: an open
-gate is the gate status (the merge gate is the review status), a started step or an item with
-open sub-issues is the running status, an unstarted item with no missing field and no open blocker is the ready status, any
-other is the backlog status. Closed items are left to the project's own workflows. The status
-names come from GH_STATUS_<KEY>, which _gh.sh exports with their defaults; an item already at its
-status costs no write. status moves one item's card to the Status named, adding the card to the
-project when it has none, and prints "<id> <status>"; a card already there costs no write, and a
-project with no such Status exits 1."""
+status moves one item's card to the Status named, adding the card to the project when it has
+none, and prints "<id> <status>"; a card already there costs no write, and a project with no such
+Status exits 1."""
 import json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _call  # noqa: E402
 
 ID_PREFIX = "gh#"
-
-
-def status_name(key: str) -> str:
-    return os.environ["GH_STATUS_" + key.upper()]
 
 
 def graphql(query, **variables):
@@ -80,20 +70,6 @@ def set_type(owner, name, number, type_name):
     graphql(m, i=issue_id(owner, name, number), t=types[0])
 
 
-def desired(item):
-    state = item.get("state", {})
-    gate, step = state.get("gate") or "none", state.get("step") or ""
-    if gate == "merge" or step == "done":
-        return status_name("review")
-    if gate != "none":
-        return status_name("gate")
-    if step or item.get("open_children"):
-        return status_name("running")
-    if not item.get("needs") and not item.get("open_blockers"):
-        return status_name("ready")
-    return status_name("backlog")
-
-
 def project_board(owner, project):
     """The project's id, with its Status field and that field's options."""
     query = """query($owner:String!,$number:Int!){repositoryOwner(login:$owner){... on ProjectV2Owner{projectV2(number:$number){
@@ -134,26 +110,6 @@ def status(owner, name, project, want):
     print("%s %s" % (item["id"], want))
 
 
-def sync(owner, name, project):
-    board = project_board(owner, project)
-    options = status_options(board)
-    for line in sys.stdin:
-        if not line.strip():
-            continue
-        item = json.loads(line)
-        if item.get("status") != "open":
-            continue
-        want = desired(item)
-        current = item.get("project") or {}
-        if current.get("status") == want:
-            continue
-        if want not in options:
-            print("flow: the project has no Status %s; %s left as is" % (want, item["id"]), file=sys.stderr)
-            continue
-        move_card(owner, name, board, item, options[want])
-        print("%s %s" % (item["id"], want))
-
-
 def main():
     command, repo = sys.argv[1], sys.argv[2]
     owner, name = repo.split("/", 1)
@@ -161,8 +117,6 @@ def main():
         set_field(owner, name, int(sys.argv[3]), sys.argv[4], sys.argv[5])
     elif command == "type":
         set_type(owner, name, int(sys.argv[3]), sys.argv[4])
-    elif command == "sync":
-        sync(owner, name, int(sys.argv[3]))
     elif command == "status":
         status(owner, name, int(sys.argv[3]), sys.argv[4])
     elif command == "vocabulary":

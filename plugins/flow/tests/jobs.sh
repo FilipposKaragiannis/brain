@@ -645,7 +645,7 @@ FLOW_HOME="$home2" "$J" pause retro >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "again" >/dev/null
 check "a paused job exits at once and spends nothing" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q '^.*paused:' && [ ! -s '$HOST_LOG' ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"result\":\"paused'"
 FLOW_HOME="$home2" "$J" pause next >/dev/null
-check "a paused next skips the tracker sync and every worker" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude --workers 2 | grep -q 'paused' && [ ! -f '$home2/log/next-1.log' ]"
+check "PausedNext_StartsNoWorker: a paused next exits before any worker starts, because a pause holds the whole schedule" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude --workers 2 | grep -q 'paused' && [ ! -f '$home2/log/next-1.log' ]"
 check "a paused next stops a worker started by hand too, recorded as that worker's paused run" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' codex --worker 3 | grep -q 'paused' && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"next-3\",\"host\":\"codex\".*\"result\":\"paused'"
 FLOW_HOME="$home2" "$P/jobs/next.sh" codex --worker codex > "$work/worker.out" 2>&1; code=$?
 check "a worker label that is not a number is refused, so no worker runs where pause and status cannot see it" sh -c "[ $code = 2 ] && grep -q -- '--worker takes a number from 1; to split the workers across hosts, set jobs.workers' '$work/worker.out' && [ ! -f '$home2/log/next-codex.log' ]"

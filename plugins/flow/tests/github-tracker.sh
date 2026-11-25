@@ -112,24 +112,22 @@ check_all "graph: a GitHub list cut at github.limit stops the graph and says so"
 mv .flow/config.yaml.bak .flow/config.yaml
 check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "11" ]
 check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github/list.sh' --limit 3 2>'$work/limit.err' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')\" = 3 ] && grep -q 'github.limit 3' '$work/limit.err'"
-: > "$FAKE_GH_DIR/calls.log"
-"$P/adapters/github/sync.sh" > "$work/sync.out"
-status_of() { python3 -c "import json; print(next(i.get('project_status','') for i in json.load(open('$FAKE_GH_DIR/issues.json'))['issues'] if i['number']==$1))"; }
-check "gh sync: triaged and unblocked items are Ready" [ "$(status_of 30)$(status_of 32)" = "ReadyReady" ]
-check "gh sync: a missing field or an open blocker is Backlog" [ "$(status_of 33)$(status_of 34)$(status_of 35)" = "BacklogBacklogBacklog" ]
 printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
 python3 -I "$P/adapters/github/_mutate.py" field acme/widgets 36 Size M 2>"$work/gh-err"
 check_all "gh field write survives one 502" '[ "$(python3 -c "import json; print(next(i[\"fields\"].get(\"Size\",\"\") for i in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"] if i[\"number\"]==36))")" = "M" ] && grep -q "trying again" "$work/gh-err"'
 rm -f "$FAKE_GH_DIR/fail"
-check "gh sync: a started step is In progress, a gate Needs you, the merge gate In review" [ "$(status_of 36)|$(status_of 37)|$(status_of 38)" = "In progress|Needs you|In review" ]
-check "gh sync: a card already at its status costs no write" sh -c "! grep -q 'i=PI_31' '$FAKE_GH_DIR/calls.log' && ! grep -q '^gh#31' '$work/sync.out'"
-check "gh sync: a card missing from the project is added" sh -c "grep -q addProjectV2ItemById '$FAKE_GH_DIR/calls.log'"
-check "gh sync: an item with open sub-issues is In progress" [ "$(status_of 39)" = "In progress" ]
-check "gh sync twice moves nothing" [ -z "$("$P/adapters/github/sync.sh")" ]
 : > "$FAKE_GH_DIR/calls.log"
 "$P/adapters/github/write-state.sh" 'gh#33' size=L gate=ambiguity
 check "gh write-state: size goes to the field, not a label" sh -c "[ \"\$('$P/adapters/github/read.sh' 'gh#33' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"size\"])')\" = L ] && ! grep -q 'size:L' '$FAKE_GH_DIR/calls.log'"
-check "gh write-state moves the card" [ "$(status_of 33)" = "Needs you" ]
+# card_writes: how many times the project card's Status was written since calls.log was emptied.
+card_writes() { grep -c updateProjectV2ItemFieldValue "$FAKE_GH_DIR/calls.log"; }
+check "WriteStateOfAGate_LeavesTheCard: a gate label written to the tracker writes no card Status, because the card follows the flow record through set-status" [ "$(card_writes)" -eq 0 ]
+cp .flow/config.yaml "$work/config.mirrored" && printf 'tracker_state: labels\n' >> .flow/config.yaml
+sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "gh#34"' >/dev/null 2>&1
+: > "$FAKE_GH_DIR/calls.log"
+"$P/scripts/gate.sh" raise 'gh#34' ambiguity "Which way?" implement >/dev/null 2>&1
+check "GateRaiseWithLabelsAndProject_WritesTheCardOnce: a gate raised on a claimed item writes its card Status once, because the push moves the card and the label write leaves it" [ "$(card_writes)" -eq 1 ]
+mv "$work/config.mirrored" .flow/config.yaml
 chore="$("$P/scripts/new.sh" task "Tidy" --size M --type Chore --body "## Acceptance
 - x")"
 check "gh create: --type sets the type, the size goes to the field, no labels" sh -c "'$P/adapters/github/read.sh' '$chore' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"size\"],i[\"labels\"])==(\"Chore\",\"M\",[])'"
@@ -147,7 +145,6 @@ picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 end_run 'gh#32'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
-"$P/adapters/github/sync.sh" >/dev/null
 check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
 "$P/scripts/gate.sh" raise 'gh#37' ambiguity "1. Visual only?
    Recommended: yes." >/dev/null 2>&1

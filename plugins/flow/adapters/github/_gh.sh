@@ -27,8 +27,8 @@ assignee_login() {
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
 # name org issue fields (each replaces its size: or priority: labels), github.project numbers the
-# project whose Status the adapter keeps in step and reads an item's category from, through the
-# Status names github.status.<key> renames. The readiness rules are every tracker's (ready_rules in
+# project whose Status set-status moves and an item's category is read from, through the Status
+# names github.status.<key> renames. The readiness rules are every tracker's (ready_rules in
 # lib/flow.sh); list and read take them before they build items. Without a project,
 # github.claim_label names the one label set-status puts on an item in progress and takes off at
 # any other status.
@@ -39,13 +39,6 @@ GH_STATUS_GATE="$(cfg_or github.status.gate "Needs you")"; GH_STATUS_RUNNING="$(
 GH_STATUS_REVIEW="$(cfg_or github.status.review "In review")"
 export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL GH_CLAIM_LABEL \
   GH_STATUS_BACKLOG GH_STATUS_READY GH_STATUS_GATE GH_STATUS_RUNNING GH_STATUS_REVIEW
-
-# project_sync [item JSON lines on stdin]: move the project cards to the Status the flow state
-# implies. A no-op without github.project.
-project_sync() {
-  [ -n "$GH_PROJECT" ] || { cat >/dev/null; return 0; }
-  cached_python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" sync "$(gh_repo)" "$GH_PROJECT"
-}
 
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: as
 # _query.py's kind_of reads it, the issue type Epic or Bug, else the label epic or bug, else task.
