@@ -2,8 +2,12 @@
 # verify.sh <item> [--base <ref>] [--fresh]: the one verify run. From the claimed worktree, runs in
 # order build, format (changed files only), tests, mutation (signal, never a fail) and the project
 # gates from .flow/config.yaml, each once, and writes
-# <reports>/verify.json {status, checks: [{name, status, command, summary, seconds}], attempts,
-# base, head, changed_files, feel_test, seconds} and its Markdown twin verify.md for the PR body.
+# <reports>/verify.json {status, verdict, checks: [{name, status, command, summary, seconds}],
+# attempts, base, head, changed_files, feel_test, proofs, not_checked, seconds} and its Markdown
+# twin verify.md for the PR body. head is the full commit the run checked; verdict is the first
+# line of verify.md, `Verdict: pass at <head>` or `Verdict: fail at <head>`, on every report verify
+# writes, the minimal fail report too, and verify.md ends with a `## Not checked` section that says
+# none when empty. Evidence files live under <reports>/evidence/.
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
@@ -88,13 +92,14 @@ report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr 
 # and one failed check, written without the builder and renamed in, with its verify.md twin saying
 # the sentence. The stop cause (limit, signal or ended) is the report's `stopped`, empty for a
 # report no stop made: advance.sh reads it, as a stopped run failed no check. Name, summary and
-# sentence are report_text already; $attempts, $base and $head_sha are set. Each file is written
-# to a new one mktemp makes, never through a link left at a name, and renamed in.
+# sentence are report_text already; $attempts, $base and $head_sha (the full commit) are set. Each
+# file is written to a new one mktemp makes, never through a link left at a name, and renamed in.
 fail_report() {
   safe_name() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
-  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false, "stopped": "%s"}\n' \
-    "$1" "$2" "$attempts" "$(safe_name "$base")" "$(safe_name "$head_sha")" "$(safe_name "${4:-}")" > "$minimal_json_file" && mv -f "$minimal_json_file" "$reports/verify.json"
-  minimal_md_file="$(mktemp "$reports/.verify.md.XXXXXX")" && printf '## Verify: fail (attempt %d)\n\n%s\n\nLog: `%s`.\n' "$attempts" "$3" "$log" \
+  minimal_head="$(safe_name "$head_sha")"
+  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "verdict": "Verdict: fail at %s", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false, "proofs": [], "not_checked": [], "stopped": "%s"}\n' \
+    "$minimal_head" "$1" "$2" "$attempts" "$(safe_name "$base")" "$minimal_head" "$(safe_name "${4:-}")" > "$minimal_json_file" && mv -f "$minimal_json_file" "$reports/verify.json"
+  minimal_md_file="$(mktemp "$reports/.verify.md.XXXXXX")" && printf 'Verdict: fail at %s\n\n## Checks (attempt %d)\n\n%s\n\nLog: `%s`.\n\n## Not checked\n\nNone.\n' "$minimal_head" "$attempts" "$3" "$log" \
     > "$minimal_md_file" && mv -f "$minimal_md_file" "$reports/verify.md"
 }
 # duration <seconds>: 45s, 12m 30s or 2h 05m.
@@ -208,7 +213,7 @@ run_detached() {
   [ -z "$stop_cause" ] || verify_stop_group
   wait "$child"; code=$?
   [ ! -f "$reports/verify.json" ] || exit "$code"
-  attempts="$(next_attempt)"; head_sha="$(git rev-parse --short HEAD)"
+  attempts="$(next_attempt)"; head_sha="$(git rev-parse HEAD)"
   stopped_run_report "$stop_cause" "$code"
 }
 
@@ -397,7 +402,7 @@ feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
 elif changed_matches "$feel_test_paths"; then feel=true; fi
 printf '%s' "$changed_units" > "$changed_list"
-head_sha="$(git rev-parse --short HEAD)"
+head_sha="$(git rev-parse HEAD)"
 
 report_failed() {
   # report_failed <cause>: the report builder failed. Say so, and leave a minimal report that

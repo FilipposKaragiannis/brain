@@ -46,7 +46,7 @@ zsha="$(printf '%s\n' "$zsha" | git -C "$wv" hash-object -t commit -w --stdin)"
 git -C "$wv" reset -q "$zsha"
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
 zhead="$(jget head < "$rv/verify.json" 2>/dev/null)"
-check "a head sha of digits with a leading zero: the report parses, head is the string" sh -c '[ "$1" -eq 1 ] && [ "$2" = "$3" ]' _ "$code" "$zhead" "$(git -C "$wv" rev-parse --short HEAD)"
+check "a head sha of digits with a leading zero: the report parses, head is the string" sh -c '[ "$1" -eq 1 ] && [ "$2" = "$3" ]' _ "$code" "$zhead" "$(git -C "$wv" rev-parse HEAD)"
 git -C "$wv" reset -q "$whead"
 # A gate whose output is hostile to hand-built JSON: quotes, backslashes, newlines, control
 # characters, a byte that is not UTF-8, a summary of digits only and a very long line.
