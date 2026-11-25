@@ -49,10 +49,13 @@ epic_base_say_push_refused() {
 }
 
 epic_base_take_merge() {
+  { read -r epic_base_behind_count; read -r epic_base_merged_tree; read -r epic_base_epic_parent; read -r epic_base_base_parent; } <<EOF
+$4
+EOF
   epic_base_epic_branch="$(epic_branch "$1")"
-  epic_base_merge_text="origin/$3 into $epic_base_epic_branch ($4 commits behind)"
+  epic_base_merge_text="origin/$3 into $epic_base_epic_branch ($epic_base_behind_count commits behind)"
   if [ "$dry" -eq 1 ]; then health_say "$1" "would merge $epic_base_merge_text"; return 0; fi
-  epic_base_commit="$(git -C "$2" commit-tree "$5" -p "$6" -p "$7" -m "chore: merge $3 into $epic_base_epic_branch" 2>/dev/null)" \
+  epic_base_commit="$(git -C "$2" commit-tree "$epic_base_merged_tree" -p "$epic_base_epic_parent" -p "$epic_base_base_parent" -m "chore: merge $3 into $epic_base_epic_branch" 2>/dev/null)" \
     || { epic_base_say_unmerged "$1" "$3" "git commit-tree failed"; return 0; }
   git -C "$2" push -q origin "$epic_base_commit:refs/heads/$epic_base_epic_branch" >/dev/null 2>&1 \
     || { epic_base_say_push_refused "$1" "$3"; return 0; }
@@ -67,7 +70,7 @@ epic_base_merge() {
   epic_base_base_tip="$(epic_base_remote_tip "$2" "$3")" || return 0
   epic_base_merged="$(git -C "$2" merge-tree --write-tree --name-only --no-messages "$epic_base_epic_tip" "$epic_base_base_tip" 2>/dev/null)"
   case $? in
-    0) epic_base_take_merge "$1" "$2" "$3" "$4" "$(printf '%s\n' "$epic_base_merged" | sed -n 1p)" "$epic_base_epic_tip" "$epic_base_base_tip" ;;
+    0) epic_base_take_merge "$1" "$2" "$3" "$(printf '%s\n' "$4" "$(printf '%s\n' "$epic_base_merged" | sed -n 1p)" "$epic_base_epic_tip" "$epic_base_base_tip")" ;;
     "$EPIC_BASE_MERGE_CONFLICTED") epic_base_say_conflict "$1" "$3" "$4" "$(printf '%s\n' "$epic_base_merged" | epic_base_conflicted_files)" ;;
     *) epic_base_say_unmerged "$1" "$3" "git merge-tree failed" ;;
   esac
