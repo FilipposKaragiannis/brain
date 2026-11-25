@@ -1,5 +1,76 @@
 # standards
 
+## 1.10.0 (2026-11-25)
+
+- An agent's commit runs the formatter and each gate once with `-a`, a pathspec (`-o`, `-i`) or a
+  `git add` earlier in the same command, not only on a plain `git commit`. The agent hook records
+  the content the commit will hold; git's `pre-commit` and `commit-msg` skip that same content.
+- An edit to any tracked file between the agent hook and git's hooks runs them again.
+- A commit the hook cannot predict (`-p`, `--interactive`, `--pathspec-from-file`, git options
+  before `commit`, a quoted or globbed path, an earlier `cd` or git call other than `git add`)
+  or a message in a heredoc runs them twice, as before.
+- The agent hooks on a Bash call that is no commit or push start no git and read no config, except
+  `check-gates`, which reads only the gates that carry `forbid` or `forbid_run`, and nothing when
+  the project has none. Before, every hook ran `git --version` on load and `check-gates` read every
+  field of every gate first, so each Bash call waited about 0.2 s on the hooks; it now waits about
+  0.15 s with a forbid gate and 0.1 s without one.
+- A script that sources `hooks/lib.sh` and calls git calls `use_working_git` first, which picks
+  Xcode's git where the macOS shim is broken.
+
+## 1.9.1 (2026-11-23)
+
+- PY-02 no longer says a type checker runs in lint. Lint runs ShellCheck and Ruff. The rule now
+  says the type checker, with a recorded baseline, is planned and does not run yet.
+
+## 1.9.0 (2026-11-22)
+
+- The formatter hook reads `{files}` through the same shared helper as flow's verify, so the two
+  cannot drift, and a file name is never read as shell. `{files}` is accepted in two forms: as an
+  unquoted word of its own in the command, or as an unquoted word of its own in the script of a
+  `sh -c` or `bash -c` that starts a command. A word ends at a blank or at one of `; & | < > ( )`
+  and a newline. Every other placement is refused, as a failed format check whose message names
+  the accepted forms. To pass the names into any other construct, write `"$@"` there and put
+  `{files}` as the last word of the command, as in `sh -c '... "$@"' sh {files}`. The shell, `-c`
+  and the script are read as words split by any run of spaces and tabs.
+- The rule generator turns every `## Appendix <letter>. <Language>` section of the coding
+  standards into its own rule file, indexes its ids as conventions and lists each appendix with
+  the file types its `Files:` line names in `rules/appendices.json`. The compact block names every
+  appendix.
+- Two new appendices: B. Shell (SH-01 to SH-13) and C. Python (PY-01 to PY-18). PY-02, PY-06,
+  PY-07 and PY-10 carry the suggested readings of the type checker, S-13, D-09 and pytest, which
+  the owner has still to confirm.
+- `init` installs a language appendix only when a configured language shares a file extension
+  with it, and its Claude rule loads for that language's files alone, so a `.sh` read no longer
+  loads the C# appendix. An appendix the project stops using is removed when init wrote it. At
+  machine scope every appendix installs, each for its own extensions. The drift hash covers every
+  appendix and the appendix list.
+- SH-11 no longer asks for a contract line above each function. A script's header says what the
+  script is for and what it takes; no comment above or inside a function says what the code does,
+  names carry the meaning, and a comment stays only for a why the code cannot show.
+- At project scope the block init installs names only the appendix files it installs for the
+  configured languages, in the plugin's order, and no language sentence when none has an appendix.
+  It used to name every appendix, so a shell project's block pointed at a `csharp.md` it did not
+  have. The machine-scope block still names every appendix, as every one installs there.
+- The formatter, comment, gate and protected-file hooks read staged file names NUL-separated from
+  git and treat each as data. A name with a space, a quote, `$( )`, a backtick, a newline or a
+  leading dash reaches the formatter as one argument and can no longer run a command.
+- `{files}` in a `format` command stands for `"$@"`: the command runs as `sh -c <command> sh
+  <names>`. A `{files}` inside quotes, as in `sh -c 'for f in {files}; ...'`, still sees the names:
+  each is backslash-escaped for the nested shell. A name with a newline in such a command blocks.
+- A failing formatter's report lists the files it was given.
+- The comment hook takes file names from git, never from the diff text, so a name with a tab,
+  carriage return, newline, backslash, quote or non-ASCII letter keeps its own content lookup. It
+  reads staged content without following symlinks, and blocks when it cannot read the diff.
+
+## 1.8.0 (2026-11-21)
+
+- The testing guide's levels table names the slot that runs each level: the test command, the
+  mutation command, a verify gate, a commit gate, a scheduled check or nothing. It gains rows for
+  smoke, property-based and runtime evidence checks, each `not set up` until the project has one.
+- `init` spawns the `project-advisor` for an empty levels row too, and for a guide written from
+  the older table, which still passes `init --check`. The advisor recommends a slot and a command
+  for each such row, and `init` writes an accepted one into the row and under the slot's key.
+
 ## 1.7.0 (2026-11-20)
 
 - A project gate takes `forbid_run`: it blocks a command that starts one of the programs named,

@@ -19,9 +19,10 @@ usage.
 ## Procedure
 - Claim: `steward.sh claim <item>` prints the path. A second claim for the same item returns the
   same path. With no free worktree the script adds one while the pool is below `pool_max` (it
-  appends the entry to `pool:`, copies the `worktree_copy` files, runs `worktree_setup`). Exit
-  3 means the pool is at `pool_max`: report "pool full" with the pool table (`steward.sh pool`)
-  and stop; never create a worktree outside the pool.
+  appends the entry to `pool:`, copies the `worktree_copy` files, runs `worktree_setup`), and it
+  runs `worktree_setup` again in a worktree where a `worktree_setup_paths` file changed since its
+  last setup. Exit 3 means the pool is at `pool_max`: report "pool full" with the pool table
+  (`steward.sh pool`) and stop; never create a worktree outside the pool.
 - Release: `steward.sh release <item>`. Exit 3 means uncommitted changes: report them with
   `git -C <path> status --short` and stop. Never stash, discard or force. An unmerged task
   branch is kept; say so.

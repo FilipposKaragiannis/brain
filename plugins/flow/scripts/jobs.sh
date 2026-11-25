@@ -49,7 +49,7 @@ prefix="com.$(basename "$main" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n-' '-').flow"
 scheduler="${FLOW_SCHEDULER:-$([ "$(uname)" = Darwin ] && echo launchd || echo cron)}"
 host="$(cfg_or jobs.host claude)"
 domain="gui/$(id -u)"
-py() { python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" "$@"; }
+py() { cached_python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" "$@"; }
 # schedule_key <name>: the config key that sets the schedule: jobs.checks.<check>.schedule for a check.
 schedule_key() { case "$1" in check-*) printf 'jobs.checks.%s.schedule' "${1#check-}" ;; *) printf 'jobs.schedule.%s' "$1" ;; esac; }
 spec() { cfg "$(schedule_key "$1")"; }

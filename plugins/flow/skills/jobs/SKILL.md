@@ -142,7 +142,12 @@ Facts to answer with:
   commits behind it, with no PR and no gate, hands a merge that conflicts or a diverged branch to the
   `sync` step of the item's next run, reminds on gates older than
   `jobs.health.gate_reminder` (a gate on a closed item is a defect, said once with the
-  `gate.sh drop` that removes it, not a gate waiting) and says when the pool is full. It clears a stale or wrong planned
+  `gate.sh drop` that removes it, not a gate waiting) and says when the pool is full. An approved
+  epic's existing branch more than `jobs.health.behind_base` commits behind its base gets the base
+  merged in and pushed, as a merge commit with the base as its second parent and never forced; a
+  merge that conflicts changes nothing and is said and notified once, with the conflicted files.
+  A PR that carries a merge of the default branch into an epic branch must be merged with a merge
+  commit, never squashed. It clears a stale or wrong planned
   hold (`held_by`): the holder unreadable, holding no worktree and no run, or its `changes` no
   longer sharing a path with the held item's (`touches` stand in when no `changes` are recorded,
   and with neither the hold stays); a hold on the item itself; the newest hold in a cycle. Each clear is an `unheld` line in `events.log`. A hold whose holder closed stays for

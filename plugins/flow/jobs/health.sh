@@ -13,7 +13,12 @@
 # failing CI gone: `gate.sh clear --met`), reminds on gates pending past
 # jobs.health.gate_reminder (a gate on a closed item is a defect, said once, not a gate waiting),
 # and says once when the pool is full and the next job has no worktree to start in. An open epic
-# with an open child and an approved split gets its epic branch when it has none. It clears a
+# with an open child and an approved split gets its epic branch when it has none; an existing one
+# more than jobs.health.behind_base commits behind its base gets the base merged in and pushed as a
+# merge commit, and a merge that conflicts is said and notified once with its files. A PR that
+# carries a merge of the default branch into an epic branch is merged with a merge commit, never
+# squashed. A step the graph
+# report names as slower is said and notified once, until it is no longer slower. It clears a
 # planned hold (state.held_by) that is stale or wrong: the holder unreadable, holding no worktree and no run,
 # or its changes (touches, when it records none) no longer sharing a path with the held item's; a
 # hold on itself; the newest hold in a cycle. Each clear is an `unheld` line in events.log. A hold whose holder closed stays:

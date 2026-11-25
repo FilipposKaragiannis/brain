@@ -2,8 +2,9 @@
 # Install or refresh the flow plugin in a repository.
 #   init.sh [--root <repo>] [--check] [--force] [--user-codex] [--source-hash]
 # Writes: .flow/config.yaml (once), .flow/plugin.sh (finds the installed plugin when a wrapper
-# runs), .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers,
-# always replaced; they hold no path or version, so a plugin update leaves them as they are), the
+# runs), .flow/notify.sh, .flow/build-passed.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and
+# .flow/hooks/*.sh (wrappers, always replaced; they hold no path or version, so a plugin update
+# leaves them as they are), the
 # Codex rules/flow.rules and agents/<flow agents>.toml (replaced, unless edited by hand since: then
 # refused, exit 1, --force replaces), the Claude worktree hook entries in
 # .claude/settings.local.json (merged, every other key kept), a marked block in .git/info/exclude
@@ -139,6 +140,8 @@ if [ ! -f .flow/config.yaml ]; then
       echo "ready:"
       echo "  # needs: [priority, size]           # an unstarted item without these is not ready, on every tracker"
       echo "  # priority_order: [P0, P1, P2, P3]  # ready items run in this order, items with no priority last"
+      echo "  # The priority is github.fields.priority on GitHub, else a priority: label; Jira's own priority"
+      echo "  # field on Jira; the item file's priority on a local item."
       echo "# pick:                     # filters next --pick <name> takes its items through (adapters/README.md)"
       echo "#   mine:"
       echo "#     assignee: me          # also status, labels, kinds, trackers, or one tracker's own query"
@@ -153,7 +156,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  # types: true                 # kind sets the type (Epic, Bug, Task); flow:new --type picks others"
         echo "  # fields:"
         echo "  #   size: Size                # a single-select issue field replaces the size: labels"
-        echo "  #   priority: Priority        # orders the ready items"
+        echo "  #   priority: Priority        # orders the ready items; unset, the priority is a priority: label"
         echo "  #   area: Area                # the area intake files a note under, from its section"
         echo "  # scope:                      # every list keeps only these: assignee, status, labels, kinds, or query alone"
         echo "  # project: 1                  # the project whose Status follows the flow state"
@@ -199,6 +202,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # - .claude/settings.local.json"
       echo "worktree_setup:"
       echo "  # - dotnet restore"
+      echo "# worktree_setup_paths: [packages.lock.json]   # globs of files whose change runs worktree_setup again at a claim"
       echo "# Project gates the verifier runs after build, format and tests: name: command, run from the root."
       echo "# A gate that only matters for some files takes a map: command, and paths (globs; it runs when a"
       echo "# changed file matches one, else the report says it was skipped)."
@@ -270,7 +274,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # health:                   # what the health job does with a claim, and when it speaks up"
       echo "  #   grace: 10m              # a run record with no live process for this long is a dead run"
       echo "  #   max_resumes: 3          # resumes of a dead run in a row, while the step does not advance"
-      echo "  #   behind_base: 20         # a task branch more commits behind the base gets the base merged in"
+      echo "  #   behind_base: 20         # a task or epic branch more commits behind the base gets the base merged in"
       echo "  #   gate_reminder: 24h      # a gate waiting this long gets one reminder per interval"
       echo "  #   stale_session: 24h      # a claude or codex session idle this long in the pool is named once, with its kill command"
       echo "# The intake job files the notes in this file as items (jobs/intake.sh, nightly):"
@@ -293,6 +297,8 @@ fi
 install_file "$plugin/templates/plugin.sh" .flow/plugin.sh 644
 tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' > "$tmp"
 install_file "$tmp" .flow/notify.sh 755
+tmp="$scratch/build-passed"; printf '#!/bin/sh\n# Written by flow:init. The standards pre-push hook runs it to skip a build verify passed on the same inputs.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/build-passed.sh" "$@"\n' > "$tmp"
+install_file "$tmp" .flow/build-passed.sh 755
 install_file "$plugin/templates/run-unattended.sh" .flow/run-unattended.sh 755
 for job_name in check comments health intake next retro; do
   job_wrapper="$scratch/job-$job_name"

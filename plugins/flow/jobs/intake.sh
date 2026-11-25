@@ -46,7 +46,7 @@ else rules="$FLOW_PLUGIN/skills/intake/rules.md"; fi
 [ -f "$notes" ] || { job_say "quiet: no notes file at $notes"; exit 0; }
 ledger="$(job_log_dir)/intake-ledger.jsonl"
 run="$(flow_home)/tmp/intake-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$run"
-python3 -I "$FLOW_PLUGIN/scripts/_intake.py" parse "$notes" "$ledger" "$batch" > "$run/notes.json" || die "cannot read $notes"
+cached_python3 -I "$FLOW_PLUGIN/scripts/_intake.py" parse "$notes" "$ledger" "$batch" > "$run/notes.json" || die "cannot read $notes"
 count="$(json_length "$(cat "$run/notes.json")" notes)"; left="$(json_get "$(cat "$run/notes.json")" left)"
 [ "$count" -gt 0 ] || { job_say "quiet: no new notes"; rm -rf "$run"; exit 0; }
 job_say "filing $count note(s) from $notes, $left more after this batch"
@@ -54,13 +54,13 @@ missing=0
 # The tracker's issue types and area options reach every session, so the skill names real ones.
 words="$(adapter_for_kind task)"
 [ -x "$FLOW_PLUGIN/adapters/$words/vocabulary.sh" ] && { adapter vocabulary "$words" > "$run/vocabulary.json" 2>>"$(job_log_dir)/$job.log" || job_say "could not read the types and areas"; }
-for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run" "$run/vocabulary.json" "$rules"); do
+for id in $(cached_python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run" "$run/vocabulary.json" "$rules"); do
   # The ledger as it is now, so a note links the notes filed before it in this run.
-  python3 -I "$FLOW_PLUGIN/scripts/_intake.py" refresh "$run/$id/notes.json" "$ledger" 2>>"$(job_log_dir)/$job.log" || job_say "$id: could not refresh its related notes"
+  cached_python3 -I "$FLOW_PLUGIN/scripts/_intake.py" refresh "$run/$id/notes.json" "$ledger" 2>>"$(job_log_dir)/$job.log" || job_say "$id: could not refresh its related notes"
   job_host_run "$main" "$(host_skill_prompt "$host" flow intake "on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated, never parked.")" \
     >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$id: host exit $?"
   if [ -f "$run/$id/results.json" ]; then
-    python3 -I "$FLOW_PLUGIN/scripts/_intake.py" apply "$notes" "$ledger" "$run/$id/notes.json" "$run/$id/results.json" "$keep" "$answers" "$dropped" \
+    cached_python3 -I "$FLOW_PLUGIN/scripts/_intake.py" apply "$notes" "$ledger" "$run/$id/notes.json" "$run/$id/results.json" "$keep" "$answers" "$dropped" \
       >/dev/null 2>>"$(job_log_dir)/$job.log" || { job_say "$id: could not apply $run/$id/results.json"; missing=$((missing + 1)); }
   elif [ -z "$(host_stopped "$host")" ]; then
     job_say "$id: no results file, left in the notes"; missing=$((missing + 1))
@@ -68,7 +68,7 @@ for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json"
   # A stopped host starts no session for the notes left: they stay in the notes file.
   [ -z "$(host_stopped "$host")" ] || break
 done
-summary="$(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" tally "$run")"
+summary="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_intake.py" tally "$run")"
 job_say "done: $summary"
 "$FLOW_PLUGIN/scripts/notify.sh" --event intake "notes filed: $summary" >/dev/null 2>&1 || true
 if [ "$keep" -eq 0 ] && [ "$(cfg intake.commit)" != "false" ] && git -C "$main" ls-files --error-unmatch "$notes" >/dev/null 2>&1; then

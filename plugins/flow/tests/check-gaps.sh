@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034,SC2154 # _base_fixture.sh sets plugin, work, local_adapter, root and fails; the checks' conditions read the names set here
 # check-gaps.sh: a scheduled check that cannot run, in a throwaway repo with a bare origin and the
 # local adapter. init --check names each malformed jobs.checks entry, jobs.checks set as a value,
 # a jobs.schedule.check-<name> key and a base no check can check out as a gap at its line in the

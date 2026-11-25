@@ -35,7 +35,7 @@ check "EpicChild_BriefNamesTheEpicBranchAsBase: the brief tells the agent the re
 echo "base: health, the merge before verify, verify and the PR diff read the recorded base"
 rm -f "$(run_file "$child")"
 printf 'own\n' > "$worktree/own.txt" && git -C "$worktree" add own.txt && git -C "$worktree" commit -qm own
-remote_commit main main-one.txt; remote_commit main main-two.txt
+remote_commit main main-one.txt
 remote_commit "$epic_branch" epic-a.txt; remote_commit "$epic_branch" epic-b.txt
 "$plugin/scripts/steward.sh" health > "$work/health.out" 2>&1; git fetch -q origin
 # main_drift: the commits main has that the epic lacks; an epic child must lack every one.

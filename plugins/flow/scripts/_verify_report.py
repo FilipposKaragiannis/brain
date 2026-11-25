@@ -1,13 +1,13 @@
 """The verify report, built from data. See scripts/verify.sh.
 
   _verify_report.py <records> <changed> <reports dir> <status> <attempts> <base> <merge base>
-                    <head> <feel_test true|false> <log> [<timings> <total seconds>]
+                    <head> <feel_test true|false|not_ruled_out> <log> [<timings> <total seconds>]
 
 <records> holds one check after another as four NUL-terminated fields: name, status, command and
 the summary source (the command's whole output for a failed check, a fixed sentence otherwise).
-<changed> holds the changed files, one per line. <timings> holds one line per check, in the same
-order: the whole seconds the check ran, a tab, and the run a reused pass came from (empty for a
-check that ran). Each check then carries `seconds`, a reused one `reused_from`, and the report
+<changed> holds the changed files, each followed by U+001F. <timings> holds one line per check,
+in the same order: the whole seconds the check ran, a tab, and the run a reused pass came from
+(empty for a check that ran). Each check then carries `seconds`, a reused one `reused_from`, and the report
 the run's total `seconds`; a line that is missing or no number counts as 0. Bytes that are not
 UTF-8 are replaced, never fatal. The summary is the last five non-empty lines of its source on one line, without control
 characters, terminal colours or terminal hyperlinks (OSC 8: the target goes and the link's text
@@ -19,12 +19,18 @@ import json
 import os
 import re
 import sys
+from types import MappingProxyType
 
 SUMMARY_MAX = 400
 MD_SUMMARY_MAX = 200
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 ARGUMENTS_WITHOUT_TIMINGS = 10
+NAME_SEPARATOR = "\x1f"
+FEEL_TEST_REASONS = MappingProxyType({
+    "true": "a changed file matches `feel_test_paths`",
+    "not_ruled_out": "verify could not list every changed file, so a change under `feel_test_paths` cannot be ruled out",
+})
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -103,7 +109,7 @@ def main(argv):
         with open(argv[ARGUMENTS_WITHOUT_TIMINGS], "rb") as f:
             report_checks = timed(report_checks, text(f.read()))
     with open(changed, "rb") as f:
-        files = [l for l in text(f.read()).split("\n") if l.strip()]
+        files = [name for name in text(f.read()).split(NAME_SEPARATOR) if name]
     report = {
         "status": status,
         "checks": report_checks,
@@ -111,7 +117,7 @@ def main(argv):
         "base": base,
         "head": head,
         "changed_files": files,
-        "feel_test": feel == "true",
+        "feel_test": feel in FEEL_TEST_REASONS,
     }
     md = ["## Verify: %s (attempt %s)" % (status, attempts), ""]
     if has_timings:
@@ -124,7 +130,7 @@ def main(argv):
         md += ["| %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in report_checks]
     md += ["", "Base `%s` (%s), head `%s`, %d changed files. Log: `%s`." % (base, merge_base, head, len(files), log)]
     if report["feel_test"]:
-        md.append("**Feel-test needed:** a changed file matches `feel_test_paths`.")
+        md.append("**Feel-test needed:** %s." % FEEL_TEST_REASONS[feel])
     write_atomic(os.path.join(reports, "verify.json"), json.dumps(report, indent=2) + "\n")
     write_atomic(os.path.join(reports, "verify.md"), "\n".join(md) + "\n")
 

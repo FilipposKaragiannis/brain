@@ -26,27 +26,36 @@
 #     Use it for a script that must not run by hand; forbid is for a verb passed as an argument.
 # Agent hosts feed the Bash payload on stdin; the git hooks feed a plain `git commit` or `git push`;
 # check-range.sh sets STANDARDS_STAGE=ci so only the gates that list "ci" run. An agent's commit
-# runs the gates once: the agent hook records the index it passed, and git's hooks skip that same
-# index (passed_mark and passed_seen in lib.sh).
+# runs the gates once: the agent hook records the content the commit will hold, and git's hooks
+# skip that same content (passed_mark and passed_seen in commit-index.sh).
 . "$(dirname "$0")/lib.sh"
 payload="$(read_payload)"
 cmd="$(payload_command "$payload")"
 [ -n "$cmd" ] || exit 0
-cd "$(repo_root)" 2>/dev/null || exit 0
-config="$(config_text)"
-[ -n "$config" ] || exit 0
-count="$(json_length "$config" gates)"
-[ "$count" -gt 0 ] || exit 0
 set -f   # the globs stay literal
 commit_seg="$(git_segment commit "$cmd")"
-[ -n "$commit_seg" ] && passed_seen check-gates && exit 0   # the agent hook already passed this index
 push_seg="$(git_segment push "$cmd")"
 stage=""
 if [ "${STANDARDS_STAGE:-}" = ci ]; then stage=ci
 elif [ -n "$commit_seg" ]; then stage=commit
 elif [ -n "$push_seg" ]; then stage=push; fi
-files=""
-[ -n "$commit_seg" ] && files="$(changed_files "$commit_seg")"
+use_working_git
+cd "$(repo_root)" 2>/dev/null || exit 0
+config="$(config_text)"
+[ -n "$config" ] || exit 0
+[ -n "$stage" ] || case "$config" in *'"forbid'*) ;; *) exit 0 ;; esac
+index=""
+[ -n "$commit_seg" ] && index="$(commit_index "$commit_seg" "$cmd")"
+discard_index_at_exit "$index"
+key="$(commit_key "$index")"
+passed_seen check-gates "$key" && exit 0
+gates="$(json_list "$config" gates)"
+count="$(printf '%s\n' "$gates" | grep -c .)"
+[ "$count" -gt 0 ] || exit 0
+hooks_folder="$(cd "$(dirname "$0")" && pwd)"
+names="$(mktemp)" || exit 0
+trap 'rm -f "$names"; [ -z "$index" ] || rm -rf "$(dirname "$index")"' EXIT
+[ -n "$commit_seg" ] && commit_files_null_byte_separated "$index" "$commit_seg" > "$names"
 commit_msg=""
 [ -n "$commit_seg" ] && commit_msg="$(commit_message_text "$commit_seg")"
 code="$(command_code "$cmd")"
@@ -54,14 +63,13 @@ gate_mode="${STANDARDS_GATES:-}"
 failed=""
 i=0
 while [ "$i" -lt "$count" ]; do
-  name="$(json_get "$config" "gates.$i.name")"; [ -n "$name" ] || name="gates[$i]"
-  command="$(json_get "$config" "gates.$i.command")"
-  marker="$(json_get "$config" "gates.$i.marker")"
-  forbid="$(json_list "$config" "gates.$i.forbid")"
-  forbid_run="$(json_list "$config" "gates.$i.forbid_run")"
-  paths="$(json_list "$config" "gates.$i.paths")"
-  when="$(json_list "$config" "gates.$i.when" | tr '\n' ' ')"; [ -n "$(printf '%s' "$when" | tr -d ' ')" ] || when="commit"
+  gate="$(printf '%s\n' "$gates" | sed -n "$((i + 1))p")"
   i=$((i + 1))
+  [ -n "$stage" ] || case "$gate" in *'"forbid'*) ;; *) continue ;; esac
+  name="$(json_get "$gate" name)"; [ -n "$name" ] || name="gates[$((i - 1))]"
+  marker="$(json_get "$gate" marker)"
+  forbid="$(json_list "$gate" forbid)"
+  forbid_run="$(json_list "$gate" forbid_run)"
   if [ -n "$forbid$forbid_run" ]; then
     hit=""; said="contains"
     while IFS= read -r text; do
@@ -85,7 +93,11 @@ FORBID_RUN
     fi
     block "gate $name: the command $said \"$hit\"" "  $cmd"
   fi
-  [ -n "$command" ] && [ -n "$stage" ] || continue
+  [ -n "$stage" ] || continue
+  command="$(json_get "$gate" command)"
+  paths="$(json_list "$gate" paths)"
+  when="$(json_list "$gate" when | tr '\n' ' ')"; [ -n "$(printf '%s' "$when" | tr -d ' ')" ] || when="commit"
+  [ -n "$command" ] || continue
   case " $when " in *" $stage "*) ;; *) continue ;; esac
   if [ -n "$marker" ]; then
     [ "$gate_mode" = unmarked ] && continue
@@ -94,13 +106,8 @@ FORBID_RUN
     [ "$gate_mode" = marked ] && continue
   fi
   if [ -n "$paths" ] && [ "$stage" != push ]; then
-    match=0
-    for pattern in $paths; do
-      pattern="$(printf '%s' "$pattern" | sed 's|\*\*|*|g')"
-      # shellcheck disable=SC2254
-      for file in $files; do case "$file" in $pattern) match=1 ;; esac; done
-    done
-    [ "$match" -eq 1 ] || continue
+    matches="$(xargs -0 sh "$hooks_folder/files-matching-patterns.sh" "$(printf '%s\n' "$paths" | sed 's|\*\*|*|g')" < "$names")"
+    [ -n "$matches" ] || continue
   fi
   # shellcheck disable=SC2046
   if ! output="$(unset $(git rev-parse --local-env-vars); STANDARDS_COMMIT_MESSAGE="$commit_msg" STANDARDS_STAGE="$stage" sh -c "$command" 2>&1)"; then
@@ -110,5 +117,5 @@ ${marker:+    The owner can approve it: add $marker to the commit message.
 }"
   fi
 done
-if [ -z "$failed" ]; then [ -n "$commit_seg" ] && passed_mark check-gates "$commit_seg"; exit 0; fi
+if [ -z "$failed" ]; then [ -n "$commit_seg" ] && passed_mark check-gates "$index" "$key"; exit 0; fi
 block "a project gate failed" "$failed  Fix the findings, re-stage, then try again."

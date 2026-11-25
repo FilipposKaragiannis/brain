@@ -1,6 +1,6 @@
 """The graph report: what each step of the flow cost over a period, from the run log.
 
-  _graph_report.py <log dir> <days> <now> [markdown|json|keep]
+  _graph_report.py <log dir> <days> <now> [markdown|json|keep|slower]
 
 Prints Markdown for the <days> before <now> (an ISO time). It opens with the verdict, "In short":
 the steps that got slower, the steps an item goes through twice or more, the steps with failed
@@ -10,17 +10,19 @@ the cost and the runs per item; the steps whose median grew against the period b
 items that took the most step time. No model runs: the retro job hands the report to the retro,
 and the owner reads it as it is.
 
-Every call first keeps the history of the steps (_step_history.py), which outlives the cut of the
-run log. `keep` does only that and prints nothing (the job that cuts the log calls it first).
-`json` prints {days, now, markdown, daily}: the report, and the daily lines of the last 30 days,
-the days not yet settled counted from the records.
+Every call but `slower` first keeps the history of the steps (_step_history.py), which outlives
+the cut of the run log. `keep` does only that and prints nothing (the job that cuts the log calls
+it first). `json` prints {days, now, markdown, daily}: the report, and the daily lines of the last
+30 days, the days not yet settled counted from the records. `slower` prints one line per step
+that got slower, the same steps the verdict names, as <step>, its median now and its median
+before, apart by tabs; it reads the history and keeps none, so the health job can ask every pass.
 """
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _step_history import NINE_IN_TEN, SECONDS_PER_DAY, daily_history, epoch, failed_count, keep_history, median, within  # noqa: E402
+from _step_history import NINE_IN_TEN, SECONDS_PER_DAY, daily_history, epoch, failed_count, keep_history, median, read_history, within  # noqa: E402
 
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
@@ -29,7 +31,7 @@ SLOWER_BY_SECONDS = 60
 RUNS_TO_COMPARE = 3
 REPEATED_RUNS_PER_ITEM = 2.0
 ITEMS_LISTED = 5
-OUTPUTS = ("markdown", "json", "keep")
+OUTPUTS = ("markdown", "json", "keep", "slower")
 
 
 def duration(seconds):
@@ -113,15 +115,27 @@ def in_short(grouped, slower, ranked):
         "- **Most time:** %s took %s over %d step run%s." % (busiest, duration(total["seconds"]), total["steps"], "" if total["steps"] == 1 else "s")]
 
 
-def report(runs, days, now_timestamp):
+def periods(runs, days, now_timestamp):
     now = epoch(now_timestamp)
     period = days * SECONDS_PER_DAY
-    this_period, before = [], []
+    period_runs = {"this_period": [], "before": []}
     for run in runs:
         if now - period <= run["at"] < now:
-            this_period.append(run)
+            period_runs["this_period"].append(run)
         elif now - 2 * period <= run["at"] < now - period:
-            before.append(run)
+            period_runs["before"].append(run)
+    return period_runs
+
+
+def slower_records(runs, days, now_timestamp):
+    period_runs = periods(runs, days, now_timestamp)
+    return ["%s\t%s\t%s" % (step["step"], duration(step["now"]), duration(step["before"]))
+            for step in slower_steps(by_step(period_runs["this_period"]), by_step(period_runs["before"]))]
+
+
+def report(runs, days, now_timestamp):
+    period_runs = periods(runs, days, now_timestamp)
+    this_period, before = period_runs["this_period"], period_runs["before"]
     lines = ["# Flow graph report", "",
              "The %d days before %s: %d step runs, %s of step time. The %d days before that: %d runs, %s." % (
                  days, now_timestamp, len(this_period), duration(sum(run["seconds"] for run in this_period)),
@@ -142,6 +156,8 @@ def report(runs, days, now_timestamp):
 def rendered(output, history, days, now_timestamp):
     if output == "keep":
         return ""
+    if output == "slower":
+        return "".join(line + "\n" for line in slower_records(history["runs"], days, now_timestamp))
     markdown = "\n".join(report(history["runs"], days, now_timestamp))
     if output == "markdown":
         return markdown + "\n"
@@ -155,7 +171,7 @@ def main(arguments):
         print("usage: _graph_report.py <log dir> <days> <now> [%s]" % "|".join(OUTPUTS), file=sys.stderr)
         return 2
     try:
-        history = keep_history(arguments[0], epoch(arguments[2]))
+        history = read_history(arguments[0]) if output == "slower" else keep_history(arguments[0], epoch(arguments[2]))
         sys.stdout.write(rendered(output, history, int(arguments[1]), arguments[2]))
     except ValueError:
         print("flow: %s is no ISO time (2026-10-25T09:00:00Z)" % arguments[2], file=sys.stderr)

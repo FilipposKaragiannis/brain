@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034,SC2154 # _base_fixture.sh sets plugin, work, local_adapter, root and fails; the checks' conditions read the names set here
 # checks.sh: a project's own checks, run by the check job on their schedules, in a throwaway repo
 # with a bare origin, the local adapter, the flow home in the repo's .flow as init leaves it, and a
 # pool whose claimed worktree holds an uncommitted file. A check under jobs.checks is the schedule

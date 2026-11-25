@@ -249,6 +249,16 @@ sh "$here/gate-git-env.sh" > "$work/gate-git-env.out" 2>&1; code=$?
 check "GateGitEnvSuite_Passes: every check in gate-git-env.sh passed ($(tail -n 1 "$work/gate-git-env.out"))" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-git-env.out"
 
+echo "non-commit calls: hook cost (tests/non-commit-cost.sh)"
+sh "$here/non-commit-cost.sh" > "$work/non-commit-cost.out" 2>&1; code=$?
+check "NonCommitCostSuite_Passes: every check in non-commit-cost.sh passed ($(tail -n 1 "$work/non-commit-cost.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/non-commit-cost.out"
+
+echo "an agent's commit runs format and each gate once (tests/commit-once.sh)"
+sh "$here/commit-once.sh" > "$work/commit-once.out" 2>&1; code=$?
+check "CommitOnceSuite_Passes: every check in commit-once.sh passed ($(tail -n 1 "$work/commit-once.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/commit-once.out"
+
 echo "an agent's commit runs the gates once"
 python3 - "$work/count.log" <<'PY'
 import json, sys
@@ -265,10 +275,6 @@ check "git's hooks skip the gate the agent hook passed for the same index" [ "$(
 printf 'y\n' > twice.txt; git add twice.txt
 "$hooks/git/pre-commit" >/dev/null 2>&1
 check "a different index runs the gate again" [ "$(grep -c ran "$work/count.log")" = 2 ]
-: > "$work/count.log"
-expect "commit -a records nothing (the index will change)" check-gates.sh 'git commit -a -m x'          0 ""
-"$hooks/git/pre-commit" >/dev/null 2>&1
-check "...so git's hook runs the gate" [ "$(grep -c ran "$work/count.log")" = 2 ]
 : > "$work/count.log"
 "$hooks/git/pre-commit" >/dev/null 2>&1
 check "a human commit with no agent record runs the gate" [ "$(grep -c ran "$work/count.log")" = 1 ]
@@ -311,6 +317,11 @@ cp .standards/config.json "$work/config.before-build-map"
 python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(open(path)); config["build"]={"command": "touch " + sys.argv[1], "paths": ["src/**"]}; json.dump(config, open(path, "w"))' "$work/built-from-a-map"
 "$hooks/git/pre-push" >/dev/null 2>&1
 check "BuildGivenAsAMapWithPaths_PrePushRunsItsCommand: a push builds whatever changed, because the paths scope verify only" [ -f "$work/built-from-a-map" ]
+cp "$work/config.before-build-map" .standards/config.json
+python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(open(path)); config["build"]="touch " + sys.argv[1]; json.dump(config, open(path, "w"))' "$work/built-without-flow"
+check "ProjectWithoutFlow_HasNoFlowHome: the push below must have no build-passed lookup to read" [ ! -e "$(git worktree list --porcelain | sed -n '1s/^worktree //p')/.flow" ]
+"$hooks/git/pre-push" >/dev/null 2>&1
+check "ProjectWithoutFlow_PrePushBuilds: the push builds as it always has, because standards works without flow" [ -f "$work/built-without-flow" ]
 cp "$work/config.before-build-map" .standards/config.json
 
 echo "check-range: the gates per commit over a range"
@@ -522,7 +533,7 @@ check "init: --check names a demoted rule a plugin hook enforces as a gap, with 
 check "init: a relaxed rule a plugin hook enforces stays in the block's hard rules" sh -c "$hard_rules | grep -q '^- C-01 ' && $hard_rules | grep -q '^- W-01 '"
 check "init: a relaxed rule a plugin hook enforces is listed as neither waived nor demoted" sh -c "! sed -n '/^## Waived by this project/,/^## Code Review Rules/p' AGENTS.md | grep -qE '^- (C-01|W-01) '"
 check "init: a new config carries empty relaxed and judgement lists" python3 -c "import json, sys; sys.exit(json.load(open('$work/fresh/.standards/config.json')).get('rules') != {'relaxed': [], 'judgement': []})"
-check "init: without a rules key the block is the plugin's block, byte for byte" sh -c "sed -n '/^<!-- standards:begin/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '1d;\$d' | cmp -s - '$plugin_copy/rules/block.md'"
+check "ConfigWithoutARulesKey_InstallsThePluginsRuleLists because only a rules key may change which rules a project carries" sh -c "sed -n '/^## Hard rules/,\$p' '$plugin_copy/rules/block.md' > '$work/plugin-block-rules' && sed -n '/^## Hard rules/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '\$d' | cmp -s - '$work/plugin-block-rules'"
 
 echo "init: upgrade from the docs/ layout (v0.1.0), project with its own .githooks"
 mkdir -p "$work/old" && cd "$work/old" && git init -q -b main && git config user.email t@t && git config user.name t
