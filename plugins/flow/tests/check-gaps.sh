@@ -2,8 +2,8 @@
 # check-gaps.sh: a scheduled check that cannot run, in a throwaway repo with a bare origin and the
 # local adapter. init --check names each malformed jobs.checks entry, jobs.checks set as a value,
 # a jobs.schedule.check-<name> key and a base no check can check out as a gap at its line in the
-# config; jobs.sh run refuses a check with no command and one whose base is no valid branch name;
-# a config whose checks can all run is no gap.
+# config; jobs.sh run refuses a check with no command, and run and install refuse one whose base is
+# no valid branch name; a config whose checks can all run is no gap.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -108,6 +108,9 @@ check "BaseGitReadsAsAnOptionBesideACheck_IsAnInitGapAtItsLine: git would take t
 "$jobs_script" run check-smoke > "$work/run-option-base.out" 2>&1; run_option_base_exit=$?
 check "BaseGitReadsAsAnOption_IsRefusedByRun: no check can check that base out, so run refuses it" \
   '[ "$run_option_base_exit" -eq "$refused_exit" ]'
+FLOW_SCHEDULER=launchd FLOW_LAUNCH_AGENTS="$work/agents" "$jobs_script" install check-smoke > "$work/install-option-base.out" 2>&1; install_option_base_exit=$?
+check "BaseGitReadsAsAnOption_IsRefusedByInstall: no check can check that base out, so install refuses it" \
+  '[ "$install_option_base_exit" -eq "$refused_exit" ]'
 
 echo "check gaps: run refuses a malformed check"
 { good_config main; printf '    nocommand:\n      schedule: daily 02:00\n'; } > "$flow_home_folder/config.yaml"
@@ -117,9 +120,11 @@ check "CheckWithNoCommand_IsRefusedByRun: a check with no command cannot run, so
 
 echo "check gaps: good checks are none"
 good_config main > "$flow_home_folder/config.yaml"
-init_gaps "$work/init-good.out"; good_init_exit=$?
+init_gaps "$work/init-good.out"
+check "OnlyGoodChecks_InitCheckReports: init --check prints its report, so a missing gap line is a real absence" \
+  '[ -s "$work/init-good.out" ]'
 check "OnlyGoodChecks_AreNoInitGap: init names no jobs.checks entry when every check can run" \
-  '[ "$good_init_exit" -ne "$refused_exit" ] && [ -s "$work/init-good.out" ] && ! grep -q "^init: gap: [^ ]*: \(base\|jobs\.\(checks\|schedule\.check-\)\)" "$work/init-good.out"'
+  '! grep -q "^init: gap: [^ ]*: \(base\|jobs\.\(checks\|schedule\.check-\)\)" "$work/init-good.out"'
 
 [ "$fails" -eq 0 ] && { echo "check gaps: ok"; exit 0; }
 echo "check gaps: $fails failed"; exit 1

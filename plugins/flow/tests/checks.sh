@@ -212,8 +212,10 @@ echo "checks: two checks at once, and a stop"
 slow_run=$!
 wait_until '[ -s "$work/slow.started" ]'
 run_probe 0
+check "CheckWhileAnotherCheckRuns_FindsTheOtherMidRun: the slow check has started its command and still runs, so the two overlap" \
+  '[ -s "$work/slow.started" ] && kill -0 "$slow_run"'
 check "CheckWhileAnotherCheckRuns_RunsAsWell: checks take no shared lock, so a long one makes no other skip" \
-  '[ -s "$work/slow.started" ] && kill -0 "$slow_run" && history_row check-smoke "$newest_history_row" | grep -q "| work | done: passed at "'
+  'history_row check-smoke "$newest_history_row" | grep -q "| work | done: passed at "'
 slow_checkout="$(cat "$work/slow.started")"
 FLOW_SCHEDULER=cron "$jobs_script" stop check-slow > "$work/stop.out" 2>&1
 wait_until '! kill -0 "$slow_run"'
@@ -266,8 +268,10 @@ check "CheckoutErrorAfterAPass_KeepsThePassOnRecord: the next real fail after it
 run_broken pass; run_broken base-line
 "$local_adapter/read.sh" "$(newest_bug broken id)" > "$work/base-line-bug.json"
 base_line_bug_base="$(sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/base.sh" && body_base "$(cat "$1")"' _ "$work/base-line-bug.json")"
+check "OutputWithABaseLine_StaysInTheBugBody: the line is part of the output's tail, so the body holds it" \
+  'json_value body < "$work/base-line-bug.json" | grep -q "base: $base_line_branch"'
 check "OutputWithABaseLine_SetsNoBaseForTheBug: a base: line the check prints stays output, so a claim of the bug never reads it" \
-  'json_value body < "$work/base-line-bug.json" | grep -q "base: $base_line_branch" && [ "$base_line_bug_base" != "$base_line_branch" ]'
+  '[ "$base_line_bug_base" != "$base_line_branch" ]'
 
 echo "checks: a base git would read as an option"
 option_base_marker="$work/upload-pack-ran"
@@ -276,7 +280,7 @@ set_base main
 check "BaseGitReadsAsAnOption_IsRefused: the base is no valid branch name, so the run ends as a refused entry" \
   '[ "$option_base_exit" -eq "$refused_exit" ]'
 check "BaseGitReadsAsAnOption_RunsNoCommand: the base never reaches git, so the command it carries never runs" \
-  '[ "$option_base_exit" -ne 0 ] && [ ! -e "$option_base_marker" ]'
+  '[ ! -e "$option_base_marker" ]'
 
 [ "$fails" -eq 0 ] && { echo "checks: ok"; exit 0; }
 echo "checks: $fails failed"; exit 1
