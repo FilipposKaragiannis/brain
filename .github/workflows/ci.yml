@@ -101,10 +101,26 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./plugins/standards/action
+  fragments:
+    name: changelog fragments
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 -I tools/lib/fragments_needed.py "origin/$BASE_REF" "origin/$DEFAULT_BRANCH"
   # Branch protection on main requires this job alone.
   result:
     if: always()
-    needs: [lint, standards, tools, flow, console, plugins, gates-action]
+    needs: [lint, standards, tools, flow, console, plugins, gates-action, fragments]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

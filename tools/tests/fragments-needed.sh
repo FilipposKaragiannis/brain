@@ -12,6 +12,7 @@ passes_exit=0
 owes_exit=1
 refused_exit=2
 fragment_text="$(printf 'bump: patch\n\n- A change a user sees.')"
+verify_command_template="$(python3 -I -c 'import json, sys; print(next(entry["command"] for entry in json.load(open(sys.argv[1]))["test"] if entry["name"] == "fragments"))' "$root/.standards/config.json")"
 
 repository_seeded() {
   repository_folder="$(mktemp -d "$work/repository.XXXXXX")"
@@ -64,11 +65,22 @@ outcome() {
   outcome_repository="$1"; shift
   outcome_status=0
   (cd "$outcome_repository" && python3 -I tools/lib/fragments_needed.py "$@") > "$work/output" 2>&1 || outcome_status=$?
-  outcome_named=""
-  for outcome_plugin in flow meta standards; do
-    if grep -qw -- "$outcome_plugin" "$work/output"; then outcome_named="$outcome_named $outcome_plugin"; fi
+  outcome_described "$outcome_status"
+}
+verify_outcome() {
+  verify_outcome_status=0
+  (cd "$1" && sh -c "$2") > "$work/output" 2>&1 || verify_outcome_status=$?
+  outcome_described "$verify_outcome_status"
+}
+outcome_described() {
+  outcome_described_named=""
+  for outcome_described_plugin in flow meta standards; do
+    if grep -qw -- "$outcome_described_plugin" "$work/output"; then outcome_described_named="$outcome_described_named $outcome_described_plugin"; fi
   done
-  echo "exit $outcome_status, names:${outcome_named:- none}"
+  echo "exit $1, names:${outcome_described_named:- none}"
+}
+verify_command_with_base() {
+  printf '%s\n' "$verify_command_template" | sed "s/{verify_base}/$1/g"
 }
 expect() { [ "$2" = "$3" ] || { echo "FAIL $1"; echo "  expected: $3"; echo "  actual:   $2"; cat "$work/output"; exit 1; }; echo "ok $1"; }
 
@@ -148,3 +160,16 @@ expect 'OnlyUnavailableBase_ExitsTwo because with no ref left there is nothing t
   "$(outcome "$repository" unavailable)" "exit $refused_exit, names: none"
 expect 'UnknownRef_ExitsTwo because a ref git cannot resolve must stop the check, never pass it' \
   "$(outcome "$repository" no-such-branch origin/main)" "exit $refused_exit, names: none"
+
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped change"
+repository_commit "$repository" "feat(flow): a shipped change"
+expect 'VerifyCommandOnAPluginChangeWithoutFragment_Fails because verify runs the same check before a PR exists' \
+  "$(verify_outcome "$repository" "$(verify_command_with_base "$(git -C "$repository" rev-parse main)")")" "exit $owes_exit, names: flow"
+
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped change"
+repository_fragment "$repository" flow flow-change
+repository_commit "$repository" "feat(flow): a shipped change with its fragment"
+expect 'VerifyCommandOnAPluginChangeWithFragment_Passes because verify must not fail a change that carries its fragment' \
+  "$(verify_outcome "$repository" "$(verify_command_with_base "$(git -C "$repository" rev-parse main)")")" "exit $passes_exit, names: none"
