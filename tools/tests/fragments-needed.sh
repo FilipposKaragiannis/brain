@@ -111,6 +111,33 @@ expect 'TwoPluginsChangedOneFragment_NamesOnlyTheOtherPlugin because a fragment 
   "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: standards"
 
 repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_fragment "$repository" standards standards-change
+repository_commit "$repository" "feat(flow): a change with a fragment for another plugin"
+expect 'FragmentForAnotherPlugin_NamesTheChangedPlugin because a fragment raises only the plugin whose folder holds it' \
+  "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
+
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_write "$repository" plugins/flow/changelog.d/flow-change.txt "$fragment_text"
+repository_commit "$repository" "feat(flow): a change with a fragment that is not markdown"
+expect 'ChangelogFileNotMarkdown_Fails because the release folds only the markdown fragments' \
+  "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
+
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/shared/lib.sh "a helper no plugin manifest claims"
+repository_commit "$repository" "chore: a folder under plugins that is no plugin"
+expect 'FolderWithoutPluginSource_Passes because a folder with no plugin.source.json is never released' \
+  "$(outcome "$repository" main origin/main)" "exit $passes_exit, names: none"
+
+repository="$(repository_seeded)"
+repository_write "$repository" plugins/flow/tests/board.sh "a flow suite"
+repository_write "$repository" plugins/flow/skills/use/SKILL.md "a shipped flow change"
+repository_commit "$repository" "feat(flow): a shipped change with its suite"
+expect 'TestsBesideShippedFileWithoutFragment_Fails because the test exemption must not hide a shipped change' \
+  "$(outcome "$repository" main origin/main)" "exit $owes_exit, names: flow"
+
+repository="$(repository_seeded)"
 repository_write "$repository" plugins/flow/tests/board.sh "a flow suite"
 repository_write "$repository" plugins/standards/hooks/tests/run.sh "a hook suite"
 repository_write "$repository" plugins/meta/app/daemon/test/server.test.ts "a daemon test"
