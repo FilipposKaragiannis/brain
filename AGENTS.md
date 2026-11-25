@@ -22,6 +22,12 @@ point one at a real project, its worktrees or the owner's console settings.
 - The token is in `<folder>/state/token`. Run the script again to reset the demo.
 - Stop the demo console when you are done; leave no daemon running.
 
+## Plugin changes carry a changelog fragment
+
+A PR that changes a file a plugin ships adds `plugins/<plugin>/changelog.d/<slug>.md` for each
+plugin it changes; tests, evals and meta's generated `map.html` need none. CI and verify fail a PR
+without it. The format and the reasons are in `docs/adr/0002-changelog-fragments.md`.
+
 <!-- standards:begin v1.9.1 -->
 # Coding standards (standards plugin v1.9.1)
 Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched code
