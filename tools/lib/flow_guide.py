@@ -46,10 +46,10 @@ GATE_HINTS = {
 }
 
 DRIVE = [
-    {"command": FlowCommand("flow:new", 'bug "Bots stall at the net after a restart"'),
+    {"command": FlowCommand("flow:new", 'task M "Bots hold their net position after a restart"'),
      "says": "Files a bug, a task or an epic in the tracker the config names, local files under .flow/items by default. A bug is matched against the open items first, and a match becomes a comment; otherwise it is filed with the steps to see it. An epic gets a problem and an outcome, no size and no tasks yet.",
      "result": "gh#340",
-     "ask": "File a bug: bots stall at the net after a restart"},
+     "ask": "File an M task: bots hold their net position after a restart"},
     {"command": FlowCommand("flow:board", ""),
      "says": "Which items are ready, which are blocked, which worktrees are free, which gates wait on you. For an epic, its dependency graph: waves, what can run in parallel, the critical path.",
      "ask": "What is ready, blocked and waiting?"},
