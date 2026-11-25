@@ -625,6 +625,14 @@ printf '/answer %s' "$record_gated_answer" | FAKE_GH_DIR="$answers_gh" gh issue 
 FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" "$P/jobs/next.sh" claude --pick nothing >/dev/null 2>&1
 check "GateInTheRecordWithNoLabel_IsAnsweredByTheNextJob: the next job clears a gate its record holds though the tracker shows none, because the gated ids come from the records" \
   [ "$(FLOW_HOME="$answers_home" FAKE_GH_DIR="$answers_gh" "$P/scripts/state.sh" get "$record_gated_item" answer)" = "$record_gated_answer" ]
+unsorted_home="$work/home-unsorted"; unsorted_gh="$work/gh-unsorted"; mkdir -p "$unsorted_home" "$unsorted_gh"
+unsorted_issue=61; unsorted_status=Backlog
+cp "$P/tests/_fake_gh.py" "$unsorted_gh/"
+printf '{"issues": [{"number": %s, "title": "Triaged, left in the backlog", "body": "", "state": "OPEN", "labels": ["size:S"], "url": "https://gh/%s", "project_item": "PI_%s", "project_status": "%s"}]}\n' "$unsorted_issue" "$unsorted_issue" "$unsorted_issue" "$unsorted_status" > "$unsorted_gh/issues.json"
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  project: 1\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\npick:\n  nothing:\n    labels: [no-such-label]\n' > "$unsorted_home/config.yaml"
+FLOW_HOME="$unsorted_home" FAKE_GH_DIR="$unsorted_gh" "$P/jobs/next.sh" claude --pick nothing >/dev/null 2>&1
+check "UnstartedCardOnTheBoard_StaysWhereTheOwnerPutIt: the next job leaves a ready issue's card in Backlog, because only the flow's own changes move a card" \
+  [ "$(FLOW_HOME="$unsorted_home" FAKE_GH_DIR="$unsorted_gh" "$P/adapters/github/read.sh" "gh#$unsorted_issue" | jget project.status)" = "$unsorted_status" ]
 check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'quiet: 0 new'"
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null

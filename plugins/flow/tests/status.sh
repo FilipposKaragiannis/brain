@@ -5,9 +5,10 @@
 # adapter in a throwaway repo. A take that makes the claim assigns the user when nobody holds the
 # item and sets it in progress; a take of a claim already held moves nothing; a raised gate sets
 # needs-you, the merge gate in-review; a clear in each mode sets in-progress again; the last step
-# done sets in-review. A copy of the plugin whose set-status fails shows a push that fails warns,
-# logs a push failed event and leaves the step's exit as it was; one whose set-status keeps what it
-# printed shows the same status pushed twice moves the item once.
+# done sets in-review; a gate dropped and a merge gate cleared at done move nothing. A copy of the
+# plugin whose set-status fails shows a push that fails warns, logs a push failed event, keeps
+# pushed as it was and leaves the step's exit as it was; one whose set-status keeps what it printed
+# shows the same status pushed twice moves the item once.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -102,6 +103,17 @@ clear_gate "$merge_sent_back" --back "Split the PR in two."
 check "MergeGateSentBack_SetsInProgress: the item reads category in-progress, because its pr step runs again" \
   '[ "$(category "$merge_sent_back")" = in-progress ]'
 
+dropped="$(gated "Closed under its gate")"; write_frontmatter "$dropped" workflow backlog
+"$plugin/scripts/gate.sh" drop "$dropped" "the item closed" >/dev/null 2>&1
+check "GateDropped_MovesNothing: the item stays where it was put, because a drop comes on a closed item and close has no status" \
+  '[ "$(category "$dropped")" = todo ]'
+merged_at_done="$(taken_at_implement "Merge cleared at done")"
+"$plugin/scripts/gate.sh" raise "$merged_at_done" merge "**Merge the pull request.**" pr -- step="done" >/dev/null 2>&1
+write_frontmatter "$merged_at_done" workflow backlog
+clear_gate "$merged_at_done" "Merged."
+check "MergeGateClearedAtDone_MovesNothing: the item stays where it was put, because the sweep closed it and its card is in review already" \
+  '[ "$(category "$merged_at_done")" = todo ]'
+
 echo "status: the last step"
 finished="$(new_task "Every step ran")"; take "$finished"
 mkdir -p "$work/reports"
@@ -120,6 +132,8 @@ check "FailingSetStatus_LeavesTheStepsExit: the gate raise exits 0, because a pu
   '[ "$failing_code" = 0 ]'
 check "FailingSetStatus_Warns: stderr names the item whose push failed, because the owner learns its card lags" \
   'grep -qF "$failing" "$work/failing.err"'
+check "FailingSetStatus_KeepsThePushedStatus: pushed still names the in-progress of the take, because pushed holds only what the tracker took" \
+  '[ "$(record get "$failing" pushed.status)" = in-progress ]'
 check "FailingSetStatus_LogsAPushFailedEvent: events.log holds a push failed line for the item, because the console lists what the tracker missed" \
   'events_hold "$failing" "push failed"'
 
