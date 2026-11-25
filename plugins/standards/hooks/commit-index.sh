@@ -228,15 +228,15 @@ working_files_tree() {
   return "$working_status"
 }
 
-index_files() {
+index_files_null_byte_separated() {
   # $1 index file. Added, copied, modified or renamed files of that index against HEAD.
-  git_on_index "$1" diff --cached --name-only --diff-filter=ACMR || true
+  git_on_index "$1" diff --cached -z --name-only --diff-filter=ACMR || true
 }
 
-commit_files() {
+commit_files_null_byte_separated() {
   # $1 index file from commit_index, or empty, $2 segment. The files this commit will contain.
-  if [ -n "$1" ]; then index_files "$1"; return 0; fi
-  changed_files "$2"
+  if [ -n "$1" ]; then index_files_null_byte_separated "$1"; return 0; fi
+  changed_files_null_byte_separated "$2"
 }
 
 passed_file() { printf '%s/standards-passed-trees' "$(git rev-parse --git-dir 2>/dev/null)"; }

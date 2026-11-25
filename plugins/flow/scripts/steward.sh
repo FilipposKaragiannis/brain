@@ -36,7 +36,8 @@
 #   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
 #                                                git worktree add; pool entry, copies and setup); a
 #                                                pool path missing on disk is recreated in place
-#   steward.sh setup <path>                      run worktree_copy and worktree_setup there
+#   steward.sh setup <path>                      run worktree_copy and worktree_setup there and
+#                                                record the commit the setup ran at
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
 #                                                worktree and every pool worktree
 #   steward.sh sweep [--dry-run] [--lock] [--item <id>]
@@ -58,7 +59,10 @@
 #                                                whose condition ended, clear stale or wrong
 #                                                holds and name old ones, say when the
 #                                                pool is stuck, discard a free worktree's changes
-#                                                the base's history already holds
+#                                                the base's history already holds, say once when
+#                                                a step got slower (lib/slow_steps.sh), merge the
+#                                                base into an approved epic's branch more than
+#                                                behind_base commits behind it (lib/epic_base.sh)
 #   steward.sh sessions [--stale]                list the claude and codex sessions working in the
 #                                                main worktree and the pool: pid, host, worktree,
 #                                                item, busy or idle and for how long; a stale one
@@ -79,7 +83,15 @@
 # ../app-wt-2). A template with no {n}, or one that gives every number the same idle branch, is
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
-# commands run in the new worktree. Both run on add and on setup.
+# commands run in the new worktree. Both run on add and on setup. worktree_setup_paths lists globs
+# of the files whose change means the setup must run again (a lockfile): a claim runs
+# worktree_setup again before it hands a worktree out when such a file differs between the commit
+# its setup last ran at (.flow/setup-commit: removed when a setup starts, then the commit it
+# started at once every command passed) and its HEAD; no record counts as changed. A failed command
+# is reported and the worktree handed out, as at add; with no record left, the next claim tries
+# again. While a setup runs, .flow/setup-pid holds the
+# steward's pid: health leaves the claim alone, and a claim of the same item (steward.sh claim, or
+# claim_at_base in lib/base.sh) waits for the setup to end before it prints the path.
 # worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
 # add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
 # remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
@@ -113,6 +125,9 @@
 . "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
+. "$FLOW_PLUGIN/lib/worktree_setup.sh"
+. "$FLOW_PLUGIN/lib/slow_steps.sh"
+. "$FLOW_PLUGIN/lib/epic_base.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -215,7 +230,7 @@ cmd_claim() {
   item="$1"; shift
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
-  if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
+  if [ -n "$existing" ]; then wait_for_running_setup "$existing"; printf '%s\n' "$existing"; return 0; fi
   scope_holds "$item" || exit 2
   branch="flow/$(item_slug "$item")"
   if adapter_for "$item" >/dev/null 2>&1; then
@@ -229,7 +244,7 @@ cmd_claim() {
   ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
   existing="$(cmd_find "$item")"
-  if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
+  if [ -n "$existing" ]; then flow_unlock; wait_for_running_setup "$existing"; printf '%s\n' "$existing"; return 0; fi
   ! claimed_branch "$branch" || { flow_unlock; refuse_claim "$item" "another claim holds its task branch $branch" 4; }
   free="$(free_worktree)" || exit $?
   if git -C "$free" show-ref --verify --quiet "refs/heads/$branch"; then
@@ -241,6 +256,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
+  set_up_again_when_outdated "$free" >&2
   write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
@@ -341,11 +357,11 @@ cmd_release() {
   park "$p"; parked=$?
   [ "$parked" -ne 2 ] || die "cannot move $p to $(idle_branch "$p") at $(base_ref)"
   [ "$parked" -eq 0 ] || echo "flow: $(idle_branch "$p") has commits not in $(base_ref); kept, and $(basename "$p") left detached at $(base_ref)" >&2
-  # The branch goes only when the claim's base holds every commit of it: git branch -d would judge
-  # it against the idle branch's tip, or delete one merged into its upstream but ahead of the base.
+  # Gone only when the claim's base, by its full ref and never the branch itself, holds it all: branch -d would read the idle tip or the upstream.
+  release_base_ref="refs/remotes/origin/$base"; git -C "$p" show-ref --verify --quiet "$release_base_ref" || release_base_ref="refs/heads/$base"
   if [ -n "$branch" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$branch"; then
     if [ "$force" -eq 1 ]; then git -C "$p" branch -q -D "$branch"
-    elif ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$(base_ref "$base")" 2>/dev/null ||
+    elif ! checked_name "$base" >/dev/null || [ "$base" = "$branch" ] || ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$release_base_ref" 2>/dev/null ||
          ! git -C "$p" branch -q -D "$branch" 2>/dev/null; then echo "flow: $branch is not merged into $(base_ref "$base"); kept. Use --force to delete it." >&2; fi
   fi
   rm -f "$p/.flow/claim.json"
@@ -423,13 +439,13 @@ cmd_split() {
     sp_procs="${procs:-${FLOW_HEALTH_PROCS:-}}"; sp_tmp=""
     if [ -z "$sp_procs" ]; then
       sp_tmp="$(mktemp)"; sp_procs="$sp_tmp"
-      python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$sp_tmp" 2>/dev/null || : > "$sp_tmp.failed"
+      cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$sp_tmp" 2>/dev/null || : > "$sp_tmp.failed"
     fi
     if [ -f "$home/runs/$(item_slug "$sp_item").json" ]; then split_kept="a run is in flight"
     elif dirty "$sp_path"; then split_kept="it has uncommitted changes: commit or stash them; the health job then releases it"
     elif [ -n "$sp_tmp" ] && [ -f "$sp_tmp.failed" ]; then split_kept="the processes cannot be listed, so a session may be working in it"
     else
-      sp_live="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$sp_procs" "$sp_item" "$sp_path" "" 2>/dev/null)"
+      sp_live="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$sp_procs" "$sp_item" "$sp_path" "" 2>/dev/null)"
       [ -z "$sp_live" ] || split_kept="a session works in it ($sp_live)"
     fi
     [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
@@ -555,8 +571,6 @@ pool_add_entry() {
   mv "$tmp" "$f"
 }
 
-# run_setup <path>: copy the ignored files the config lists when missing, then run the setup
-# commands there. A failing command is reported and does not undo the worktree.
 run_setup() {
   p="$1"
   cfg worktree_copy | while read -r rel; do
@@ -565,10 +579,7 @@ run_setup() {
     [ -e "$p/$rel" ] && continue
     mkdir -p "$(dirname "$p/$rel")" && cp -R "$main/$rel" "$p/$rel" && echo "copied $rel"
   done
-  cfg worktree_setup | while read -r cmd; do
-    [ -n "$cmd" ] || continue
-    (cd "$p" && sh -c "$cmd") && echo "setup: $cmd" || echo "flow: worktree_setup failed in $p: $cmd" >&2
-  done
+  set_up_and_record "$p"
 }
 
 is_worktree_of_this_repository() {
@@ -903,7 +914,7 @@ sweep_drop_gate() {
 }
 
 # --- health: the pool checked in order, claim by claim. See jobs/health.sh, which runs it.
-hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
+hpy() { cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
 
 # health_say <item> <fact>: one line per fact, on stdout and in events.log, of the kind health
 # (resume when the owner resumes a run, unheld when a hold is cleared).
@@ -1017,7 +1028,7 @@ health_free() {
 # Changes holding anything of their own are kept, and said once per first such path.
 health_free_dirty() {
   hd_name="$(basename "$1")"
-  hd_found="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" 2>/dev/null)"
+  hd_found="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" 2>/dev/null)"
   case "$hd_found" in
     redundant*) ;;
     *) hd_why="${hd_found#kept?}"; hd_why="${hd_why:-they could not be checked}"
@@ -1032,7 +1043,7 @@ health_free_dirty() {
   # A destructive step: a session that called health from inside the worktree counts too.
   [ "$procs_ok" -eq 1 ] && [ -z "$(hpy present "$procs" "" "$1" "")" ] || return 1
   if [ "$dry" -eq 1 ]; then health_say pool "would discard the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"; return 1; fi
-  hd_done="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
+  hd_done="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
   case "$hd_done" in
     discarded*)
       health_say pool "discarded the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"
@@ -1089,6 +1100,8 @@ health_claim() {
   bs="$(json_get "$c" base)"; [ -n "$bs" ] || bs="$base_branch"
   claims=$((claims + 1))
   if [ "$procs_ok" -eq 0 ]; then holders="$holders$name $it not checked: no process list
+"; return 0; fi
+  if setup_running "$p"; then running=$((running + 1)); holders="$holders$name $it running worktree_setup
 "; return 0; fi
   case "$it" in adhoc:*) health_sub_agent "$p" "$it" "$c" "$bs"; return 0 ;; esac
   if ! adapter_for "$it" >/dev/null 2>&1; then holders="$holders$name $it a session outside the flow
@@ -1453,7 +1466,7 @@ health_gate_closed_sweep() {
 # children are all closed, or one whose every step ran and that waits at no gate (its PR was merged
 # by hand, or its merge gate cleared without the sweep closing it). Say each once and notify.
 health_splits() {
-  hs_rows="$(python3 -I -c '
+  hs_rows="$(cached_python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if line.strip():
@@ -1489,7 +1502,7 @@ for line in sys.stdin:
 # either its steps are past that gate or the owner's last answer cleared it (an answer or an
 # option, not a split sent back).
 approved_epics_with_children() {
-  python3 -I -c '
+  cached_python3 -I -c '
 import json, sys
 profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
 SPLIT_GATE = "decomposition"
@@ -1529,7 +1542,7 @@ health_make_epic_branch() {
 # health_epic_branch <epic>: an approved epic with no epic branch gets one; --dry-run only says so.
 health_epic_branch() {
   branchless_key="epic-branch-$(item_slug "$1")"; missing_epic_branch="$(epic_branch "$1")"
-  if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; return 0; fi
+  if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; health_epic_base "$1"; return 0; fi
   if [ "$dry" -eq 1 ]; then health_say "$1" "would make its epic branch $missing_epic_branch"; return 0; fi
   branchless_epic_json="$(adapter read "$1" 2>/dev/null)"
   [ -z "$branchless_epic_json" ] || health_make_epic_branch "$1" "$branchless_epic_json"
@@ -1778,6 +1791,7 @@ cmd_health() {
   health_epic_branches
   health_holds
   rm -f "$health_items"
+  health_slow_steps
   health_pressure
   health_next_runs
   [ "$procs_ok" -eq 0 ] || health_sessions

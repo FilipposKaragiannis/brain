@@ -100,7 +100,7 @@ if solutions:
         "comments": {"line": "//", "doc": "///", "public": "public", "doc_inside": ["interface", "enum"], "allow_markers": ["float-boundary:"]},
     })
 config = {
-    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). build and test are a command, or a map {command, paths}: verify then runs the command only when a file changed since the base matches a path glob (** and * both cross directories), and reports it as skipped otherwise. test is also a list of {name, command, paths}, one test command each, so a change runs only the commands whose paths it touches; a command with no paths always runs. verify does not run a test command again that passed on the same command and the same files (--fresh does); a build always runs, as later checks need its outputs, and a push skips a build verify passed on the same command and files when flow is installed. protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker; {name, forbid_run: [program], marker} blocks only a command that starts the program (as written or by a longer path, through a shell, env, exec, nohup, nice or timeout too), never one that only names its path. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/ and installs the eval runner .standards/evals/run.sh; the review skill spawns its reviewers by paths), evals (a folder of claude plugin eval cases, one per subfolder, for the roster's agents; .standards/evals/run.sh runs them). Empty strings mean none. rules: relaxed lists the rule ids this project waives (never raised), judgement the hard or signal rule ids it grades as [judgement] (P2, declared per U-02); neither list reaches the plugin hooks, so C-01, C-02, W-01 and L-03 stay hard; re-run init after editing them, it renders the rule copies and the block from them.",
+    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. {files} is accepted in two forms: as an unquoted word of its own in the command, or as an unquoted word of its own in the script of a sh -c or bash -c that starts a command; a word ends at a blank or at one of ; & | < > ( ) and a newline. Every other placement is refused, with a message that names the accepted forms. To pass the names into any other construct, write \"$@\" there and put {files} as the last word of the command. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). build and test are a command, or a map {command, paths}: verify then runs the command only when a file changed since the base matches a path glob (** and * both cross directories), and reports it as skipped otherwise. test is also a list of {name, command, paths}, one test command each, so a change runs only the commands whose paths it touches; a command with no paths always runs. verify does not run a test command again that passed on the same command and the same files (--fresh does); a build always runs, as later checks need its outputs, and a push skips a build verify passed on the same command and files when flow is installed. protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker; {name, forbid_run: [program], marker} blocks only a command that starts the program (as written or by a longer path, through a shell, env, exec, nohup, nice or timeout too), never one that only names its path. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/ and installs the eval runner .standards/evals/run.sh; the review skill spawns its reviewers by paths), evals (a folder of claude plugin eval cases, one per subfolder, for the roster's agents; .standards/evals/run.sh runs them). Empty strings mean none. rules: relaxed lists the rule ids this project waives (never raised), judgement the hard or signal rule ids it grades as [judgement] (P2, declared per U-02); neither list reaches the plugin hooks, so C-01, C-02, W-01 and L-03 stay hard; re-run init after editing them, it renders the rule copies and the block from them.",
     "version": version,
     "languages": languages,
     "build": " && ".join("dotnet build %s --nologo" % s for s in solutions),
@@ -120,15 +120,25 @@ PY
   fi
 fi
 
+# The language appendices: "<file>\t<globs>" per line, no globs for one no configured language uses.
+appendix_plan="$(python3 -I "$plugin/skills/init/scripts/appendices.py" "$plugin/rules/appendices.json" .standards/config.json "$scope")" \
+  || die "could not read the language appendices (see above)"
+tab="$(printf '\t')"
+
 # 1b. Old locations (before v0.2.0 the rule text and the testing guide lived under docs/).
 # A rule copy goes when it is what init last wrote or what the plugin ships; the guide moves when
 # it is still the plugin's template (its first lines say so) and nothing sits at the new path.
-for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
-  old="docs/standards/$(basename "$src")"; [ -f "$old" ] || continue
-  if [ "$check" -eq 1 ]; then drifted "stale: $old (the rule text now lives in .standards/rules/)"; continue; fi
-  if cmp -s "$src" "$old" || [ "$(stamp_get "$stamp" "$old")" = "$(hash_file "$old")" ]; then rm -f "$old" && note "$old removed (now .standards/rules/)"
-  else echo "init: $old is not what init wrote; move your edit to the plugin source, then delete it"; fi
-done
+remove_old_copy() {
+  # remove_old_copy <plugin rule file>: removes or reports its copy under docs/standards/.
+  old_copy="docs/standards/$(basename "$1")"; [ -f "$old_copy" ] || return 0
+  if [ "$check" -eq 1 ]; then drifted "stale: $old_copy (the rule text now lives in .standards/rules/)"; return 0; fi
+  if cmp -s "$1" "$old_copy" || [ "$(stamp_get "$stamp" "$old_copy")" = "$(hash_file "$old_copy")" ]; then rm -f "$old_copy" && note "$old_copy removed (now .standards/rules/)"
+  else echo "init: $old_copy is not what init wrote; move your edit to the plugin source, then delete it"; fi
+}
+for common_rule_file in "$plugin"/rules/common/*.md; do remove_old_copy "$common_rule_file"; done
+while IFS="$tab" read -r appendix_file appendix_globs; do [ -z "$appendix_file" ] || remove_old_copy "$plugin/rules/$appendix_file"; done <<EOF
+$appendix_plan
+EOF
 [ -d docs/standards ] && rmdir docs/standards 2>/dev/null && note "docs/standards/ removed (empty)"
 if [ -f docs/testing-guide.md ]; then
   if [ "$check" -eq 1 ]; then drifted "stale: docs/testing-guide.md (the guide now lives in .standards/)"
@@ -165,13 +175,19 @@ project_copy() {
 [ "$scope" = machine ] && [ -n "$relaxed$judgement" ] && echo "init: note: the config's rules lists do not apply at machine scope: the block and the Claude rules in $claude_home are shared by every project, so they keep the plugin's text. .standards/rules keeps this project's copy."
 
 # 2. Full rule text.
-for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
-  copy="$(project_copy section "$src")" || die "could not render $src"
-  install_file "$copy" ".standards/rules/$(basename "$src")"
-done
+install_rule_text() {
+  # install_rule_text <plugin rule file>: installs this project's copy under .standards/rules/.
+  rule_text_copy="$(project_copy section "$1")" || die "could not render $1"
+  install_file "$rule_text_copy" ".standards/rules/$(basename "$1")"
+}
+for common_rule_file in "$plugin"/rules/common/*.md; do install_rule_text "$common_rule_file"; done
 
 # 3. The marked block in AGENTS.md, and in CLAUDE.md when that is a different file.
 block_source="$(scope_copy block "$plugin/rules/block.md")" || die "could not render the block"
+language_block="$(tmpfile language-block)"
+if ! python3 -I "$plugin/skills/init/scripts/appendices.py" "$plugin/rules/appendices.json" .standards/config.json "$scope" "$block_source" > "$language_block" \
+  || [ ! -s "$language_block" ]; then die "could not name the installed language appendices in the block (see above)"; fi
+block_source="$language_block"
 install_block() {
   target="$1"
   tmp="$(tmpfile block)"
@@ -190,19 +206,40 @@ install_block() {
 }
 install_scope_blocks
 
-# 4. Claude path-scoped rules, one per section, scoped to the configured source extensions.
+# 4. Claude path-scoped rules, one per section. A language appendix gets its rule text and its Claude
+# rule here, loaded for its own globs, and loses both when no configured language uses it.
 globs="$(json_list "$(config_text)" "languages" | while read -r lang; do json_list "$lang" "extensions"; done | sed 's|^|  - "**/*|; s|$|"|')"
 [ -n "$globs" ] && [ "$scope" = project ] || globs='  - "**/*"'
 mkdir -p "$rules_folder"
-for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
-  name="$(basename "$src" .md | sed 's/^[0-9]*-//')"
-  destination_file="$rules_folder/standards-$name.md"
-  tmp="$(tmpfile rule)"
-  copy="$(scope_copy section "$src")" || die "could not render $src"
-  { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$copy"; } > "$tmp"
-  [ -s "$tmp" ] || die "could not build $destination_file"
-  install_file "$tmp" "$destination_file"
-done
+install_claude_rule() {
+  # install_claude_rule <plugin rule file> <paths lines>: installs its Claude rule, loaded for those paths.
+  claude_rule_name="$(basename "$1" .md | sed 's/^[0-9]*-//')"
+  claude_rule_file="$rules_folder/standards-$claude_rule_name.md"
+  claude_rule_draft="$(tmpfile rule)"
+  claude_rule_copy="$(scope_copy section "$1")" || die "could not render $1"
+  { echo "---"; echo "paths:"; printf '%s\n' "$2"; echo "---"; cat "$claude_rule_copy"; } > "$claude_rule_draft"
+  [ -s "$claude_rule_draft" ] || die "could not build $claude_rule_file"
+  install_file "$claude_rule_draft" "$claude_rule_file"
+}
+for common_rule_file in "$plugin"/rules/common/*.md; do install_claude_rule "$common_rule_file" "$globs"; done
+
+remove_left_out_copy() {
+  # remove_left_out_copy <copy>: removes an appendix copy no configured language uses when init wrote it, else reports it.
+  [ -f "$1" ] || return 0
+  if [ "$check" -eq 1 ]; then drifted "stale: $1 (no configured language uses it)"
+  elif [ "$(stamp_get "$stamp" "$1")" = "$(hash_file "$1")" ]; then rm -f "$1" && note "$1 removed (no configured language uses it)"
+  else echo "init: $1 is stale (no configured language uses it) but was edited by hand; delete it yourself"
+    [ -z "$(stamp_get "$stamp" "$1")" ] || kept="$kept$1$newline"; fi
+}
+while IFS="$tab" read -r appendix_file appendix_globs; do
+  if [ -z "$appendix_file" ]; then continue
+  elif [ -n "$appendix_globs" ]; then
+    install_rule_text "$plugin/rules/$appendix_file"
+    install_claude_rule "$plugin/rules/$appendix_file" "$(printf '%s\n' "$appendix_globs" | tr ' ' '\n' | sed 's|^|  - "|; s|$|"|')"
+  else remove_left_out_copy ".standards/rules/$appendix_file"; remove_left_out_copy "$rules_folder/standards-$appendix_file"; fi
+done <<EOF
+$appendix_plan
+EOF
 
 # 5. Codex agents (Codex cannot load agents from a plugin).
 mkdir -p "$codex_agents_folder"

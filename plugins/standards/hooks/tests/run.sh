@@ -533,7 +533,7 @@ check "init: --check names a demoted rule a plugin hook enforces as a gap, with 
 check "init: a relaxed rule a plugin hook enforces stays in the block's hard rules" sh -c "$hard_rules | grep -q '^- C-01 ' && $hard_rules | grep -q '^- W-01 '"
 check "init: a relaxed rule a plugin hook enforces is listed as neither waived nor demoted" sh -c "! sed -n '/^## Waived by this project/,/^## Code Review Rules/p' AGENTS.md | grep -qE '^- (C-01|W-01) '"
 check "init: a new config carries empty relaxed and judgement lists" python3 -c "import json, sys; sys.exit(json.load(open('$work/fresh/.standards/config.json')).get('rules') != {'relaxed': [], 'judgement': []})"
-check "init: without a rules key the block is the plugin's block, byte for byte" sh -c "sed -n '/^<!-- standards:begin/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '1d;\$d' | cmp -s - '$plugin_copy/rules/block.md'"
+check "ConfigWithoutARulesKey_InstallsThePluginsRuleLists because only a rules key may change which rules a project carries" sh -c "sed -n '/^## Hard rules/,\$p' '$plugin_copy/rules/block.md' > '$work/plugin-block-rules' && sed -n '/^## Hard rules/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '\$d' | cmp -s - '$work/plugin-block-rules'"
 
 echo "init: upgrade from the docs/ layout (v0.1.0), project with its own .githooks"
 mkdir -p "$work/old" && cd "$work/old" && git init -q -b main && git config user.email t@t && git config user.name t

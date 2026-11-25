@@ -2,6 +2,7 @@
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
 # lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh,
 # scripts/gate.sh, hooks/worktree-create.sh and skills/init/scripts/init.sh.
+. "$FLOW_PLUGIN/lib/worktree_setup.sh"
 
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
@@ -218,7 +219,7 @@ claim_base_option() {
 # worktree; 4: another claim holds the task branch).
 claim_at_base() {
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")"
-  if [ -n "$claimed_worktree" ]; then printf '%s\n' "$claimed_worktree"; return 0; fi
+  if [ -n "$claimed_worktree" ]; then wait_for_running_setup "$claimed_worktree"; printf '%s\n' "$claimed_worktree"; return 0; fi
   resolved_base="$(fetch_item_base "$2")"; resolved_code=$?
   claim_base="$(printf '%s\n' "$resolved_base" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved_base" | cut -f2-)"
   if [ "$resolved_code" -ne 0 ]; then
