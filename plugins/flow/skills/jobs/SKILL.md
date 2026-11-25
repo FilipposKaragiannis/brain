@@ -218,7 +218,7 @@ Facts to answer with:
   `base` (the config's, default `main`) in the main worktree, takes `origin/<base>` (as the last
   fetch left it when the fetch fails, which the log says, else the local `<base>`), and checks
   that commit out detached in a shared clone under `<flow home>/check-runs/<name>`. No project
-  setup runs there (`worktree_setup`, `worktree_copy`, submodules, LFS): a check that needs its
+  setup runs there (`worktree_setup` and its `worktree_setup_paths`, `worktree_copy`, submodules, LFS): a check that needs its
   dependencies installs them in its command. The command runs in `sh` with no input; its output
   goes to `.flow/log/check-<name>.out`, replaced each run, and to the check's log. The clone goes
   when the run ends, by a pass, a fail or a stop.
