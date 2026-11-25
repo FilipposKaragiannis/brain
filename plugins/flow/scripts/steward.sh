@@ -263,9 +263,8 @@ cmd_claim() {
   record_claim_unlock_and_set_up "$free" "$item" "$branch" "$base" "claimed $(basename "$free")"
 }
 
-# record_claim_unlock_and_set_up <worktree> <item> <branch> <base> <event>: for a claim taken under
-# claim_lock, <worktree> already on <branch>. The lock is lifted before the setup, which can take
-# minutes; <event> is the item's last_event. Prints <worktree>.
+# record_claim_unlock_and_set_up <worktree> <item> <branch> <base> <event>: its caller holds
+# claim_lock and has put <worktree> on <branch>.
 record_claim_unlock_and_set_up() {
   record_claim_worktree="$1"; record_claim_item="$2"; record_claim_branch="$3"; record_claim_base="$4"; record_claim_event="$5"
   record_claim_name="$(basename "$record_claim_worktree")"
