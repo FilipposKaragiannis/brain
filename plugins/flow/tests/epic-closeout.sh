@@ -379,7 +379,7 @@ git fetch -q origin "$(epic_of "$ahead"):$(epic_of "$ahead")"
 git update-ref "refs/heads/$(epic_of "$ahead")" "$(git commit-tree -p "$(epic_of "$ahead")" -m unpushed "$(epic_of "$ahead")^{tree}")"
 "$local_adapter/write-state.sh" "$ahead" step=closeout profile=epic
 # shellcheck disable=SC2034 # read in a check's condition, which check runs whole
-start_step "$ahead"; ahead_code=$?
+{ start_step "$ahead"; ahead_code=$?; }
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_IsRefused: its unpushed commits are not in the pull request, so the remote tip would not be what passed" \
   '[ "$ahead_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithALocalEpicBranchAheadOfTheRemote_ClaimsNoWorktree: a refused closeout holds nothing" \
@@ -389,7 +389,7 @@ git fetch -q origin "$(epic_of "$held"):$(epic_of "$held")"
 git worktree add -q "$root/elsewhere" "$(epic_of "$held")"
 "$local_adapter/write-state.sh" "$held" step=closeout profile=epic
 # shellcheck disable=SC2034 # read in a check's condition, which check runs whole
-start_step "$held"; held_code=$?
+{ start_step "$held"; held_code=$?; }
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_IsRefused: git checks a branch out in one worktree at a time" \
   '[ "$held_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWithTheEpicBranchCheckedOutElsewhere_ClaimsNoWorktree: a refused closeout holds nothing" \
@@ -398,7 +398,7 @@ unasked="$(epic_with_work "Unasked")"
 "$local_adapter/write-state.sh" "$unasked" step=closeout profile=epic
 git remote set-url origin "$work/no-such-remote.git"
 # shellcheck disable=SC2034 # read in a check's condition, which check runs whole
-start_step "$unasked"; unasked_code=$?
+{ start_step "$unasked"; unasked_code=$?; }
 check "EpicCloseoutWhoseRemoteCannotBeAsked_IsRefused: not seeing the epic branch is no proof it has none" \
   '[ "$unasked_code" = "$CLAIM_REFUSED" ]'
 check "EpicCloseoutWhoseRemoteCannotBeAsked_StartsNoRun: a closeout in the main checkout would grade the base instead of the epic" \
