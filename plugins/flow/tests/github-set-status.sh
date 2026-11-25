@@ -1,5 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2154 # the fixture sourced below sets plugin, here, work and fails
+# shellcheck disable=SC2034 # check evaluates each condition, so it reads these names
 # github-set-status.sh: the GitHub adapter's set-status through a fake gh: the card on
 # github.project under renamed Statuses, a card added or left where it is, a Status the project
 # lacks, nothing moved with neither a project nor github.claim_label, and that label put on and
