@@ -1923,8 +1923,9 @@ cmd_resume() {
   [ -z "$health_gate" ] || exit 4
 }
 
-# The header's last usage line, and the exit code of a call steward.sh refuses: a command it does
-# not know, or one missing its arguments.
+# The header's usage lines, past the shebang, and the exit code of a call steward.sh refuses: a
+# command it does not know, or one missing its arguments.
+usage_first_line=2
 usage_last_line=56
 usage_refused=2
 cmd="${1:-}"; [ $# -gt 0 ] && shift
@@ -1949,5 +1950,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n "2,${usage_last_line}p" "$0"; exit "$usage_refused" ;;
+  *) sed -n "${usage_first_line},${usage_last_line}p" "$0"; exit "$usage_refused" ;;
 esac
