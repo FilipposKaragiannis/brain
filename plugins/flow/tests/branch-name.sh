@@ -112,9 +112,11 @@ unparsed="$(new_task "Drill timer")"
 "$plugin/scripts/steward.sh" release "$unparsed" >/dev/null 2>&1
 printf 'not a record\n' > "$(branch_lib record_file "$unparsed")"
 unparsed_status=0
-printf '{"name":"%s","cwd":"%s"}' "$(slug "$unparsed")" "$PWD" | "$plugin/hooks/worktree-create.sh" >/dev/null 2>&1 || unparsed_status=$?
+printf '{"name":"%s","cwd":"%s"}' "$(slug "$unparsed")" "$PWD" | "$plugin/hooks/worktree-create.sh" > "$work/unparsed.out" 2>/dev/null || unparsed_status=$?
 check "WorktreeSessionOnAnItemWhoseRecordDoesNotParse_FailsTheHook: a session never opens on a branch named from the adapter's read alone when the record holds the item's branch" \
   '[ "$unparsed_status" -ne 0 ]'
+check "WorktreeSessionOnAnItemWhoseRecordDoesNotParse_PrintsNoWorktreePath: the hook stops before it claims, so no session opens on a branch the record never named" \
+  '[ ! -s "$work/unparsed.out" ]'
 
 legacy="$(new_task "Drill timer")"
 git branch "flow/$(slug "$legacy")" main
