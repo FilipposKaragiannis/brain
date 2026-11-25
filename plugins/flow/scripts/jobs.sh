@@ -47,9 +47,9 @@ scheduler="${FLOW_SCHEDULER:-$([ "$(uname)" = Darwin ] && echo launchd || echo c
 host="$(cfg_or jobs.host claude)"
 domain="gui/$(id -u)"
 py() { python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" "$@"; }
-# schedule_key <name>: the config key that sets the schedule: jobs.checks.<check> for a check.
-schedule_key() { case "$1" in check-*) printf 'jobs.checks.%s' "${1#check-}" ;; *) printf 'jobs.schedule.%s' "$1" ;; esac; }
-spec() { case "$1" in check-*) cfg "$(schedule_key "$1").schedule" ;; *) cfg "$(schedule_key "$1")" ;; esac; }
+# schedule_key <name>: the config key that sets the schedule: jobs.checks.<check>.schedule for a check.
+schedule_key() { case "$1" in check-*) printf 'jobs.checks.%s.schedule' "${1#check-}" ;; *) printf 'jobs.schedule.%s' "$1" ;; esac; }
+spec() { cfg "$(schedule_key "$1")"; }
 # job_of <name>: the job a schedule runs (next for next-codex).
 job_of() { printf '%s' "${1%%-*}"; }
 # known <name>: a schedule name, or a refusal saying why not, exit 2.
