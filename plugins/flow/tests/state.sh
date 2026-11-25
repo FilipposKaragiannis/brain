@@ -73,11 +73,11 @@ record set "$pushed_item" step=plan >/dev/null 2>&1
 check "PushedAbsent_ReadsNull: a record no push reached holds pushed as null, because absent objects are null" \
   '[ "$(record show "$pushed_item" | json_value pushed)" = null ]'
 record set "$pushed_item" 'pushed:={"status":"needs-you","at":"2026-11-15T12:00:00Z"}' >/dev/null 2>&1
-check "PushedObject_ReadsBackItsStatus: pushed:= keeps the status the tracker took" \
+check "PushedObject_ReadsBackItsStatus: pushed:= keeps the status the tracker took, because the record is where the flow reads what the tracker shows" \
   '[ "$(record get "$pushed_item" pushed.status)" = needs-you ]'
 take alpha "$pushed_item" >/dev/null 2>&1
 record set "$pushed_item" claim.assigned_at=2026-11-15T12:30:00Z >/dev/null 2>&1
-check "ClaimAssignedAt_ReadsBackAsGiven: claim.assigned_at= keeps when the flow assigned the item" \
+check "ClaimAssignedAt_ReadsBackAsGiven: claim.assigned_at= keeps when the flow assigned the item, because the claim holds the assignment the flow made" \
   '[ "$(record get "$pushed_item" claim.assigned_at)" = 2026-11-15T12:30:00Z ]'
 unclaimed="$(new_task "Assigned with no claim")"
 record set "$unclaimed" "last_event=filed by hand" >/dev/null 2>&1

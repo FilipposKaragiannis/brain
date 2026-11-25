@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154 # the fixture sourced below sets plugin, here, work and fails
 # github-set-status.sh: the GitHub adapter's set-status through a fake gh: the card on
 # github.project under renamed Statuses, a card added or left where it is, a Status the project
-# lacks, nothing called with neither a project nor github.claim_label, and that label put on and
+# lacks, nothing moved with neither a project nor github.claim_label, and that label put on and
 # taken off without a project.
 # Takes no argument. Exit 0 when every check passes, 1 on any failure.
 . "$(dirname "$0")/_base_fixture.sh"
@@ -20,7 +20,8 @@ cat > "$FAKE_GH_DIR/issues.json" <<'JSON'
   {"number": 1, "title": "Walks every status", "state": "OPEN", "labels": [], "url": "https://gh/1"},
   {"number": 2, "title": "Doing already", "state": "OPEN", "labels": [], "url": "https://gh/2", "project_item": "PI_2", "project_status": "Doing"},
   {"number": 3, "title": "Not on the board", "state": "OPEN", "labels": [], "url": "https://gh/3"},
-  {"number": 4, "title": "Claimed by label", "state": "OPEN", "labels": [], "url": "https://gh/4"}
+  {"number": 4, "title": "Claimed by label", "state": "OPEN", "labels": [], "url": "https://gh/4"},
+  {"number": 5, "title": "Left alone without a board", "state": "OPEN", "labels": ["area-bots"], "url": "https://gh/5", "project_item": "PI_5", "project_status": "Doing"}
 ]}
 JSON
 # github_config <lines that end the github section>: the project's config on the GitHub adapter.
@@ -36,6 +37,10 @@ renamed_statuses='  status:
 claim_label=flow-claimed
 # github_field <id> <path>: a field of the adapter item the GitHub adapter reads.
 github_field() { "$github_adapter/read.sh" "$1" 2>/dev/null | json_value "$2"; }
+# stored_issue_field <number> <key>: the key of the issue as the fake gh stores it.
+stored_issue_field() { python3 -c 'import json,sys
+stored = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2]))
+print(json.dumps(stored[sys.argv[3]]))' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
 labels_hold() { github_field "$1" labels | python3 -c 'import json,sys; sys.exit(sys.argv[1] not in json.load(sys.stdin))' "$2"; }
 card_writes() { grep -c updateProjectV2ItemFieldValue "$FAKE_GH_DIR/calls.log"; }
 code_of() { "$@" >/dev/null 2>&1; echo $?; }
@@ -69,9 +74,12 @@ check "SetStatusMissingFromProject_LeavesTheCard: the card stays at its Status w
 
 echo "github set-status without a project"
 github_config ""
-: > "$FAKE_GH_DIR/calls.log"
-check "SetStatusWithNoBoard_ExitsZero: set-status with neither github.project nor github.claim_label exits 0, because a tracker with no place for a status is no failure" '[ "$(code_of "$github_adapter/set-status.sh" "gh#4" in-progress)" = 0 ]'
-check "SetStatusWithNoBoard_CallsNothing: set-status with neither github.project nor github.claim_label makes no gh call, because there is nothing on GitHub to move" '[ ! -s "$FAKE_GH_DIR/calls.log" ]'
+card_before="$(stored_issue_field 5 project_status)"; labels_before="$(stored_issue_field 5 labels)"
+"$github_adapter/set-status.sh" 'gh#5' in-progress > "$work/no-board.out" 2>/dev/null; no_board_code=$?
+check "SetStatusWithNoBoard_ExitsZero: set-status with neither github.project nor github.claim_label exits 0, because a tracker with no place for a status is no failure" '[ "$no_board_code" = 0 ]'
+check "SetStatusWithNoBoard_PrintsNothing: set-status with neither github.project nor github.claim_label prints nothing, because nothing moved" '[ ! -s "$work/no-board.out" ]'
+check "SetStatusWithNoBoard_LeavesTheCard: the issue's card keeps its Status, because with no github.project the flow has no board to move it on" '[ "$card_before" != null ] && [ "$(stored_issue_field 5 project_status)" = "$card_before" ]'
+check "SetStatusWithNoBoard_LeavesTheLabels: the issue keeps its labels, because with no github.claim_label no label stands for the status" '[ "$labels_before" != "[]" ] && [ "$(stored_issue_field 5 labels)" = "$labels_before" ]'
 github_config "  claim_label: $claim_label"
 "$github_adapter/set-status.sh" 'gh#4' in-progress > "$work/claimed.out" 2>/dev/null
 check "ClaimLabelInProgress_PutsTheLabelOn: set-status in-progress puts github.claim_label on the issue, because the label is the status without a project" 'labels_hold "gh#4" "$claim_label"'
