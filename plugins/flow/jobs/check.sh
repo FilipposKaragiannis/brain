@@ -96,7 +96,7 @@ bug_body() {
 # file_bug <exit code>: files the bug for the failed run in the main worktree's tracker and prints
 # its id; when new.sh cannot, prints its last line and returns 1.
 file_bug() {
-  bug_errors="$(mktemp)"
+  bug_errors="$(mktemp "$(job_log_dir)/$job.bug-errors.XXXXXX")"
   bug_id="$(bug_body "$1" "$(now_iso)" | (cd "$main" && "$FLOW_PLUGIN/scripts/new.sh" bug "Scheduled check $check_name fails" --body-file -) 2>"$bug_errors")"
   bug_exit=$?
   bug_said="$(tail -n 1 "$bug_errors")"; rm -f "$bug_errors"
