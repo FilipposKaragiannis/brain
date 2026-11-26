@@ -1,6 +1,7 @@
 #!/bin/sh
 # Config migrations. POSIX sh. Copied into each plugin by tools/generate.sh; edit
-# shared/sh/config_migration.sh. Sourced by init only, never by the libraries every script loads.
+# shared/sh/config_migration.sh. Sourced by init and the session-start hook only, never by the
+# libraries every script loads.
 # config_migrate <plugin name> <helper> <step list> <config file> runs the plugin's helper
 # (`<helper> plan|apply <step list> <config file> <new label> [<out file>]`, exit 0 nothing to
 # change, 1 changes, 2 cannot) and uses init's check, scratch, version, note and drifted. Under
@@ -10,7 +11,11 @@
 # migrations/report.txt and to migrations/report.unseen, which the session-start hook prints once.
 # The folder holds a .gitignore of *, so none of it is tracked. A config the helper cannot migrate
 # is named in a note and left as it is. A missing config has nothing to migrate.
-# shellcheck disable=SC2154 # init, which sources it, sets check, scratch and version
+# config_migration_report_once <plugin name> <config dir> prints <config dir>/migrations/
+# report.unseen under a framing line and removes it, so each report shows in one session only. It
+# claims the file with mv first, so of two sessions starting at once one prints it. It needs
+# nothing from init.
+# shellcheck disable=SC2154 # init, which sources it for config_migrate, sets check, scratch and version
 config_migration_date_format='+%Y-%m-%d'
 config_migration_first_extra_backup=2
 config_migration_label_lines=1
@@ -93,4 +98,15 @@ config_migration_record() {
   config_migration_append_report "$config_migration_record_folder" "$config_migration_record_section" ||
     echo "init: note: cannot write the migration report in $config_migration_record_folder"
   note "$config_migration_record_config: migrated ($(($(wc -l < "$config_migration_record_lines") - config_migration_label_lines)) changes); before: $config_migration_record_backup; the changes: $config_migration_record_folder/report.txt"
+}
+
+config_migration_report_once() {
+  config_migration_report_once_folder="$2/migrations"
+  config_migration_report_once_unseen="$config_migration_report_once_folder/report.unseen"
+  [ -f "$config_migration_report_once_unseen" ] || return 0
+  config_migration_report_once_claimed="$config_migration_report_once_unseen.$$"
+  mv "$config_migration_report_once_unseen" "$config_migration_report_once_claimed" 2>/dev/null || return 0
+  echo "$1: note for the owner, not a task: $1:init migrated its config. Each line: old key, new key, value, reason. The record: $config_migration_report_once_folder/report.txt"
+  sed '/^$/d; s/^/  /' "$config_migration_report_once_claimed"
+  rm -f "$config_migration_report_once_claimed"
 }

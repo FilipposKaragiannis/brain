@@ -3,8 +3,9 @@
 # on a copy of the plugin in throwaway repos: the retro.commit removal as cfg reads it, the backup
 # named after the label found, the report's change lines, --check as drift that changes nothing, a
 # second run, the owner's comments and line endings, a refused file, a taken backup name, git
-# status, the migration before the first copy, fixture step lists for add and step order, and the
-# label a fresh install writes. Takes no argument. Exit 0 when every check passes, 1 on any failure.
+# status, the migration before the first copy, fixture step lists for add and step order, the
+# label a fresh install writes, and the session-start hook printing the report once, from the main
+# worktree and a linked one. Takes no argument. Exit 0 when every check passes, 1 on any failure.
 # shellcheck disable=SC2154 # _base_fixture.sh and _init_fixture.sh set plugin, work, here, plugin_copy, init and fails
 # shellcheck disable=SC2034 # the check conditions read these names, through eval in _base_fixture.sh's check
 . "$(dirname "$0")/_base_fixture.sh"
@@ -26,6 +27,7 @@ new_project() {
   mkdir -p .flow && printf '%b' "$2" > .flow/config.yaml
 }
 run_init() { FLOW_PLUGIN="$plugin_copy" "$init" "$@"; }
+run_start() { echo '{}' | FLOW_PLUGIN="$plugin_copy" "$start"; }
 project_cfg() { (. "$plugin_copy/lib/flow.sh"; cfg "$1"); }
 project_keys() { (. "$plugin_copy/lib/flow.sh"; yaml_keys .flow/config.yaml "$1"); }
 # change_line <old key>: the report line whose first field is the old key.
@@ -119,6 +121,23 @@ rm .flow/config.yaml
 run_init >/dev/null 2>&1
 check "Init_FreshInstall_ConfigCarriesTheLabel" '[ "$(project_cfg config_version)" = "$copy_version" ]'
 check "Init_FreshInstall_WritesNoBackup" '[ ! -e .flow/migrations ]'
+run_start > "$work/fresh-install.start" 2>&1
+check "SessionStart_NoReport_PrintsNothing" '[ ! -s "$work/fresh-install.start" ]'
+
+echo "session start prints the report once"
+new_project printed "${config_body}retro:\n  commit: false\n"
+run_init >/dev/null 2>&1
+cp .flow/migrations/report.txt "$work/printed.report"
+run_start > "$work/printed.first" 2>&1
+run_start > "$work/printed.second" 2>&1
+check "SessionStart_AfterAMigratingInit_PrintsTheReportLines" '[ -n "$(change_line retro.commit)" ] && grep -qF -- "$(change_line retro.commit)" "$work/printed.first"'
+check "SessionStart_SecondStart_PrintsNothing" '[ ! -s "$work/printed.second" ]'
+check "SessionStart_ReportPrinted_ReportTxtStays" 'cmp -s "$work/printed.report" .flow/migrations/report.txt'
+new_project pooled "${config_body}retro:\n  commit: false\n"
+run_init >/dev/null 2>&1
+git worktree add -q -b pool "$work/pooled-worktree" || exit 1
+(cd "$work/pooled-worktree" || exit 1; run_start) > "$work/pooled.start" 2>&1
+check "SessionStart_FromAPoolWorktree_PrintsTheMainWorktreesReport" '[ -n "$(change_line retro.commit)" ] && grep -qF -- "$(change_line retro.commit)" "$work/pooled.start"'
 
 [ "$fails" -eq 0 ] && { echo "config-migration: ok"; exit 0; }
 echo "config-migration: $fails failed"; exit 1

@@ -2,9 +2,11 @@
 # SessionStart hook: a few milliseconds to lift the pool worktrees' pinned plugin versions to the
 # newest installed (scripts/_plugins.py), then to say whether the project's installed flow files
 # are behind this plugin. Compares the install set's hash with the first line of .flow/stamp
-# (written by init). Silent when the project does not use the flow, when the stamp matches, and
-# when the copies still match it. Never looks at hand edits (that is `init --check`). Prints on
-# stdout, which the host adds to the session's context.
+# (written by init). Before that it prints a config migration report init left unseen, once
+# (lib/config_migration.sh): the init that wrote it refreshed the stamp, so the comparison exits.
+# Otherwise silent when the project does not use the flow, when the stamp matches, and when the
+# copies still match it. Never looks at hand edits (that is `init --check`). Prints on stdout,
+# which the host adds to the session's context.
 FLOW_PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"; export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/flow.sh"
 cat >/dev/null 2>&1 || true
@@ -24,6 +26,8 @@ main="$(dirname "$home")"
 if [ -d "$main/.claude" ] && ! claude_hooks_present "$main"; then
   echo "flow: note for the owner, not a task: .claude/settings.local.json has no flow worktree hooks, so claude --worktree lands outside the pool. /flow:init writes them."
 fi
+. "$FLOW_PLUGIN/lib/config_migration.sh"
+config_migration_report_once flow "$home"
 [ "$(stamp_source "$stamp")" = "$(flow_source_hash "$FLOW_PLUGIN")" ] && exit 0
 version="$(json_get "$(cat "$FLOW_PLUGIN/.claude-plugin/plugin.json")" "version")"
 report="$("$init" --root "$root" --check 2>&1)"
