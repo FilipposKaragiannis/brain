@@ -559,6 +559,19 @@ profile_select() {
   esac
 }
 
+# profile_refusal <profile> <step>: why next.sh --profile may not run an item at the step (empty for
+# an item no step started) under the profile, or nothing when it may.
+profile_refusal() {
+  cached_python3 -I -c '
+import json, sys
+profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
+name, step = sys.argv[2], sys.argv[3]
+if name not in profiles:
+    print("%s is no profile in profiles.json; the profiles are %s" % (name, ", ".join(sorted(profiles))))
+elif step and step not in profiles[name]:
+    print("the item is at step %s, which profile %s does not have" % (step, name))' "$FLOW_PLUGIN/profiles.json" "$1" "$2"
+}
+
 gate_known() { cached_python3 -I -c 'import json, sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["gates"] else 1)' "$FLOW_PLUGIN/profiles.json" "$1"; }
 profile_steps() { json_list "$(cat "$FLOW_PLUGIN/profiles.json")" "profiles.$1"; }
 

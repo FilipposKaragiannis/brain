@@ -4,7 +4,7 @@ description: Run the next step of a tracked item, or of the first ready item whe
 disable-model-invocation: true
 ---
 
-You are the orchestrator for this run. State lives in the tracker; the scripts move it. You
+You are the orchestrator for this run. State lives in the flow record; the scripts move it. You
 spawn one fresh subagent per step with the written brief and never do a step's work yourself.
 
 Plugin root: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex the
@@ -14,8 +14,11 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
 
 1. **Prepare the step.**
    ```
-   "$P/scripts/next.sh" --json [item | --pick <name>]
+   "$P/scripts/next.sh" --json [item [--profile <name>] | --pick <name>]
    ```
+   `--profile <name>` passes through when the user names a profile for the item: it pins that
+   profile at this start. Exit 2 refuses a name that is no profile in `$P/profiles.json`, or a
+   started item whose step that profile does not have; say so and stop.
    `--pick <name>` takes the first ready item the filter `pick.<name>` in `.flow/config.yaml`
    keeps (assignee, status, labels, kinds, trackers, or one tracker's query; the mapping is in
    `adapters/README.md`, Pick filters), when the user asks for their own items or a named filter.

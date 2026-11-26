@@ -1,7 +1,8 @@
 #!/bin/sh
 # Shared pieces of the GitHub adapter. Items are issues; ids are gh#<number>. State is mirrored
 # as labels (step:*, gate:*, wt:*, flow:*, and size:* unless github.fields.size names a field) and
-# kept in full in one issue comment marked <!-- flow:state -->.
+# kept in full in one issue comment marked <!-- flow:state -->. The profile is read from that
+# comment alone: the flow:* label is written for an older flow only.
 . "$(dirname "$0")/../../lib/flow.sh"
 # lib/flow.sh wraps gh in a function, so the check looks past it to the command.
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
@@ -71,7 +72,7 @@ state.setdefault("attempts", 0); state.setdefault("last_event", ""); state.setde
 state["step"] = labelled("step:", state.get("step", ""))
 state["gate"] = labelled("gate:", state.get("gate", "none")) or "none"
 state["worktree"] = labelled("wt:", state.get("worktree", ""))
-state["profile"] = labelled("flow:", state.get("profile", ""))
+state.setdefault("profile", "")
 size_field, priority_field = os.environ.get("GH_SIZE_FIELD", ""), os.environ.get("GH_PRIORITY_FIELD", "")
 size = (fields.get(size_field) or "") if size_field else ""
 size = size or labelled("size:", state.get("size", ""))

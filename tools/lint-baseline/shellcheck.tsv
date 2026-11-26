@@ -107,6 +107,8 @@ plugins/flow/tests/pick.sh	SC2034	12
 plugins/flow/tests/pick.sh	SC2154	2
 plugins/flow/tests/pick.sh	SC2164	3
 plugins/flow/tests/pr-without-pull-request.sh	SC2154	5
+plugins/flow/tests/profile-pin.sh	SC2034	12
+plugins/flow/tests/profile-pin.sh	SC2154	5
 plugins/flow/tests/prune-sweep.sh	SC2034	1
 plugins/flow/tests/prune-sweep.sh	SC2154	2
 plugins/flow/tests/prune-sweep.sh	SC2164	1

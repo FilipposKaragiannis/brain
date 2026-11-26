@@ -20,6 +20,7 @@ the readiness rules from ready_rules (READY_NEEDS, READY_PRIORITY_ORDER), the to
 JIRA_API_TOKEN. Items are issues of one project; ids are jira:<KEY>-<n>. The flow
 state is mirrored as labels the way the GitHub adapter does it (step:*, gate:*, wt:*, flow:*, and
 size:* unless jira.fields.size names a field) and kept whole in the issue property flow-state.
+The profile is read from the property alone: the flow:* label is written for an older flow only.
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
 answers prints one JSON line {"id", "text"} per given item the owner answered with an /answer
@@ -106,7 +107,7 @@ def flow_state(issue, labels, fields):
              "last_event": "", "pr": "", "touches": [], "changes": [], "held_by": "", "held_reason": ""}
     state.update((issue.get("properties") or {}).get(STATE_PROPERTY) or {})
     for key, prefix in LABEL_PREFIXES.items():
-        if key == "size" and "size" in fields:
+        if key == "profile" or (key == "size" and "size" in fields):
             continue
         state[key] = next((l[len(prefix):] for l in labels if l.startswith(prefix)), state.get(key, ""))
     state["gate"] = state["gate"] or "none"

@@ -8,6 +8,9 @@
 # A plan step also records its changes and, done with a hold, holds the item behind another
 # (hold.sh set; skills/plan/holds.md); done without one, it lifts a hold an earlier plan set.
 # A plan step that ends in tracker-tasks mode with children open splits the item (steward.sh split).
+# A re-size that raises no gate writes the record's size_estimate (the tracker's size only under
+# tracker_state labels, which mirrors every write) and posts one plain comment with the old and the
+# new size, and the profile when the new size selects another.
 # A pr step links the PR its result names on the tracker (adapter link-pr) and records it, with the
 # host the run started on, unless the record already holds it (lib/pull_request.sh).
 # A pr step done with no PR recorded looks for one on the task branch, as the sweep does: one found
@@ -333,7 +336,7 @@ rm -f "$asked_file"
 feel_test=0
 [ "$step" = "$(json_get "$profiles" feel_test_step)" ] && [ "$(json_get "$result" feel_test)" = "true" ] && feel_test=1
 # re-size at the step boundary, then move on. An epic has no size: every size selects the one
-# epic profile and next.sh clears the size it starts with, so a size its step names re-sizes nothing.
+# epic profile, so a size its step names re-sizes nothing.
 next_profile="$profile"
 if [ "$kind" != epic ] && [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   old_i="$(size_index "$size")"; new_i="$(size_index "$new_size")"
@@ -346,9 +349,10 @@ ${summary:-No summary.}" -- "size=$new_size" "step=$step" "profile=$(profile_sel
     size="$new_size"; report 4 "" plan-approval
   fi
   resized="size=$new_size"
-  size="$new_size"
   next_profile="$(profile_select "$kind" "$new_size")"
-  [ "$next_profile" = "$profile" ] || adapter comment "$item" --body "Re-sized $size: profile $profile -> $next_profile, continuing with the added depth." >/dev/null
+  profile_change=""; [ "$next_profile" = "$profile" ] || profile_change=" Profile $profile -> $next_profile."
+  adapter comment "$item" --body "Re-sized $size -> $new_size at step $step.$profile_change" >/dev/null
+  size="$new_size"
 fi
 following="$(profile_steps "$next_profile" | awk -v s="$step" 'f {print; exit} $0 == s {f = 1}')"
 if [ -z "$following" ] && [ "$next_profile" != "$profile" ]; then

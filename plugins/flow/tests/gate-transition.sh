@@ -283,8 +283,8 @@ result_of "$shrunk" design '{"status":"done","summary":"Design: one file.","size
 advance_refusing step=implement "$shrunk"
 check "RefusedStepWriteAfterAResize_KeepsTheRun: advance.sh run again applies the re-size" \
   '[ -n "$(state "$shrunk" run)" ]'
-check "RefusedStepWriteAfterAResize_KeepsTheOldSize: no reader sees the new size with the old profile" \
-  '[ "$(state "$shrunk" size)" = M ]'
+check "RefusedStepWriteAfterAResize_RecordsNoSize: no reader sees the new size with the old profile, and a start records none" \
+  '[ -z "$(state "$shrunk" size)" ]'
 advance "$shrunk"
 check "RetryAfterARefusedStepWriteOnAResize_MovesToTheFirstStepOfTheSmallerProfile: the retry runs the profile the re-size chose" \
   '[ "$(state "$shrunk" step)" = implement ]'
