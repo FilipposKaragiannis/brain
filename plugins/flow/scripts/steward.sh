@@ -909,8 +909,7 @@ read_pull_request_state() {
   pull_request_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pull_request_view" state 2>/dev/null
 }
 
-# link_pr <item> <pr>: the PR on the tracker and in the item's flow record. The sweep runs no step,
-# so no host is known: comments.sh author_host reads it from the PR body.
+# The sweep runs no step, so no host is known: comments.sh author_host reads it from the PR body.
 link_pr() {
   link_and_record_pull_request "$1" "$2" "" || echo "flow: could not write state for $1" >&2
 }

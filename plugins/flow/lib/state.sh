@@ -190,7 +190,6 @@ gate_record() (
   state_reader row --kind gates --item "$1" </dev/null
 )
 
-# state_reader <command> [<option>...]: one _state.py read that joins or lists, in this flow home.
 # A bad tracker_state is refused here too, so a read fails as fast as a write.
 state_reader() {
   tracker_state >/dev/null || return "$EXIT_USAGE"
