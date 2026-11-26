@@ -1,9 +1,10 @@
 #!/bin/sh
 # pr-ready.sh <item>: from the claimed worktree, says whether the pr step may open the PR. It
-# refuses when <reports>/verify.json has no commit, when that commit is not the worktree's HEAD, or
-# when the worktree has changes outside .flow/, so a report made on an older commit or before an
-# uncommitted change never passes. Exit 0 and nothing printed when the PR may open; exit 1 with the
-# reason on stdout when it may not; exit 2 on a usage error. Never edits anything.
+# refuses when <reports>/verify.json has no commit, when that commit (the full sha or the short one
+# verify.sh writes) is not the worktree's HEAD, or when the worktree has changes outside .flow/, so
+# a report made on an older commit or before an uncommitted change never passes. Exit 0 and nothing
+# printed when the PR may open; exit 1 with the reason on stdout when it may not; exit 2 on a usage
+# error. Never edits anything.
 . "$(dirname "$0")/../lib/flow.sh"
 [ $# -eq 1 ] || die "usage: pr-ready.sh <item>" 2
 item="$1"
@@ -15,7 +16,11 @@ report="$reports/verify.json"
 report_head="$(json_get "$(cat "$report")" head)"
 [ -n "$report_head" ] || { echo "pr-ready: the verify report names no commit: run verify again"; exit 1; }
 worktree_head="$(git rev-parse HEAD)" || die "cannot read HEAD"
-if [ "$report_head" != "$worktree_head" ]; then
+case "$report_head" in
+  *[!0-9a-f]*) report_commit="" ;;
+  *) report_commit="$(git rev-parse --verify --quiet "$report_head^{commit}")" || report_commit="" ;;
+esac
+if [ "$report_commit" != "$worktree_head" ]; then
   echo "pr-ready: the verify report was made at $report_head, but HEAD is $worktree_head: run verify again"
   exit 1
 fi

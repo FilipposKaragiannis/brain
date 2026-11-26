@@ -26,6 +26,15 @@ mkdir -p "$worktree/.flow/reports/other" && printf 'x\n' > "$worktree/.flow/repo
 pr_ready >/dev/null; flow_only_code=$?
 check "ChangeUnderTheFlowFolderOnly_ExitsZero: flow's own files are no change verify missed" '[ "$flow_only_code" -eq 0 ]'
 
+echo "pr-ready: the commit as verify.sh writes it"
+short_head="$(git -C "$worktree" rev-parse --short=8 HEAD)"
+report_at "$short_head"
+pr_ready >/dev/null; short_code=$?
+check "ReportNamingTheShortCommitOfHead_ExitsZero: verify.sh writes the short sha, not the full one" '[ "$short_code" -eq 0 ]'
+report_at "HEAD"
+refusal="$(pr_ready)"; ref_name_code=$?
+check "ReportNamingARefInsteadOfASha_ExitsOne: only a sha proves which commit verify checked" '[ "$ref_name_code" -eq 1 ]'
+
 echo "pr-ready: a report made on another commit"
 verified_head="$(head_commit)"
 report_at "$verified_head"
@@ -34,6 +43,9 @@ refusal="$(pr_ready)"; older_code=$?
 check "ReportFromAnOlderCommit_ExitsOne: the PR would hold a commit verify never checked" '[ "$older_code" -eq 1 ]'
 check "ReportFromAnOlderCommit_NamesBothCommits: the owner sees which two differ" \
   'printf "%s" "$refusal" | grep -q -- "$verified_head" && printf "%s" "$refusal" | grep -q -- "$(head_commit)"'
+report_at "$(git -C "$worktree" rev-parse --short=8 "$verified_head")"
+pr_ready >/dev/null; older_short_code=$?
+check "ReportNamingTheShortCommitOfAnOlderCommit_ExitsOne: a short sha of an older commit is still another commit" '[ "$older_short_code" -eq 1 ]'
 report_at "$(head_commit)"
 pr_ready >/dev/null; renewed_code=$?
 check "ReportRenewedAtHead_ExitsZero: running verify again clears the refusal" '[ "$renewed_code" -eq 0 ]'
