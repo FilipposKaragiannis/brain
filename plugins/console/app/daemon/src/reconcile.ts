@@ -440,6 +440,7 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: I
       questions: gate.questions !== null && gate.questions.length > 0 ? gate.questions : parseGateQuestions(gate.message),
       pull: gatePull(gate.item, items, pulls),
       plan: gate.plan,
+      verifyReport: gate.verifyReport,
       body: input.board?.bodies[gate.item] ?? null,
       quiz: input.flow.quizzes[itemSlug(gate.item)] ?? null,
       session: input.gateSession?.(gate.item, gate.time) ?? null,

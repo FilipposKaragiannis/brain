@@ -387,6 +387,7 @@ export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: Decisio
       <DecisionHead gate={gate} snapshot={snapshot} answered={false} summary={short && summary !== '' ? summary : null} />
       <div className="decision-body">
         {gate.pull !== null && <GatePull pull={gate.pull} />}
+        {gate.verifyReport !== null && <GateDocument title="Verify report" file={gate.verifyReport.file} text={gate.verifyReport.text} open />}
         {gate.quiz !== null && <QuizPanel item={gate.item} quiz={gate.quiz} />}
         {!short && <GateDocument title="The agent's summary" file={null} text={summary} open={false} />}
         {lead === 'plan' && gate.plan !== null && <GateDocument title="Plan" file={gate.plan.file} text={gate.plan.text} open />}

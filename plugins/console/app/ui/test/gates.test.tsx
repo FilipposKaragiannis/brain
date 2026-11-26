@@ -217,6 +217,30 @@ test('OtherGateWithAPlan_PlanFolded', () => {
   expect((screen.getByText('Plan').closest('details') as HTMLDetailsElement).open, 'because a feel test is about the build, not the plan').toBe(false);
 });
 
+const VERIFY_REPORT = { file: 'verify.md', text: 'Verdict: pass at 0123abc\n\nEvery acceptance line holds.' };
+/** How many times the summary repeats its sentence, so it is far too long for the card head. */
+const LONG_SUMMARY_SENTENCES = 60;
+
+/** The gate kinds the daemon hands a verify report to, each judged on what verify proved. */
+const VERIFY_REPORT_GATE_KINDS = [{ kind: 'merge' }, { kind: 'feel-test' }, { kind: 'escalation' }];
+
+test.each(VERIFY_REPORT_GATE_KINDS)('GateWithAVerifyReport_VerifyReportOpen ($kind)', ({ kind }) => {
+  renderGate({ ...waitingGate('gh#310', kind), verifyReport: VERIFY_REPORT });
+  expect((screen.getByText('Verify report').closest('details') as HTMLDetailsElement).open, `because the owner judges a ${kind} gate on what verify proved`).toBe(true);
+});
+
+test.each(VERIFY_REPORT_GATE_KINDS)('GateWithAVerifyReportAndOtherDocuments_VerifyReportFirst ($kind)', ({ kind }) => {
+  const summary = 'The branch is green and the card shows the report. '.repeat(LONG_SUMMARY_SENTENCES);
+  renderGate({ ...waitingGate('gh#310', kind), message: summary, questions: [], verifyReport: VERIFY_REPORT, plan: { file: 'plan.md', text: 'Write the drill.' }, body: '## Goal\nHold to charge.' });
+  const reportDocument = screen.getByText('Every acceptance line holds.').closest('details');
+  expect(document.querySelector('details.gate-doc'), `because the report is what the owner reads first at a ${kind} gate, before the summary, the plan and the issue`).toBe(reportDocument);
+});
+
+test('GateWithNoVerifyReport_NoVerifyReportShown', () => {
+  renderGate({ ...waitingGate('gh#310', 'plan-approval'), questions: [], plan: { file: 'plan.md', text: 'Write the drill.' } });
+  expect(within(screen.getByRole('region', { name: 'Decision card' })).queryByText('Verify report'), 'because the daemon hands no report to a gate decided apart from verify, so its card shows none').toBeNull();
+});
+
 test('PlanGateWithNoPlan_SpecOpen', () => {
   renderGate({ ...waitingGate('gh#525', 'plan-approval'), body: '## Goal\nHold to charge.' });
   expect((screen.getByText('Spec').closest('details') as HTMLDetailsElement).open, 'because the spec in the issue is all there is to judge').toBe(true);
