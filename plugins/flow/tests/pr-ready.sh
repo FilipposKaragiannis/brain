@@ -53,6 +53,18 @@ printf 'staged\n' > "$worktree/staged.txt" && git -C "$worktree" add staged.txt
 pr_ready >/dev/null; staged_code=$?
 check "StagedFileNotCommitted_ExitsOne: a staged change is still no part of the commit" '[ "$staged_code" -eq 1 ]'
 git -C "$worktree" reset -q -- staged.txt; rm -f "$worktree/staged.txt"
+printf 'look-alike\n' > "$worktree/.flowrc"
+pr_ready >/dev/null; look_alike_code=$?
+check "NewFileWhoseNameStartsWithFlow_ExitsOne: only the .flow folder itself is flow's own" '[ "$look_alike_code" -eq 1 ]'
+rm -f "$worktree/.flowrc"
+rm -f "$worktree/change.txt"
+pr_ready >/dev/null; deleted_code=$?
+check "TrackedFileDeletedNotCommitted_ExitsOne: the commit still holds the file verify checked, the worktree does not" '[ "$deleted_code" -eq 1 ]'
+git -C "$worktree" checkout -q -- change.txt
+mkdir -p "$worktree/.flow/moved" && git -C "$worktree" mv change.txt .flow/moved/change.txt
+pr_ready >/dev/null; moved_in_code=$?
+check "TrackedFileMovedIntoTheFlowFolder_ExitsOne: the file leaves its place outside .flow/, a change verify never saw" '[ "$moved_in_code" -eq 1 ]'
+git -C "$worktree" mv .flow/moved/change.txt change.txt
 
 echo "pr-ready: no usable report"
 rm -f "$reports/verify.json"
