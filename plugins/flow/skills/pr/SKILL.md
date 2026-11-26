@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim in claim.json when the item's state.base is set (the parent rule when it is empty, for claims made before the base was recorded), the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
+description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim in claim.json when the item's state.base is set (the parent rule when it is empty, for claims made before the base was recorded), the house PR body with the verdict, the proofs and the Not checked list from pr-report.sh, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
 disable-model-invocation: true
 ---
 
@@ -25,7 +25,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    step again while it is still open and the brief carries the answer; an answer in words waives
    nothing, and the item waits for the blocker to close.
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
-   house body) and, when they exist, `<reports>/explain.html` and `quiz.md`. The PR is a GitHub
+   house body) and, when they exist, `<reports>/explain.html` and `quiz.md`. The body carries
+   the verdict, the proofs and the Not checked list as `"$P/scripts/pr-report.sh" <reports>`
+   prints them, pasted whole as its Verification section. The PR is a GitHub
    PR on the origin, opened with `gh pr create`, whatever tracker holds the item: a local item
    gets one too, and the tracker only records it. A pushed branch is no PR.
 3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why ("base
