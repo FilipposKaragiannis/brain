@@ -160,6 +160,10 @@ shell_linked="$(new_task "Linked from a shell")"
 pull_request_flow link_and_record_pull_request "$shell_linked" https://example.invalid/pull/32 shell >/dev/null 2>&1
 check "LinkedPrFromAShell_RecordsNoHost: a host that is neither claude nor codex is left out, because only those two have reviewer lists" \
   '[ -z "$(record get "$shell_linked" pr_host)" ]'
+unshaped_linked="$(new_task "Linked to no PR")"
+pull_request_flow link_and_record_pull_request "$unshaped_linked" "https://example.invalid/pull/33 step=pr" codex >/dev/null 2>&1
+check "LinkedPrThatIsNoPrUrl_IsNotWrittenToTheRecord: a worker's pr that is no PR URL or #<n> is refused, because it reaches a tracker comment and the record" \
+  '[ -z "$(record get "$unshaped_linked" pr)" ]'
 tracker_state_is ""
 
 [ "$fails" -eq 0 ] && { echo "state-join: ok"; exit 0; }
