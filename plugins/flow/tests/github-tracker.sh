@@ -462,6 +462,9 @@ listed_profile() { "$P/adapters/github/list.sh" | python3 -c 'import json, sys
 print(next((item["state"]["profile"] for item in json.load(sys.stdin) if item["id"] == sys.argv[1]), "not listed"))' "$1"; }
 listed_ids() { "$P/adapters/github/list.sh" 2>/dev/null | python3 -c 'import json, sys; print(" ".join(item["id"] for item in json.load(sys.stdin)))'; }
 code_of() { "$@" >/dev/null 2>&1; echo $?; }
+issue_keeps_comment() { python3 -c 'import json, sys
+issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
+sys.exit(0 if any(comment["id"] == int(sys.argv[3]) for comment in issue.get("comments", [])) else 1)' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
 check "ReadOfAMarkerCommentByAnotherLogin_GivesNoProfile: a state comment the gh user did not write sets nothing, because anyone can comment on a public issue" \
   [ -z "$("$P/adapters/github/read.sh" 'gh#50' | jget state.profile)" ]
 check "ListOfAMarkerCommentByAnotherLogin_GivesNoProfile: the list reads no state from a comment the gh user did not write, because anyone can comment on a public issue" \
@@ -474,6 +477,12 @@ for authorless in 'null author:gh#55' 'no author key:gh#56'; do
   check "ReadPastAMarkerCommentWithNoAuthor_TakesTheGhUsersComment (${authorless%%:*}): a comment whose author is missing is passed over, because only a known trusted login writes state" \
     [ "$("$P/adapters/github/read.sh" "${authorless#*:}" | jget state.profile)" = task-L ]
 done
+authorless_comment_id=5501
+"$P/adapters/github/strip-state.sh" 'gh#55' >/dev/null 2>&1
+check "StripStatePastAMarkerCommentWithNoAuthor_DeletesTheGhUsersComment: the gh user's state comment is gone, because it is the issue's state comment" \
+  [ "$(marker_comment_count 55 "$gh_user")" = 0 ]
+check "StripStatePastAMarkerCommentWithNoAuthor_KeepsIt: the comment whose author is missing is still on the issue, because the flow deletes only what a trusted login wrote" \
+  issue_keeps_comment 55 "$authorless_comment_id"
 # shellcheck disable=SC2034 # the check's condition reads it
 forged_state="$(authored_states 50 "$forger")"
 "$P/adapters/github/write-state.sh" 'gh#50' attempts=3 >/dev/null 2>&1
