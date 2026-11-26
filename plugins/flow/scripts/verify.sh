@@ -3,11 +3,14 @@
 # order build, format (changed files only), tests, mutation (signal, never a fail) and the project
 # gates from .flow/config.yaml, each once, and writes
 # <reports>/verify.json {status, verdict, checks: [{name, status, command, summary, seconds}],
-# attempts, base, head, changed_files, feel_test, proofs, not_checked, seconds} and its Markdown
-# twin verify.md for the PR body. head is the full commit the run checked; verdict is the first
-# line of verify.md, `Verdict: pass at <head>` or `Verdict: fail at <head>`, on every report verify
-# writes, the minimal fail report too, and verify.md ends with a `## Not checked` section that says
-# none when empty. Evidence files live under <reports>/evidence/.
+# attempts, base, head, changed_files, feel_test, proven, acceptance_lines, proofs, not_checked,
+# seconds} and its Markdown twin verify.md for the PR body. head is the full commit the run checked;
+# verdict is the first line of verify.md, `Verdict: pass at <head>` or `Verdict: fail at <head>`, on
+# every report verify writes, the minimal fail report too; the second line is `<proven> of
+# <acceptance_lines> acceptance lines proven live or by test`, graded from the <reports>/proofs.json
+# the verifier writes before the run (scripts/_verify_report.py; the minimal fail report grades
+# none: 0 of 0), and verify.md ends with a `## Not checked` section that says none when empty.
+# Evidence files live under <reports>/evidence/.
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
@@ -97,9 +100,9 @@ report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr 
 fail_report() {
   safe_name() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
   minimal_head="$(safe_name "$head_sha")"
-  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "verdict": "Verdict: fail at %s", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false, "proofs": [], "not_checked": [], "stopped": "%s"}\n' \
+  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "verdict": "Verdict: fail at %s", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false, "proven": 0, "acceptance_lines": 0, "proofs": [], "not_checked": [], "stopped": "%s"}\n' \
     "$minimal_head" "$1" "$2" "$attempts" "$(safe_name "$base")" "$minimal_head" "$(safe_name "${4:-}")" > "$minimal_json_file" && mv -f "$minimal_json_file" "$reports/verify.json"
-  minimal_md_file="$(mktemp "$reports/.verify.md.XXXXXX")" && printf 'Verdict: fail at %s\n\n## Checks (attempt %d)\n\n%s\n\nLog: `%s`.\n\n## Not checked\n\nNone.\n' "$minimal_head" "$attempts" "$3" "$log" \
+  minimal_md_file="$(mktemp "$reports/.verify.md.XXXXXX")" && printf 'Verdict: fail at %s\n0 of 0 acceptance lines proven live or by test\n\n## Checks (attempt %d)\n\n%s\n\nLog: `%s`.\n\n## Not checked\n\nNone.\n' "$minimal_head" "$attempts" "$3" "$log" \
     > "$minimal_md_file" && mv -f "$minimal_md_file" "$reports/verify.md"
 }
 # duration <seconds>: 45s, 12m 30s or 2h 05m.
