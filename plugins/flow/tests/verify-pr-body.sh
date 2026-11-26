@@ -235,19 +235,36 @@ check "Render_ReportWithoutProofsKey_NamesTheKey: the owner learns what the old 
   'grep -qF "proofs" "$work/old-shape.err"'
 
 echo "a report whose fields have the wrong type"
-mkdir -p "$work/null-proofs" "$work/null-not-checked"
-python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); report[sys.argv[3]]=None; json.dump(report, open(sys.argv[2], "w"))' \
-  "$every_grade_reports/verify.json" "$work/null-proofs/verify.json" proofs
-python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); report[sys.argv[3]]=None; json.dump(report, open(sys.argv[2], "w"))' \
-  "$every_grade_reports/verify.json" "$work/null-not-checked/verify.json" not_checked
-render "$work/null-proofs" null-proofs
-render "$work/null-not-checked" null-not-checked
-check "Render_ProofsThatAreNull_ExitsOneWithNoTraceback: the pr-creator stops on a stated reason, not a crash" \
-  '[ "$(render_code null-proofs)" = "$missing_report_exit" ] && ! grep -q Traceback "$work/null-proofs.err"'
-check "Render_ProofsThatAreNull_NamesTheKey: the owner learns which field to look at" \
-  'grep -qF "proofs" "$work/null-proofs.err"'
-check "Render_NotCheckedThatIsNull_ExitsOneWithNoTraceback: the pr-creator stops on a stated reason, not a crash" \
-  '[ "$(render_code null-not-checked)" = "$missing_report_exit" ] && ! grep -q Traceback "$work/null-not-checked.err"'
+# write_report_with_field <row> <key> <json value>: the every-grade report with one field replaced,
+# written as verify.json in the folder wrong-type-<row> under the work folder.
+write_report_with_field() {
+  mkdir -p "$work/wrong-type-$1"
+  python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); report[sys.argv[3]]=json.loads(sys.argv[4]); json.dump(report, open(sys.argv[2], "w"))' \
+    "$every_grade_reports/verify.json" "$work/wrong-type-$1/verify.json" "$2" "$3"
+}
+wrong_type_rows='verdict	7
+proven	"7"
+acceptance_lines	"7"
+proofs	null
+proofs	"ab"
+proofs	[1, 2]
+proofs	[{"line": 1, "text": "greet prints hello", "grade": "test"}]
+not_checked	null
+not_checked	[{"line": 3, "text": "the client renders", "grade": "build-only"}]'
+wrong_type_row=0
+while IFS='	' read -r wrong_key wrong_value; do
+  wrong_type_row=$((wrong_type_row + 1))
+  write_report_with_field "$wrong_type_row" "$wrong_key" "$wrong_value"
+  render "$work/wrong-type-$wrong_type_row" "wrong-type-$wrong_type_row"
+  check "Render_FieldOfTheWrongType_ExitsOne ($wrong_key: $wrong_value): the pr-creator stops, because a section from a malformed report would mislead the reviewer" \
+    '[ "$(render_code "wrong-type-$wrong_type_row")" = "$missing_report_exit" ]'
+  check "Render_FieldOfTheWrongType_EndsWithoutATraceback ($wrong_key: $wrong_value): the reason is stated, because a crash tells the owner nothing" \
+    '! grep -q Traceback "$work/wrong-type-$wrong_type_row.err"'
+  check "Render_FieldOfTheWrongType_NamesTheField ($wrong_key: $wrong_value): stderr names the field, because the owner must know which one to fix" \
+    'grep -qF "$wrong_key" "$work/wrong-type-$wrong_type_row.err"'
+done <<ROWS
+$wrong_type_rows
+ROWS
 
 echo "acceptance text that holds markup"
 mkdir -p "$work/markup"
