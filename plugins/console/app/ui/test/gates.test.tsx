@@ -221,16 +221,24 @@ const VERIFY_REPORT = { file: 'verify.md', text: 'Verdict: pass at 0123abc\n\nEv
 /** How many times the summary repeats its sentence, so it is far too long for the card head. */
 const LONG_SUMMARY_SENTENCES = 60;
 
-test('GateWithAVerifyReport_VerifyReportOpen', () => {
-  renderGate({ ...waitingGate('gh#310', 'merge'), verifyReport: VERIFY_REPORT });
-  expect((screen.getByText('Verify report').closest('details') as HTMLDetailsElement).open, 'because the owner judges the merge on what verify proved').toBe(true);
+/** The gate kinds the daemon hands a verify report to, each judged on what verify proved. */
+const VERIFY_REPORT_GATE_KINDS = [{ kind: 'merge' }, { kind: 'feel-test' }, { kind: 'escalation' }];
+
+test.each(VERIFY_REPORT_GATE_KINDS)('GateWithAVerifyReport_VerifyReportOpen ($kind)', ({ kind }) => {
+  renderGate({ ...waitingGate('gh#310', kind), verifyReport: VERIFY_REPORT });
+  expect((screen.getByText('Verify report').closest('details') as HTMLDetailsElement).open, `because the owner judges a ${kind} gate on what verify proved`).toBe(true);
 });
 
-test('GateWithAVerifyReportAndOtherDocuments_VerifyReportFirst', () => {
+test.each(VERIFY_REPORT_GATE_KINDS)('GateWithAVerifyReportAndOtherDocuments_VerifyReportFirst ($kind)', ({ kind }) => {
   const summary = 'The branch is green and the card shows the report. '.repeat(LONG_SUMMARY_SENTENCES);
-  renderGate({ ...waitingGate('gh#310', 'merge'), message: summary, questions: [], verifyReport: VERIFY_REPORT, plan: { file: 'plan.md', text: 'Write the drill.' }, body: '## Goal\nHold to charge.' });
+  renderGate({ ...waitingGate('gh#310', kind), message: summary, questions: [], verifyReport: VERIFY_REPORT, plan: { file: 'plan.md', text: 'Write the drill.' }, body: '## Goal\nHold to charge.' });
   const firstDocument = document.querySelector('details.gate-doc > summary')?.textContent;
-  expect(firstDocument, 'because the report is what the owner reads first at a merge, before the summary, the plan and the issue').toBe('Verify report verify.md');
+  expect(firstDocument, `because the report is what the owner reads first at a ${kind} gate, before the summary, the plan and the issue`).toBe('Verify report verify.md');
+});
+
+test('GateWithNoVerifyReport_NoVerifyReportShown', () => {
+  renderGate({ ...waitingGate('gh#310', 'plan-approval'), questions: [], plan: { file: 'plan.md', text: 'Write the drill.' } });
+  expect(within(screen.getByRole('region', { name: 'Decision card' })).queryByText('Verify report'), 'because the daemon hands no report to a gate decided apart from verify, so its card shows none').toBeNull();
 });
 
 test('PlanGateWithNoPlan_SpecOpen', () => {
