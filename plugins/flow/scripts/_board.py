@@ -140,7 +140,7 @@ if tracker_errors:
     print("\n## Trackers not read")
     for tracker_error in tracker_errors:
         print("- %s (exit %s): %s" % (tracker_error["tracker"], tracker_error["code"], tracker_error["message"] or "no reason given"))
-def print_table_heading(title, columns, rows, empty_note):
+def print_table_heading(title: str, columns: tuple[str, ...], rows: list[dict], empty_note: str) -> None:
     if not rows:
         print("\n## %s: %s" % (title, empty_note))
         return
