@@ -14,7 +14,8 @@
 #                                                claim holds exits 4; both before anything is
 #                                                created. A new claim of an item outside its
 #                                                tracker's scope exits 2 (adhoc: names have no
-#                                                tracker, no scope)
+#                                                tracker, no scope). An epic's own epic branch is
+#                                                claimed as claim-tip claims it
 #   steward.sh claim-tip <item> <branch> [--base <branch>]
 #                                                claim a free pool worktree on <branch>, which
 #                                                must be on the remote, at the tip the remote
@@ -39,6 +40,10 @@
 #   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree on <branch>-<phase>, from the
 #                                                claim's task branch <branch>
+#   steward.sh tmp tip <item> <branch>           temporary worktree .flow/tmp/<slug>-tip, detached
+#                                                at the tip the remote holds of <branch>, with the
+#                                                copies and the setup; one already there is printed
+#                                                as it is, with the work an earlier user left in it
 #   steward.sh tmp remove <path>                 remove it and its branch
 #   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
 #                                                git worktree add; pool entry, copies and setup); a
@@ -100,15 +105,16 @@
 # steward's pid: health leaves the claim alone, and a claim of the same item (steward.sh claim, or
 # claim_at_base in lib/base.sh) waits for the setup to end before it prints the path.
 # worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
-# add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
-# remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
+# add: the pool's (grow, add, recreate), tmp add's and tmp tip's. worktree_remove, when set, removes
+# a tmp remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
 # command {path} is the worktree's absolute folder and {base} the ref it starts from (the pool's
-# base, the claim's task branch for tmp add, empty for a remove); sh -c gets them as "$1" and "$2",
-# so the command writes them bare and no value is read as shell. A command that passes {path} on to
-# ssh, eval or sh -c, which parse it again, must quote it again there. It runs from the main
-# worktree, all its output on stderr. After a create a git worktree of this repository must sit at
-# {path}; then the pool's goes onto its idle branch at the base tip (one that cannot move stays as
-# made, and health moves it once free) and tmp add's onto a new <branch>-<phase> at {base}. tmp add
+# base, the claim's task branch for tmp add, the remote tip for tmp tip, empty for a remove); sh -c
+# gets them as "$1" and "$2", so the command writes them bare and no value is read as shell. A
+# command that passes {path} on to ssh, eval or sh -c, which parse it again, must quote it again
+# there. It runs from the main worktree, all its output on stderr. After a create a git worktree of
+# this repository must sit at {path}; then the pool's goes onto its idle branch at the base tip (one
+# that cannot move stays as made, and health moves it once free), tmp add's onto a new
+# <branch>-<phase> at {base} and tmp tip's detached at {base}. tmp add
 # refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove takes
 # only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a worktree
 # with uncommitted changes (untracked files and submodule changes that status config hides count
@@ -240,6 +246,7 @@ cmd_claim() {
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then wait_for_running_setup "$existing"; printf '%s\n' "$existing"; return 0; fi
   scope_holds "$item" || exit 2
+  if epic_branch_named "$item" "$(claim_branch_option "$@")"; then cmd_claim_tip "$item" "$(epic_branch "$item")" --base "$base"; return; fi
   branch="flow/$(item_slug "$item")"
   if adapter_for "$item" >/dev/null 2>&1; then
     branch="$(claim_branch_option "$@")"
@@ -526,6 +533,7 @@ cmd_tmp() {
       if [ -n "$(cfg worktree_create)" ]; then create_temporary_worktree_on_new_branch "$path" "$task_branch" "$branch"
       else git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
+    tip) [ $# -eq 3 ] || die "usage: tmp tip <item> <branch>" 2; temporary_tip_worktree "$2" "$3" ;;
     remove)
       path="$(removable_temporary_worktree "$2")" || exit
       branch="$(checked_out_phase_branch "$path")"
@@ -534,7 +542,7 @@ cmd_tmp() {
       else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null
       echo "removed $path" ;;
-    *) die "usage: tmp add <item> <phase> | tmp remove <path>" 2 ;;
+    *) die "usage: tmp add <item> <phase> | tmp tip <item> <branch> | tmp remove <path>" 2 ;;
   esac
 }
 

@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034,SC2154 # _base_fixture.sh sets plugin, work, local_adapter and fails; the checks' conditions read the names set here
 # epic-pr-claim.sh: a claim for an epic on its own epic branch, the worktree a comments pass on
 # the epic's PR works in, on the local adapter in throwaway repos with a bare origin.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.

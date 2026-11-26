@@ -6,8 +6,12 @@
 # one that holds commits the remote lacks, or that another worktree has checked out, is refused
 # with why, exit 4, before any worktree is taken. An item that holds a claim on the branch keeps
 # its worktree, moved up to the tip the same way; one on another branch is refused. worktree_setup runs again after the move as for any claim (worktree_setup_paths).
+# steward.sh claim takes this path for an epic's own epic branch (epic_branch_named), the branch a
+# comments pass on the epic's pull request works on. steward.sh tmp tip makes the temporary
+# worktree such a pass works in when no pool worktree can take the branch: detached at the remote
+# tip, so a branch checked out elsewhere does not stop it.
 # Sourced by scripts/steward.sh, never run.
-# shellcheck disable=SC2154 # scripts/steward.sh, which sources it, sets main and base_branch, and lib/base.sh the claim exit codes
+# shellcheck disable=SC2154 # scripts/steward.sh, which sources it, sets main, home and base_branch, and lib/base.sh the claim exit codes
 
 tip_claim_fetch_tracking_branch() {
   tip_claim_fetch_tracking_branch_name="refs/remotes/origin/$2"
@@ -69,4 +73,28 @@ cmd_claim_tip() {
     tip_claim_move_existing_to_tip "$cmd_claim_tip_item" "$cmd_claim_tip_existing" "$cmd_claim_tip_branch" "$cmd_claim_tip_tracking_branch"; return
   fi
   tip_claim_new "$cmd_claim_tip_item" "$cmd_claim_tip_branch" "$cmd_claim_tip_tracking_branch" "$cmd_claim_tip_base"
+}
+
+epic_branch_named() {
+  [ -n "$2" ] && [ "$2" = "$(epic_branch "$1")" ] || return 1
+  [ "$(json_get "$(adapter read "$1" </dev/null 2>/dev/null)" kind)" = epic ]
+}
+
+temporary_tip_worktree() {
+  temporary_tip_worktree_path="$home/tmp/$(item_slug "$1")-tip"
+  if is_worktree_of_this_repository "$temporary_tip_worktree_path"; then printf '%s\n' "$temporary_tip_worktree_path"; return 0; fi
+  [ ! -e "$temporary_tip_worktree_path" ] && [ ! -L "$temporary_tip_worktree_path" ] \
+    || die "tmp tip: $temporary_tip_worktree_path exists and is not a worktree of this repository" "$claim_call_refused"
+  tip_claim_refuse_branch_name "$1" "$2" "$base_branch"
+  temporary_tip_worktree_tracking_branch="$(tip_claim_fetch_tracking_branch "$1" "$2")" || exit $?
+  mkdir -p "$home/tmp"
+  if [ -n "$(cfg worktree_create)" ]; then
+    run_worktree_create "$temporary_tip_worktree_path" "$temporary_tip_worktree_tracking_branch" || die "cannot add $temporary_tip_worktree_path"
+    git -C "$temporary_tip_worktree_path" switch -q --detach "$temporary_tip_worktree_tracking_branch" >&2 \
+      || die "cannot put $temporary_tip_worktree_path at $temporary_tip_worktree_tracking_branch; the worktree stays there, remove it with steward.sh tmp remove $temporary_tip_worktree_path"
+  else
+    git -C "$main" worktree add -q --detach "$temporary_tip_worktree_path" "$temporary_tip_worktree_tracking_branch" >&2 || die "cannot add $temporary_tip_worktree_path"
+  fi
+  run_setup "$temporary_tip_worktree_path" >&2
+  printf '%s\n' "$temporary_tip_worktree_path"
 }
