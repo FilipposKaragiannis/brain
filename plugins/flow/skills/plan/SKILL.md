@@ -15,7 +15,10 @@ on Codex the path `codex plugin list` prints for `flow`).
 - `--profile <name>` in the argument: start the run with `"$P/scripts/next.sh" <id> --profile
   <name> --json`, which checks the name and pins it, and take the step and brief from its output.
   Exit 2 refuses a name that is no profile in `$P/profiles.json`, or a started item whose step that
-  profile does not have: say why and stop.
+  profile does not have: say why and stop. When that step is no planning step (`grill`, `epic`, `tasks`,
+  `design`, `plan`), the profile is pinned and nothing is left to plan here: end the run with
+  `"$P/scripts/state.sh" set <id> run:=null`, say the profile is pinned and that `flow:next <id>`
+  runs the step, and stop.
 - Step: the one `next.sh` gave you, else from the state, else by kind: epic → `grill`; task M or
   L → `design`; S or bug → say planning is not in that profile and stop.
 - Reports directory: the one the `next.sh` brief names, else the path
