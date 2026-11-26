@@ -95,7 +95,7 @@ code_block() {
 # bug_body <exit code> <time>: the bug's body in the item shape, the output's tail in its notes.
 bug_body() {
   printf '## Problem\n\nThe scheduled check %s runs this command from a clean checkout of %s at %s:\n\n%s\n\nIt passed on its run before, and at %s it exited %s.\n\n' \
-    "$check_name" "$base" "$base_commit_id" "$(code_block "$check_command")" "$2" "$1"
+    "$check_name" "$base" "$base_commit_identifier" "$(code_block "$check_command")" "$2" "$1"
   printf '## Outcome\n\nThe scheduled check %s passes again on %s.\n\n' "$check_name" "$base"
   printf '## Acceptance\n\n- [ ] `jobs.sh run %s` passes\n\n' "$job"
   printf '## Notes\n\nThe last %s lines of the output, cut to its last %s bytes:\n\n%s\n' \
@@ -105,26 +105,26 @@ bug_body() {
 # its id; when new.sh cannot, prints its last line and returns 1.
 file_bug() {
   bug_errors="$(mktemp "$(job_log_dir)/$job.bug-errors.XXXXXX")"
-  bug_id="$(bug_body "$1" "$(now_iso)" | (cd "$main" && "$FLOW_PLUGIN/scripts/new.sh" bug "Scheduled check $check_name fails" --body-file -) 2>"$bug_errors")"
+  bug_identifier="$(bug_body "$1" "$(now_iso)" | (cd "$main" && "$FLOW_PLUGIN/scripts/new.sh" bug "Scheduled check $check_name fails" --body-file -) 2>"$bug_errors")"
   bug_exit=$?
   bug_said="$(tail -n 1 "$bug_errors")"; rm -f "$bug_errors"
-  [ "$bug_exit" -ne 0 ] || [ -z "$bug_id" ] || { printf '%s' "$bug_id"; return 0; }
+  [ "$bug_exit" -ne 0 ] || [ -z "$bug_identifier" ] || { printf '%s' "$bug_identifier"; return 0; }
   printf '%s' "${bug_said:-new.sh exited $bug_exit and printed no id}" | cut -c "1-$check_said_length"
   return 1
 }
 
 rm -rf "$checkout"
 fetch_base_branch
-base_commit_id="$(base_commit)"
-[ -n "$base_commit_id" ] || { job_say "error: could not check out $base: neither origin/$base nor $base is a commit here"; exit 1; }
-checkout_failure="$(check_out_base "$base_commit_id")" || { job_say "error: could not check out $base: $checkout_failure"; exit 1; }
-short_commit_id="$(git -C "$main" rev-parse --short "$base_commit_id")"
-job_say "running at $short_commit_id in $checkout"
+base_commit_identifier="$(base_commit)"
+[ -n "$base_commit_identifier" ] || { job_say "error: could not check out $base: neither origin/$base nor $base is a commit here"; exit 1; }
+checkout_failure="$(check_out_base "$base_commit_identifier")" || { job_say "error: could not check out $base: $checkout_failure"; exit 1; }
+short_commit_identifier="$(git -C "$main" rev-parse --short "$base_commit_identifier")"
+job_say "running at $short_commit_identifier in $checkout"
 (cd "$checkout" && exec sh -c "$check_command") < /dev/null > "$output" 2>&1
 check_exit=$?
 cat "$output" >> "$(job_log_dir)/$job.log"
-[ "$check_exit" -ne 0 ] || { printf 'passed\n' > "$state_file"; job_say "done: passed at $short_commit_id"; exit 0; }
-failure_line="failed: exited $check_exit at $short_commit_id: $(tail -n 1 "$output" | cut -c "1-$check_said_length")"
+[ "$check_exit" -ne 0 ] || { printf 'passed\n' > "$state_file"; job_say "done: passed at $short_commit_identifier"; exit 0; }
+failure_line="failed: exited $check_exit at $short_commit_identifier: $(tail -n 1 "$output" | cut -c "1-$check_said_length")"
 previous_state="$(sed -n 1p "$state_file" 2>/dev/null)"
 case "$previous_state" in
   passed)
