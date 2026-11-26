@@ -299,10 +299,11 @@ check "BaseGitReadsAsAnOption_RunsNoCommand: the base never reaches git, so the 
   '[ ! -e "$option_base_marker" ]'
 
 echo "checks: a state the run cannot write"
-unwritable_state="$flow_home_folder/log/check-smoke.state"
-rm -f "$unwritable_state"; mkdir "$unwritable_state"; chmod a-w "$unwritable_state"
-run_probe 0; unwritable_state_exit=$?
-chmod u+w "$unwritable_state"; rm -rf "$unwritable_state"
+unwritable_state_stubs="$work/unwritable-state-stubs"
+mkdir -p "$unwritable_state_stubs"
+printf '#!/bin/sh\ncase "$*" in *.state.XXXXXX) exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v mktemp)" > "$unwritable_state_stubs/mktemp"
+chmod +x "$unwritable_state_stubs/mktemp"
+(PATH="$unwritable_state_stubs:$PATH"; run_probe 0); unwritable_state_exit=$?
 check "PassWhoseStateCannotBeWritten_ExitsNonzero: a pass left unrecorded is no success, so the run fails" \
   '[ "$unwritable_state_exit" -ne 0 ]'
 check "PassWhoseStateCannotBeWritten_RunLineSaysThePassWentUnrecorded: the history shows the error, never done: passed" \
