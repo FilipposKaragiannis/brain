@@ -80,21 +80,29 @@ epic_branch_named() {
   [ "$(json_get "$(adapter read "$1" </dev/null 2>/dev/null)" kind)" = epic ]
 }
 
+temporary_tip_worktree_refuse_foreign_path() {
+  [ ! -e "$1" ] && [ ! -L "$1" ] \
+    || die "tmp tip: $1 exists and is not a worktree of this repository" "$claim_call_refused"
+}
+
+temporary_tip_worktree_add_detached() {
+  if [ -z "$(cfg worktree_create)" ]; then
+    git -C "$main" worktree add -q --detach "$1" "$2" >&2 || die "cannot add $1"
+    return 0
+  fi
+  run_worktree_create "$1" "$2" || die "cannot add $1"
+  git -C "$1" switch -q --detach "$2" >&2 \
+    || die "cannot put $1 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
+}
+
 temporary_tip_worktree() {
   temporary_tip_worktree_path="$home/tmp/$(item_slug "$1")-tip"
   if is_worktree_of_this_repository "$temporary_tip_worktree_path"; then printf '%s\n' "$temporary_tip_worktree_path"; return 0; fi
-  [ ! -e "$temporary_tip_worktree_path" ] && [ ! -L "$temporary_tip_worktree_path" ] \
-    || die "tmp tip: $temporary_tip_worktree_path exists and is not a worktree of this repository" "$claim_call_refused"
+  temporary_tip_worktree_refuse_foreign_path "$temporary_tip_worktree_path"
   tip_claim_refuse_branch_name "$1" "$2" "$base_branch"
   temporary_tip_worktree_tracking_branch="$(tip_claim_fetch_tracking_branch "$1" "$2")" || exit $?
   mkdir -p "$home/tmp"
-  if [ -n "$(cfg worktree_create)" ]; then
-    run_worktree_create "$temporary_tip_worktree_path" "$temporary_tip_worktree_tracking_branch" || die "cannot add $temporary_tip_worktree_path"
-    git -C "$temporary_tip_worktree_path" switch -q --detach "$temporary_tip_worktree_tracking_branch" >&2 \
-      || die "cannot put $temporary_tip_worktree_path at $temporary_tip_worktree_tracking_branch; the worktree stays there, remove it with steward.sh tmp remove $temporary_tip_worktree_path"
-  else
-    git -C "$main" worktree add -q --detach "$temporary_tip_worktree_path" "$temporary_tip_worktree_tracking_branch" >&2 || die "cannot add $temporary_tip_worktree_path"
-  fi
+  temporary_tip_worktree_add_detached "$temporary_tip_worktree_path" "$temporary_tip_worktree_tracking_branch"
   run_setup "$temporary_tip_worktree_path" >&2
   printf '%s\n' "$temporary_tip_worktree_path"
 }
