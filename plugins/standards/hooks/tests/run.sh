@@ -365,7 +365,7 @@ out="$(gate '{}')"; [ -z "$out" ] && pass "third attempt escalates (no block)" |
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; [ -z "$out" ] && pass "passing verify at the head: no block" || fail "passing verify blocked: $out"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(printf '0%.0s' $(seq 40))" > .flow/reports/local-task-1/verify.json
-out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && printf '%s' "$out" | grep -q 'PR head' && pass "StaleReportBeforeAPr_Blocks: a pass made on another commit is refused" || fail "stale report not blocked: $out"
+out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && pass "StalePassBeforeAPr_Blocks: a pass made on another commit than the worktree HEAD is refused, because the PR would ship code the report never checked" || fail "stale report not blocked: $out"
 printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$(printf '0%.0s' $(seq 40))" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && pass "StaleReportAfterThirdAttempt_Blocks: escalation does not skip the commit check" || fail "stale third-attempt report not blocked: $out"
 printf '{"status":"pass","attempts":1,"checks":[]}\n' > .flow/reports/local-task-1/verify.json
@@ -378,6 +378,9 @@ printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$pushed_commi
 out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtThePushedBranch_PassesWithUnpushedCommits: the PR head is the pushed branch, not the worktree HEAD" || fail "report at the pushed branch blocked: $out"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(git rev-parse HEAD)" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && pass "ReportAtUnpushedHead_Blocks: the pushed branch is what the PR holds" || fail "report at unpushed head not blocked: $out"
+git remote set-url origin "$work/unreachable-remote.git"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$pushed_commit" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; [ -z "$out" ] && pass "UnreachableRemote_ReportAtThePushedBranchPasses: the PR head is read from the tracked branch, because the gate makes no network call" || fail "report at the pushed branch blocked with the remote unreachable: $out"
 git reset -q --hard "$pushed_commit"; git remote remove origin
 rm -rf .flow
 
