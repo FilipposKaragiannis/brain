@@ -19,7 +19,10 @@
 # or its changes (touches, when it records none) no longer sharing a path with the held item's; a
 # hold on itself; the newest hold in a cycle. Each clear is an `unheld` line in events.log. A hold whose holder closed stays:
 # next.sh releases it with the note to merge the holder's work and check the plan. A valid hold waiting over a day is
-# said and notified once. Only the holders no tracker list holds are read. Each fact is a line
+# said and notified once. Only the holders no tracker list holds are read. Under tracker_state none
+# it says how many open items still carry a step:, gate:, wt: or flow: label, once per count, and
+# names `state.sh import --strip`, which takes them off; under labels the mirror writes them, so
+# it says nothing. Each fact is a line
 # in the log and in events.log. Nothing to do: one quiet line, no notification. Schedule it every 15
 # minutes; the lock skips an overlap. --dry-run says what it would do and changes nothing.
 # A run a spend limit, an auth error or an unknown model stopped is not resumed: its escalation gate ended it, and

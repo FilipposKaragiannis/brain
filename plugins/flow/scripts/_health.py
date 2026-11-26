@@ -19,6 +19,7 @@
   _health.py review <state json> <review rows file> [<record path>]
   _health.py holders <items file>
   _health.py holds <items file> <reads file> <claims file> <runs file> <events.log> <old seconds>
+  _health.py labelled <items file>
 
 procs prints one line per process: pid, working directory (agents and verify runs only) and
 command, tab separated, and fails when ps lists nothing, so a missing ps never reads as every run
@@ -72,6 +73,10 @@ changes sharing no path with the item's; in a cycle the newest hold, by its last
 events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
 than the old seconds (seconds a dash when no `held` line dates it, which counts as old).
 
+labelled prints how many open items of the items file carry a flow label (step:, gate:, wt: or
+flow:), which only the tracker_state labels mirror writes, for the health line that names
+state.sh import --strip.
+
 bounded runs the command as the leader of its own session, with this process's stdin, stdout and
 stderr, and exits with its code. A command still running after the seconds gets TERM, sent to its
 whole process group, then KILL to what is left after the grace seconds, and the exit is 124. A
@@ -103,6 +108,7 @@ LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
 VERIFY_RUN = re.compile(r"verify\.sh .*--detached")
 DURATION = re.compile(r"(\d+)([smhd]?)")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
+FLOW_LABEL_PREFIXES = ("step:", "gate:", "wt:", "flow:")
 
 
 # ps prints a command unquoted. The executable runs past a space only while the part beyond it is
@@ -718,6 +724,11 @@ def holds(items_path, reads_path, claims_path, runs_path, events, old):
         print("old\t%s\t%s\t%s\t%s" % (item_id, kept[item_id], now - since if since else "-", reason))
 
 
+def labelled(items):
+    return sum(1 for item in items.values()
+               if any(isinstance(label, str) and label.startswith(FLOW_LABEL_PREFIXES) for label in item.get("labels") or []))
+
+
 def main():
     command, args = sys.argv[1], sys.argv[2:]
     if command == "procs":
@@ -756,6 +767,8 @@ def main():
         holders(args[0])
     elif command == "holds":
         holds(args[0], args[1], args[2], args[3], args[4], int(args[5]))
+    elif command == "labelled":
+        print(labelled(open_items(args[0])))
     elif command == "died":
         died(*args[:5])
     elif command == "spawn":

@@ -531,6 +531,38 @@ check "health: a hold that went is forgotten, so a new one is said again" sh -c 
 unset FLOW_HEALTH_PROCS
 cd "$repo"
 
+echo "health: flow labels"
+labels_root="$work/flow-labels"; mkdir -p "$labels_root"
+export FLOW_HEALTH_PROCS="$labels_root/procs"; : > "$FLOW_HEALTH_PROCS"
+cp .flow/config.yaml "$labels_root/config.yaml"; cp "$FAKE_GH_DIR/issues.json" "$labels_root/issues.json"
+two_labelled_issues=2; one_labelled_issue=1; said_once=1
+# The config's tracker_state wins over FLOW_TRACKER_STATE, which a lane of the suite runner may set.
+tracker_mode() { cp "$labels_root/config.yaml" .flow/config.yaml && printf 'tracker_state: %s\n' "$1" >> .flow/config.yaml; }
+issue_labels() { python3 -c 'import json, sys
+path, number, labels = sys.argv[1], int(sys.argv[2]), sys.argv[3:]; data = json.load(open(path))
+[issue for issue in data["issues"] if issue["number"] == number][0]["labels"] = labels
+json.dump(data, open(path, "w"))' "$FAKE_GH_DIR/issues.json" "$@"; }
+flow_label_lines() { grep -c "^pool: $1 open item(s) still carry flow labels.*state\.sh import --strip" "$labels_root/out"; }
+issue_labels 11 size:S step:implement wt:wt-1 flow:task-S
+issue_labels 12 size:M status:blocked gate:plan
+tracker_mode labels
+hs > "$labels_root/out" 2>&1
+check_all "HealthUnderTrackerStateLabels_SaysNoFlowLabelCount: because the mirror writes those labels there" 'grep -q "^health: [0-9]* claimed" "$labels_root/out" && ! grep -q "carry flow labels" "$labels_root/out"'
+tracker_mode none
+hs > "$labels_root/out" 2>&1
+check "HealthWithTwoFlowLabelledItems_CountsThemInOneLine: because the count names state.sh import --strip once for every item" [ "$(flow_label_lines "$two_labelled_issues")" = "$said_once" ]
+hs > "$labels_root/out" 2>&1
+check_all "HealthWithTheSameCountNextRun_SaysNothing: because a count that stays is said once" 'grep -q "^health: [0-9]* claimed" "$labels_root/out" && ! grep -q "carry flow labels" "$labels_root/out"'
+issue_labels 12 size:M status:blocked
+hs >/dev/null 2>&1
+issue_labels 11 size:S
+hs >/dev/null 2>&1
+issue_labels 11 size:S step:implement
+hs > "$labels_root/out" 2>&1
+check "HealthWhenTheLabelsGoAndOneComesBack_SaysTheCountAgain: because a count of zero forgets the one said before" [ "$(flow_label_lines "$one_labelled_issue")" = "$said_once" ]
+cp "$labels_root/config.yaml" .flow/config.yaml; cp "$labels_root/issues.json" "$FAKE_GH_DIR/issues.json"
+unset FLOW_HEALTH_PROCS
+
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
 . "$here/_init_fixture.sh"
 check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -qF '	$codex_rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
