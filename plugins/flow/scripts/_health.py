@@ -729,8 +729,12 @@ def labelled(items: dict) -> int:
                if any(isinstance(label, str) and label.startswith(state_schema.FLOW_LABEL_PREFIXES) for label in item.get("labels") or []))
 
 
+COMMAND_ARGUMENT = 1
+LABELLED_COMMAND = "labelled"
+
+
 def main():
-    command, arguments = sys.argv[1], sys.argv[2:]
+    command, arguments = sys.argv[COMMAND_ARGUMENT], sys.argv[COMMAND_ARGUMENT + 1:]
     if command == "procs":
         procs()
     elif command == "alive":
@@ -767,7 +771,7 @@ def main():
         holders(arguments[0])
     elif command == "holds":
         holds(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], int(arguments[5]))
-    elif command == "labelled":
+    elif command == LABELLED_COMMAND:
         print(labelled(open_items(arguments[0])))
     elif command == "died":
         died(*arguments[:5])

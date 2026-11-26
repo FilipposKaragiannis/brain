@@ -24,7 +24,8 @@ import sys
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "scripts"))
+FLOW_SCRIPTS_FOLDER = "scripts"
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, FLOW_SCRIPTS_FOLDER))
 import _call  # noqa: E402
 import _state_comment  # noqa: E402
 import _state_schema  # noqa: E402
