@@ -58,7 +58,7 @@ STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_e
               "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from",
               "base", "branch"]
 LABEL_PREFIXES = {"step": "step:", "gate": "gate:", "worktree": "wt:", "profile": "flow:", "size": "size:"}
-STRIPPED_LABEL_PREFIXES = ("step:", "gate:", "wt:", "flow:")
+STRIPPED_LABEL_PREFIXES = tuple(prefix for key, prefix in LABEL_PREFIXES.items() if key != "size")
 FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks", "assignee"]
 STATUS_CATEGORY_KEYS = {"new": "todo", "indeterminate": "in-progress", "done": "done"}
 FOREIGN_BLOCKERS = re.compile(r"(?m)^Blocked by: (.+)$")
