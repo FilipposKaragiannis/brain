@@ -245,6 +245,10 @@ write_report_with_field() {
 wrong_type_rows='verdict	7
 verdict	"Verdict: pass at a\n\nCloses #9 @octocat"
 proofs	[{"line": 1, "text": "the log shows it", "grade": "live", "evidence": ""}]
+proofs	[{"line": 1, "text": "the log shows it", "grade": "live", "evidence": "   "}]
+proofs	[{"line": 1, "text": "greet prints hello", "grade": "test", "test": ""}]
+verdict	"Verdict: maybe so at abc"
+verdict	"Verdict: pass at abc <img src=x>"
 proven	"7"
 acceptance_lines	"7"
 proofs	null
