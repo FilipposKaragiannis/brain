@@ -44,7 +44,10 @@ notes_marker="the login page greeted the owner"
 nested_marker="the nested step finished"
 outside_marker="a secret kept outside the evidence folder"
 files_past_budget=1
-budget_file_characters=$((excerpt_lines_kept * (excerpt_line_characters + 1)))
+line_break_characters=1
+first_budget_file=1
+login_proof_line=1
+budget_file_characters=$((excerpt_lines_kept * (excerpt_line_characters + line_break_characters)))
 budget_files=$((excerpt_budget / budget_file_characters + files_past_budget))
 # capture_gate <name>: a gate that runs capture-<name>.sh from the work folder, which
 # write_capture writes once new_item has named the reports folder.
@@ -74,7 +77,8 @@ excerpt_block() {
 line_before_summary() { awk -v summary="$summary_before_name$2$summary_after_name" 'index($0, summary) == 1 { print previous; exit } { previous = $0 }' "$work/$1.out"; }
 excerpt_fence() { excerpt_block "$1" "$2" | awk '/^```/ { sub(/[a-z]+$/, ""); print; exit }'; }
 excerpt_lines() { excerpt_block "$1" "$2" | awk 'fence == "" && /^```/ { fence = $0; sub(/[a-z]+$/, "", fence); next } fence != "" && $0 == fence { exit } fence != ""'; }
-long_log_tail() { seq "$((long_log_lines - excerpt_lines_kept + 1))" "$long_log_lines" | sed 's/^/log line /'; }
+long_log_tail() { seq "$long_log_lines" | tail -n "$excerpt_lines_kept" | sed 's/^/log line /'; }
+fence_length() { fence_length_fence="$(excerpt_fence "$1" "$2")"; echo "${#fence_length_fence}"; }
 kept_line_of() { printf '%s`%s`%s\n' "${kept_line%%%s*}" "$1" "${kept_line#*%s}"; }
 budget_file_name() { printf "budget-%0${#budget_files}d.log" "$1"; }
 first_lines_expected() { printf '%s\n\n%s\n%s\n' "$section_heading" "$(report_value verdict)" "$(sed -n "${count_line_number}p" "$reports/verify.md")"; }
@@ -126,23 +130,23 @@ write_proofs '[{"line": 1, "text": "the login log shows the greeting", "grade": 
 verify >/dev/null 2>&1
 render "$reports" excerpts
 check "Render_TextEvidence_ShowsInACollapsedBlock: a reviewer reads the capture in the pull request without it filling the page" \
-  '[ "$(line_before_summary excerpts notes.txt)" = "$details_open" ] && excerpt_lines excerpts notes.txt | grep -qxF "$notes_marker"'
+  '[ -n "$details_open" ] && [ "$(line_before_summary excerpts notes.txt)" = "$details_open" ] && excerpt_lines excerpts notes.txt | grep -qxF "$notes_marker"'
 check "Render_LongLog_KeepsOnlyTheLastLines: the end of a log holds the outcome, and the body stays short" \
   '[ -n "$(excerpt_lines excerpts login.log)" ] && [ "$(excerpt_lines excerpts login.log)" = "$(long_log_tail)" ]'
 check "Render_EvidenceWithBackticks_FenceIsLongerThanAnyRun: a capture that holds a fence cannot close the block early" \
-  'excerpt_lines excerpts ticks.txt | grep -qF "$backtick_run" && [ "$(excerpt_fence excerpts ticks.txt | wc -c)" -gt "$((backtick_run_length + 1))" ]'
+  'excerpt_lines excerpts ticks.txt | grep -qF "$backtick_run" && [ "$(fence_length excerpts ticks.txt)" -gt "$backtick_run_length" ]'
 check "Render_ImageEvidence_HasNoExcerpt: an image is no text, so it shows only where a proof names it" \
-  'rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF screen.png'
+  '[ -n "$details_open" ] && rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF screen.png'
 check "Render_BinaryEvidence_NamedWithoutExcerpt: a reviewer learns the file exists without bytes that render as noise" \
   'rendered excerpts | grep -qxF -e "$(kept_line_of core.bin)" && [ -z "$(excerpt_block excerpts core.bin)" ]'
 check "Render_EvidenceWithColours_ExcerptHasNoControlCharacters: terminal codes would show as noise in the pull request" \
   '[ -n "$(excerpt_lines excerpts colours.log)" ] && [ "$(excerpt_lines excerpts colours.log | LC_ALL=C tr -d "\001-\010\013-\037\177")" = "$(excerpt_lines excerpts colours.log)" ]'
 check "Render_LiveTextProof_CellPointsToTheExcerpt: a reviewer finds the capture that proves the line below the table" \
-  'section_row excerpts 1 | grep -qF "\`login.log\`$excerpt_below"'
+  '[ -n "$excerpt_below" ] && section_row excerpts "$login_proof_line" | grep -qF "\`login.log\`$excerpt_below"'
 check "Render_NestedTextEvidence_ShowsInACollapsedBlock: a capture may write into a folder of its own" \
   'excerpt_lines excerpts nested/step.log | grep -qxF "$nested_marker"'
 check "Render_LinkInEvidenceFolder_HasNoExcerpt: a link could publish a file from outside the evidence folder" \
-  'rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF -e "$outside_marker" -e linked.log'
+  '[ -n "$details_open" ] && rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF -e "$outside_marker" -e linked.log'
 
 echo "captures past the excerpt budget"
 new_item over-budget "$(capture_gate over-budget)"
@@ -162,7 +166,7 @@ commit_test_command true
 verify >/dev/null 2>&1
 render "$reports" over-budget
 check "Render_EvidenceOverBudget_LeavesTheExcerptOut: the body stays under GitHub's limit however much the captures hold" \
-  '[ -n "$(excerpt_fence over-budget "$(budget_file_name 1)")" ] && excerpt_block over-budget "$(budget_file_name "$budget_files")" | grep -qxF "$body_full" && [ -z "$(excerpt_fence over-budget "$(budget_file_name "$budget_files")")" ]'
+  '[ -n "$body_full" ] && [ -n "$(excerpt_fence over-budget "$(budget_file_name "$first_budget_file")")" ] && excerpt_block over-budget "$(budget_file_name "$budget_files")" | grep -qxF -e "$body_full" && [ -z "$(excerpt_fence over-budget "$(budget_file_name "$budget_files")")" ]'
 
 echo "every line proven"
 new_item all-proven "  ok: 'true'"
