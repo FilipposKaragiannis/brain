@@ -11,8 +11,10 @@ Open the PR for one item. Plugin root `$P`: the directory holding this skill
 path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 `local:<kind>/<n>`. Never build the path by hand.
 
-1. **Preconditions**: `<reports>/verify.json` is `pass`; the worktree is clean; every commit is
-   on the task branch. Otherwise stop with status `fail` and say which.
+1. **Preconditions**: `<reports>/verify.json` is `pass`; every commit is on the task branch; and
+   `"$P/scripts/pr-ready.sh" <item>`, run in the worktree, exits 0. It refuses, printing why, when
+   the report's commit is not the worktree's HEAD or the worktree has changes outside `.flow/`.
+   Otherwise stop with status `fail`, quoting what it printed: the owner runs verify again.
    **Open blocker**: an item in the item's `blocked_by` that is still open means no PR yet,
    unless the owner's answer in the brief says to open it now. Stop with status `gate`, gate
    `ambiguity`, never `fail` (a fail runs the step again at once and escalates while the blocker

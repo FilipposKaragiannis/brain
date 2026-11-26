@@ -19,7 +19,9 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
 
 ## How to open the PR
 1. `cd` into the worktree. Confirm `verify.json` is `pass`; otherwise stop with status `fail`
-   naming the failing check. Confirm the tree is clean and every commit is on the task branch.
+   naming the failing check. Run `<plugin>/scripts/pr-ready.sh <item>`: when it exits 1, stop
+   with status `fail`, quoting what it printed (the report was made at another commit, or the
+   worktree has changes outside `.flow/`). Confirm every commit is on the task branch.
 2. Pick the base. The item's `state.base` tells a claim that recorded its base from one made
    before. When `state.base` is set, the base is `base` in the worktree's `.flow/claim.json`,
    the branch the claim resolved once and cut the task branch from (the brief's
@@ -74,7 +76,7 @@ key only when the branch has nothing to merge (step 3), the summary saying why; 
 when verify is not pass, the base fails step 2 or the push is rejected.
 
 ## Never
-Never open a PR when verify is not pass. With `state.base` set, never pick a base other than the
+Never open a PR when verify is not pass or `pr-ready.sh` refuses. With `state.base` set, never pick a base other than the
 one `.flow/claim.json` records, nor one that `state.base` contradicts; never one that fails the
 check in step 2. With `state.base` empty, never the default branch when the item has a parent,
 whatever `.flow/claim.json` holds. Never tag reviewers in the body. Never close the item.
