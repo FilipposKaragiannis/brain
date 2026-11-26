@@ -6,9 +6,9 @@
 #   <reports>/verify.json                  {status, checks, attempts} the verify report
 # Blocks (decision: block) while a step is in flight and its result is missing, and at the pr
 # step while the verify report is not pass (until attempts reach 3, which is an escalation and a
-# human gate), and at the pr step whenever the report's head commit is not the PR head: the
-# pushed copy of the worktree's own branch (read locally, no network call), or the worktree HEAD
-# before one exists.
+# human gate), and at the pr step whenever the report's head commit is not the PR head (the report
+# holds the short id, so it matches by prefix): the pushed copy of the worktree's own branch (read
+# locally, no network call), or the worktree HEAD before one exists.
 # Honours stop_hook_active so one block never becomes a loop. FLOW_HOME overrides the main
 # worktree's .flow (tests).
 . "$(dirname "$0")/lib.sh"
@@ -39,7 +39,7 @@ pr_head() {
 stale_report_reason() {
   stale_report_head="$(json_get "$1" "head")"
   stale_current_head="$(pr_head)"
-  [ "$stale_report_head" = "$stale_current_head" ] && return
+  [ -n "$stale_report_head" ] && case "$stale_current_head" in "$stale_report_head"*) return ;; esac
   printf '%s' "The verify report for $item was made at ${stale_report_head:-no commit} but the PR head is ${stale_current_head:-unknown}. Run verify again on the PR head, whatever the attempt count."
 }
 failing_report_reason() {
