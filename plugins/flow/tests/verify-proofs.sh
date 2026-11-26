@@ -4,8 +4,9 @@
 # in the JSON, one graded proof per line in the JSON and in a Proofs table, and the lines graded
 # build-only, blocked or error in the Not checked list. A live proof needs a file under evidence/,
 # a test proof a test name and a passing tests check, a line number outside the file or used twice
-# is an error, a file written for another commit grades no line, and a proofs file that is no JSON
-# object never stops the report. Each run's gate writes its evidence, as a capture does, and the
+# is an error, a file written for another commit grades no line, a capture an earlier run left is
+# none (a link at evidence/ goes as a link), and a proofs file that is no JSON object never stops
+# the report. Each run's gate writes its evidence, as a capture does, and the
 # suite writes proofs.json alone, never a report. On the local adapter in throwaway repos.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
@@ -197,5 +198,24 @@ check "ProofsFileThatIsAList_NotCheckedNamesTheFile: the reviewer learns the pro
   'not_checked_bullets | grep -q "^- proofs.json, error: "'
 check "ProofsFileThatIsAList_StatusIsTheChecksStatus: a proofs file of the wrong shape never fails verify" \
   '[ "$(report_status)" = pass ]'
+
+echo "a capture left from an earlier run"
+new_item kept-capture "$(capture_gate kept-capture)"
+write_capture kept-capture "mkdir -p '$reports/evidence' && echo png > '$reports/evidence/login-error.png'"
+verify >/dev/null 2>&1
+write_capture kept-capture "true"
+printf 'z\n' > "$worktree/next.txt" && git -C "$worktree" add -A && git -C "$worktree" commit -qm next
+write_proofs '[{"line": 1, "text": "the login error shows", "grade": "live", "evidence": "evidence/login-error.png"}]'
+verify >/dev/null 2>&1
+check "LiveProofOfACaptureFromAnEarlierRun_IsAnError: only a file captured in this run proves a line live" \
+  '[ "$(report_value proofs.0.grade)" = error ]'
+
+echo "an evidence folder that is a link"
+new_item linked-evidence "  ok: 'true'"
+mkdir -p "$work/kept-elsewhere" && echo png > "$work/kept-elsewhere/screen.png"
+ln -s "$work/kept-elsewhere" "$reports/evidence"
+verify >/dev/null 2>&1
+check "EvidenceFolderThatIsALink_RunRemovesTheLinkAlone: the files the link points to are never emptied" \
+  '[ ! -e "$reports/evidence" ] && [ ! -L "$reports/evidence" ] && [ -f "$work/kept-elsewhere/screen.png" ]'
 
 if [ "$fails" -eq 0 ]; then echo "verify-proofs: ok"; else echo "verify-proofs: $fails failed"; exit 1; fi

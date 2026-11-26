@@ -10,7 +10,8 @@
 # <acceptance_lines> acceptance lines proven live or by test`, graded from the <reports>/proofs.json
 # the verifier writes before the run (scripts/_verify_report.py; the minimal fail report grades
 # none: 0 of 0), and verify.md ends with a `## Not checked` section that says none when empty.
-# Evidence files live under <reports>/evidence/.
+# Evidence files live under <reports>/evidence/, which every run removes first (a link there as a
+# link), so a live proof holds only for a file a capture wrote in the run.
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
@@ -229,6 +230,7 @@ esac
 name_separator="$(printf '\037')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
+rm -rf "$reports/evidence" || die "could not remove the evidence of an earlier run in $reports/evidence"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
