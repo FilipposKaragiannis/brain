@@ -172,6 +172,25 @@ check "ImportOfAnIdOfNoAdaptersShape_ReportsNoImportOfIt: because only an id its
 check "ImportOfAnIdOfNoAdaptersShape_SeedsNoRecord: because an id that only shares another item's slug would plant that item's record" \
   '[ "$(ls .flow/state)" = "$(basename "$(record path "$shaped")")" ] || { ls .flow/state; false; }'
 
+echo "import of an id that shares a real item's slug: the real item keeps its own state"
+new_repo aliased
+alias_item="$(new_task "Id that aliases the next item")"
+"$local_adapter/write-state.sh" "$alias_item" step=implement
+real_item="$(new_task "Item the alias shares a slug with")"
+"$local_adapter/write-state.sh" "$real_item" step=review
+alias_id="$(printf '%s' "$real_item" | tr '/' '#')"
+python3 -c 'import re, sys
+path = sys.argv[1]; text = open(path).read()
+open(path, "w").write(re.sub(r"(?m)^id: .*$", "id: " + sys.argv[2], text, count=1))' "$(item_path "$alias_item")" "$alias_id"
+record import --dry-run > "$work/aliased-dry-run.out" 2>&1
+check "DryRunBesideAnIdThatAliasesAnItem_NamesTheItem: because a misshaped id drops only its own row" \
+  'said_would "$work/aliased-dry-run.out" "$real_item"'
+check "DryRunOfAnIdThatAliasesAnItem_DoesNotNameIt: because only an id its adapter's slug.sed gives back reaches the tracker" \
+  '! said_would "$work/aliased-dry-run.out" "$alias_id"'
+record import > "$work/aliased.out" 2>&1
+check "ImportOfAnIdThatAliasesAnItem_RecordsTheItemsOwnStep: because a slug another id shares must not carry that id's state" \
+  '[ "$(record get "$real_item" step)" = review ]'
+
 echo "import under a locale that cannot spell a worktree: every row still comes out"
 latin_locale=en_US.ISO8859-1
 if locale -a 2>/dev/null | grep -qx "$latin_locale"; then
