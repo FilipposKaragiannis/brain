@@ -534,6 +534,22 @@ check "StripStateWithNoTrustedLogin_Fails: a strip that cannot tell whose state 
 check "StripStateWithNoTrustedLogin_KeepsTheStateComment: the gh user's state comment is still there, because the strip stopped before it" \
   [ "$(marker_comment_count 51 "$gh_user")" = 1 ]
 rm -f "$FAKE_GH_DIR/fail"
+commented_profile=task-M
+python3 - "$FAKE_GH_DIR/issues.json" "$state_marker" "$gh_user" "$commented_profile" <<'PY'
+import json, sys
+path, marker, gh_user, profile = sys.argv[1:]
+data = json.load(open(path))
+for number, label in ((60, "step:plan"), (61, "gate:ambiguity"), (62, "wt:wt-1"), (63, "flow:task-L")):
+    data["issues"].append({"number": number, "title": "Label kind %d" % number, "body": "", "state": "OPEN",
+                           "labels": [label], "url": "https://gh/%d" % number,
+                           "comments": [{"id": number * 100, "body": "%s\n```json\n%s\n```\n" % (marker, json.dumps({"profile": profile})),
+                                         "user": {"login": gh_user}}]})
+json.dump(data, open(path, "w"))
+PY
+for label_kind in 'step:gh#60' 'gate:gh#61' 'wt:gh#62' 'flow:gh#63'; do
+  check "ListOfAnIssueWithOneFlowLabel_ReadsItsStateComment (${label_kind%%:*}): the list takes the profile from the state comment, because every flow label kind marks an issue the flow holds state for" \
+    [ "$(listed_profile "${label_kind#*:}")" = "$commented_profile" ]
+done
 cp "$work/issues.authors" "$FAKE_GH_DIR/issues.json"; cp "$work/config.authors" .flow/config.yaml
 
 [ "$fails" -eq 0 ] && { echo "github-tracker: ok"; exit 0; }
