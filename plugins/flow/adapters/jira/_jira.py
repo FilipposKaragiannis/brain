@@ -416,10 +416,10 @@ def cmd_write_state(args):
     expect(status, answer, "write the state of %s%s" % (PREFIX, key))
 
 
-def cmd_strip_state(args: list) -> str:
-    if len(args) != 1:
+def cmd_strip_state(arguments: list) -> str:
+    if len(arguments) != 1:
         fail("usage: strip-state <id>", EXIT_USAGE)
-    key = key_of(args[0])
+    key = key_of(arguments[0])
     removed_labels = strip_flow_labels(key)
     deleted_property = delete_state_property(key)
     return PREFIX + key if removed_labels or deleted_property else ""

@@ -357,10 +357,10 @@ def cmd_write_state(home, args):
     dump(path, meta, body)
 
 
-def cmd_strip_state(home: str, args: list) -> str:
-    if len(args) != 1:
+def cmd_strip_state(home: str, arguments: list) -> str:
+    if len(arguments) != 1:
         usage("usage: strip-state <id>")
-    item_id = args[0]
+    item_id = arguments[0]
     path = existing_item_path(home, item_id)
     meta, body = parse(path)
     kept = {key: value for key, value in meta.items() if key not in STRIPPED_KEYS}

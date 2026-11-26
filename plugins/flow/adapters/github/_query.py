@@ -226,21 +226,21 @@ def unread_state(number: int, reading: str, why: str) -> None:
     return None
 
 
-def state_comment(repo: str, issue: dict, rule: _state_comment.StateCommentRule, reading: str) -> Optional[dict]:
+def state_comment(repository: str, issue: dict, rule: _state_comment.StateCommentRule, reading: str) -> Optional[dict]:
     if reading == LABELLED_ISSUES and not carries_flow_label(issue):
         return {}
     number = issue["number"]
     if not rule.logins:
         return unread_state(number, reading, "cannot tell whose state comments count on gh#%d (set github.answer_from, "
                                              "or log in with gh auth login)" % number)
-    pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=%d" % (repo, number, REST_PAGE_SIZE))
+    pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=%d" % (repository, number, REST_PAGE_SIZE))
     if pages is None:
         return unread_state(number, reading, "cannot read the comments of gh#%d" % number)
     found = _state_comment.state_comments(rule, pages)
     return _state_comment.state_of(found[0]) if found else {}
 
 
-def raw(repo: str, node: dict, rule: _state_comment.StateCommentRule, reading: str) -> Optional[dict]:
+def raw(repository: str, node: dict, rule: _state_comment.StateCommentRule, reading: str) -> Optional[dict]:
     fields = {}
     for v in (node.get("issueFieldValues") or {}).get("nodes", []):
         name = (v.get("field") or {}).get("name")
@@ -260,7 +260,7 @@ def raw(repo: str, node: dict, rule: _state_comment.StateCommentRule, reading: s
                            "status": (p.get("fieldValueByName") or {}).get("name", "")}
                           for p in (node.get("projectItems") or {}).get("nodes", [])],
     }
-    issue["state_comment"] = state_comment(repo, issue, rule, reading)
+    issue["state_comment"] = state_comment(repository, issue, rule, reading)
     return None if issue["state_comment"] is None else issue
 
 
