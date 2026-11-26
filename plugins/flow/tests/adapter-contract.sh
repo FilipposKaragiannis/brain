@@ -603,7 +603,7 @@ meta, _ = _item.parse(sys.argv[2]); sys.exit(1 if set(meta) & _item.STRIPPED_KEY
 full_state_gone_github() {
   python3 -c 'import json,sys
 issue = [i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2])][0]
-sys.exit(1 if [c for c in issue.get("comments", []) if "<!-- flow:state -->" in c["body"]] else 0)' "$FAKE_GH_DIR/issues.json" "${1#gh#}"
+sys.exit(1 if [c for c in issue.get("comments", []) if c["body"].startswith("<!-- flow:state -->")] else 0)' "$FAKE_GH_DIR/issues.json" "${1#gh#}"
 }
 full_state_gone_jira() {
   python3 -c 'import json,sys; sys.exit(1 if "flow-state" in json.load(open(sys.argv[1]))["issues"][sys.argv[2]]["properties"] else 0)' \
@@ -616,6 +616,7 @@ echo " strip-state"
 stripped="$("$A/create.sh" task "Strip: state an older flow wrote" --size S)"
 "$A/write-state.sh" "$stripped" step=implement gate=plan-approval worktree=wt-3 profile=task-S size=M >/dev/null 2>&1
 "$A/comment.sh" "$stripped" --body "a comment strip-state keeps" >/dev/null 2>&1
+"$A/comment.sh" "$stripped" --body "$(printf '> <!-- flow:state -->\na reply that quotes the state marker')" >/dev/null 2>&1
 check "StripStateForeignId_ExitsTwo: strip-state of an id another adapter owns exits 2, because the adapter strips only its own items" '[ "$(code_of "$A/strip-state.sh" "nobody:1")" = 2 ]'
 check "StripStateMissingItem_ExitsOne: strip-state of an id that names no item exits 1, because the tracker has nothing to strip" '[ "$(code_of "$A/strip-state.sh" "$missing")" = 1 ]'
 "$A/strip-state.sh" "$stripped" > "$work/strip-state.out" 2>/dev/null
@@ -625,6 +626,7 @@ check "StripState_LeavesNoFullState: the store no longer holds the state write-s
 check "StripState_ClearsTheStep: the step reads back empty, because neither the label nor the full state is left to read it from" '[ -z "$(field "$stripped" state.step)" ]'
 check "StripState_KeepsTheSize: the size write-state wrote still reads back, because the size is the item's own" '[ "$(field "$stripped" size)" = M ]'
 check "StripState_KeepsOtherComments: a comment that holds no state is still on the item, because strip-state takes only the flow's own" '"comments_$name" "$stripped" | grep -q "a comment strip-state keeps"'
+check "StripState_KeepsACommentThatQuotesTheMarker: a reply that quotes the state marker is still on the item, because only a comment the flow wrote starts with it" '"comments_$name" "$stripped" | grep -q "a reply that quotes the state marker"'
 check "StripStateOfACleanItem_PrintsNothing: a second strip-state prints nothing, because nothing was left to take" '[ -z "$("$A/strip-state.sh" "$stripped" 2>/dev/null)" ]'
 check "StripStateOfACleanItem_ExitsZero: a second strip-state exits 0, because a clean item is no failure" '[ "$(code_of "$A/strip-state.sh" "$stripped")" = 0 ]'
 

@@ -1,8 +1,8 @@
 #!/bin/sh
 # github strip-state <id>: take the flow's state off the issue. Temporary: state.sh import --strip
 # is its one caller, and it goes when write-state goes. It removes the step:, gate:, wt: and flow:
-# labels and every comment marked <!-- flow:state -->, and leaves the size: and priority: labels,
-# the size field and every other comment. A label with a comma in it is left and said, as gh would
+# labels and every comment that starts with <!-- flow:state -->, and leaves the size: and priority:
+# labels, the size field and every other comment, such as a reply that quotes the marker. A label with a comma in it is left and said, as gh would
 # read it as two. Prints the id when it removed something, nothing when the issue was clean. Exit 2
 # for an id that is not GitHub's, 1 when GitHub fails.
 set -u
@@ -17,7 +17,7 @@ state_comment_ids="$(printf '%s' "$comments" | cached_python3 -I -c '
 import json, sys
 marker = sys.argv[1]
 for comment in [comment for page in json.load(sys.stdin) for comment in page]:
-    if marker in comment.get("body", ""):
+    if comment.get("body", "").startswith(marker):
         print(comment["id"])' "$STATE_MARKER")" || die "cannot read the comments of $item"
 set --
 removed_labels=0
