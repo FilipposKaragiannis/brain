@@ -1,7 +1,9 @@
 """Which open items state.sh import records, skips or strips. Pure: it reads only what it is given.
 
 parsed_lists reads the trackers' lists, one line per tracker: its id prefix, a tab and a JSON array of
-its adapter items, and keeps the items whose id has that prefix and a slug shape. import_rows takes
+its adapter items, and keeps the items whose id has that prefix and a slug shape. items_of_shape
+keeps of those the ones whose id the caller found its adapter's slug.sed gives back, so no id
+that only shares another's slug gets a row or a record. import_rows takes
 those items, the slugs of this machine's open records, the slugs of those that do not parse and
 the items a pool worktree's claim.json names here, and returns one row per item to record or skip,
 then one per item to strip:
@@ -41,6 +43,7 @@ NO_STATE = MappingProxyType({})
 NO_ROW = None
 CLAIM_ITEM_FIELD = "item"
 UNPRINTABLE_STAND_IN = "?"
+SHAPED_ITEMS_SEPARATOR = "\n"
 
 ListedItem = namedtuple("ListedItem", ("id", "open", "state", "labels"))
 Listing = namedtuple("Listing", ("items", "problem"))
@@ -78,6 +81,15 @@ def parsed_lists(text: str) -> Listing:
     if problem:
         return Listing((), problem)
     return Listing(tuple(item for listing in listings for item in listing.items), "")
+
+
+def items_of_shape(listed: tuple, shaped_items: str) -> tuple:
+    shaped = frozenset(shaped_items.split(SHAPED_ITEMS_SEPARATOR))
+    return tuple(item for item in listed if item.id in shaped)
+
+
+def listed_ids_text(listed: tuple) -> str:
+    return "".join(item.id + SHAPED_ITEMS_SEPARATOR for item in listed)
 
 
 def claimed_item(claim: Mapping) -> str:

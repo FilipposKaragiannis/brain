@@ -9,7 +9,9 @@ lib/state.sh and lib/migrate.sh (import) are its callers; see there.
   _state.py status  --state-dir D --flow-home H --item I
   _state.py archive --state-dir D --flow-home H --item I --machine M
   _state.py join|list|row ...  the record laid onto items, and its run and gate rows: _state_reads.py
-  _state.py import  --state-dir D --flow-home H --now T --machine M --effect plan|write -- <pool entry>...
+  _state.py import  --state-dir D --flow-home H --now T --machine M --effect plan|write
+                    --shaped-items S -- <pool entry>...
+  _state.py listed
 
 The record is <state dir>/<slug>.json, archived to <state dir>/closed/<slug>.json; its lock is
 <flow home>/locks/<slug>.lock, and set, take and archive exit 75 when it stays busy. With no record
@@ -21,11 +23,13 @@ get prints a string raw and anything else as JSON, nothing when the record or th
 status prints the tracker status the record stands for (_state_schema.pushed_status), nothing with
 no record or no claim.
 import reads the trackers' lists on stdin, one line per tracker (its id prefix, a tab, a JSON array),
-and the claim.json of each pool entry (a relative one under the flow home's parent), and prints
+and the claim.json of each pool entry (a relative one under the flow home's parent), keeps the
+listed items --shaped-items names, and prints
 the rows _state_import.py gives, tab separated, with a stand-in for what the locale cannot spell.
 Under write it first seeds the record of each item it imports, under the item's lock, as set seeds
 one; an item whose record stays busy is skipped. It exits 1 when a listed
-item's record does not parse or one stays busy.
+item's record does not parse or one stays busy. listed prints the id of each item those lists
+hold, one per line, for the caller to put through the adapters' slug.sed.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
 import fcntl
@@ -52,6 +56,7 @@ RecordedSlugs = namedtuple("RecordedSlugs", ("recorded", "unreadable"))
 Reply = namedtuple("Reply", ("outcome", "output"))
 NO_OUTPUT = ""
 IMPORT_COMMAND = command_line.POOL_COMMAND
+LISTED_COMMAND = "listed"
 NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 NEW_FILE_MODE = 0o666
 TEMPORARY_NAME_RANDOM_BYTES = 8
@@ -294,11 +299,19 @@ def command_import(options: command_line.Options, random_bytes: Callable[[int], 
     listing = importing.parsed_lists(sys.stdin.read())
     if listing.problem:
         return Reply(schema.Outcome(schema.EXIT_USAGE, listing.problem), NO_OUTPUT)
-    slugs = recorded_slugs_warning_unreadable(options, listing.items)
-    rows = importing.import_rows(listing.items, slugs.recorded, slugs.unreadable, claimed_items(options))
-    unseeded = seed_imports(options, rows, listing.items, random_bytes)
+    listed = importing.items_of_shape(listing.items, options.shaped_items)
+    slugs = recorded_slugs_warning_unreadable(options, listed)
+    rows = importing.import_rows(listed, slugs.recorded, slugs.unreadable, claimed_items(options))
+    unseeded = seed_imports(options, rows, listed, random_bytes)
     output = "".join(importing.row_text(row) + "\n" for row in importing.rows_after_writes(rows, unseeded))
     return Reply(schema.Outcome(schema.EXIT_UNREADABLE if slugs.unreadable or unseeded else schema.EXIT_DONE, ""), output)
+
+
+def command_listed() -> Reply:
+    listing = importing.parsed_lists(sys.stdin.read())
+    if listing.problem:
+        return Reply(schema.Outcome(schema.EXIT_USAGE, listing.problem), NO_OUTPUT)
+    return Reply(schema.DONE, importing.listed_ids_text(listing.items))
 
 
 def warn(message):
@@ -319,6 +332,8 @@ def command_reply(parsed: command_line.CommandLine, random_bytes: Callable[[int]
         return Reply(parsed.outcome, NO_OUTPUT)
     if parsed.options.command == IMPORT_COMMAND:
         return command_import(parsed.options, random_bytes)
+    if parsed.options.command == LISTED_COMMAND:
+        return command_listed()
     return Reply(commands(random_bytes)[parsed.options.command](parsed.options), NO_OUTPUT)
 
 

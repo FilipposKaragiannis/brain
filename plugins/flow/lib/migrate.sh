@@ -24,9 +24,12 @@ state_import() (
   done <<POOL
 $(cfg pool)
 POOL
+  flow_migrate_listed_ids="$(printf '%s\n' "$flow_migrate_lists" | cached_python3 -I "$FLOW_PLUGIN/scripts/_state.py" listed)" \
+    || exit "$EXIT_USAGE"
+  flow_migrate_shaped_items="$(printf '%s\n' "$flow_migrate_listed_ids" | migrate_shaped_ids)"
   flow_migrate_rows="$(printf '%s\n' "$flow_migrate_lists" | cached_python3 -I "$FLOW_PLUGIN/scripts/_state.py" import \
     --state-dir "$(state_dir)" --flow-home "$(flow_home)" --now "$(now_iso)" --machine "$(flow_machine)" \
-    --effect "$flow_migrate_effect" -- "$@")"
+    --effect "$flow_migrate_effect" --shaped-items "$flow_migrate_shaped_items" -- "$@")"
   case $? in 0) ;; 1) flow_migrate_failed=1 ;; *) exit "$EXIT_USAGE" ;; esac
   migrate_rows_done "$flow_migrate_effect" "$flow_migrate_strip" "$flow_migrate_rows" || flow_migrate_failed=1
   exit "$flow_migrate_failed"

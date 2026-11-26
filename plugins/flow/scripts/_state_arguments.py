@@ -4,7 +4,8 @@ Pure: it reads only the words it is given.
 A command, then each of its options as `--name value`, every one required but the --item of list
 (given twice, the last counts), then `--` and the command's words: the pairs of set, the one key of
 get, the pool entries of import, none for the others. --seed is stdin or none, --kind runs or
-gates, --effect plan or write. --item, where a command
+gates, --effect plan or write. --shaped-items is the listed ids, one per line, that their
+adapter's slug.sed gives back, maybe none. --item, where a command
 takes one, is an id whose slug holds only letters, digits, _ and -, as the slug of every adapter's
 id shape does, so no item names a path. A line outside this grammar is refused with the command's
 usage, exit 2. Hand-written rather than argparse, whose import was a large share of every write's
@@ -38,7 +39,8 @@ COMMAND_OPTIONS = MappingProxyType({
     "join": ("state-dir", "flow-home"),
     "list": ("state-dir", "flow-home", "kind"),
     "row": ("state-dir", "flow-home", "kind", "item"),
-    "import": ("state-dir", "flow-home", "now", "machine", "effect"),
+    "import": ("state-dir", "flow-home", "now", "machine", "effect", "shaped-items"),
+    "listed": (),
 })
 OPTIONAL_OPTIONS = MappingProxyType({"list": (ITEM_OPTION,)})
 PAIRS_COMMAND = "set"
@@ -47,8 +49,9 @@ POOL_COMMAND = "import"
 WORDS_USAGE = MappingProxyType({PAIRS_COMMAND: "-- <pair>...", KEY_COMMAND: "-- <key>",
                                 POOL_COMMAND: "-- <pool entry>..."})
 WORD_COUNTS = MappingProxyType({KEY_COMMAND: 1, "take": 0, "show": 0, "status": 0, "archive": 0, "join": 0, "list": 0,
-                                 "row": 0})
-OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed", "kind", "effect")
+                                 "row": 0, "listed": 0})
+OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed", "kind", "effect",
+                 "shaped_items")
 UNSET_OPTIONS = MappingProxyType(dict.fromkeys(OPTION_FIELDS, ""))
 Options = namedtuple("Options", ("command",) + OPTION_FIELDS + ("pairs", "key", "pool"))
 NO_OPTIONS = Options(command="", pairs=(), key="", pool=(), **UNSET_OPTIONS)
