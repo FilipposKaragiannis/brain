@@ -79,12 +79,9 @@ branch_name_valid() {
   base_name_valid "$1" && git -C "$(flow_repository)" check-ref-format --branch "$1" >/dev/null 2>&1
 }
 
-# claim_branch <item> <item-json> <base>: the task branch a new claim of the item from the base
-# takes. The branch its state records when branch_recorded_trusted takes it (a release keeps it,
-# and a title edit never renames it); else flow/<slug> when that branch exists (a claim made before
-# the template); else the item's template rendered. With no item JSON (the item could not be read)
-# it renders from the id alone, and gives nothing and 1 when the template needs the kind or the
-# title, or is a per-kind map.
+# The item JSON comes from item_read: on a raw adapter read, state_get's record guard hides the
+# recorded task branch. A recorded branch wins so a release keeps it and a title edit never
+# renames it.
 claim_branch() {
   claimed_item_json="$2"
   claimed_kind="$(json_get "$claimed_item_json" kind)"

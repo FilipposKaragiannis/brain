@@ -207,16 +207,9 @@ claim_base_option() {
   printf '%s' "$option_base"
 }
 
-# claim_at_base <item> <item-json>: claims a pool worktree for the item and prints its path. A new
-# claim starts from the base fetch_item_base resolves, and the events log says which and why; an
-# item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
-# branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
-# returns 4: a claim from the config base would put the work on the wrong history. So does an
-# epic's child while no epic above it has an epic branch; the reason names the epic, the branch to
-# push and the base: line that starts the item elsewhere. The task branch
-# comes from the item JSON too (claim_branch), so the claim reads no item again. Else the exit
-# code of steward.sh claim (2: the branch template gives no valid task branch name; 3: no free
-# worktree; 4: another claim holds the task branch).
+# The item JSON comes from item_read: on a raw adapter read, state_get's record guard hides the
+# recorded task branch. A base: line that cannot be used fails the claim rather than fall back to
+# the config base, which would put the work on the wrong history.
 claim_at_base() {
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")"
   if [ -n "$claimed_worktree" ]; then wait_for_running_setup "$claimed_worktree"; printf '%s\n' "$claimed_worktree"; return 0; fi

@@ -9,6 +9,7 @@
 # human gate). Honours stop_hook_active so one block never becomes a loop. FLOW_HOME overrides
 # the main worktree's .flow (tests).
 . "$(dirname "$0")/lib.sh"
+use_working_git
 payload="$(read_payload)"
 [ "$(json_get "$payload" "stop_hook_active")" = "true" ] && exit 0
 root="$(repo_root)" || exit 0
