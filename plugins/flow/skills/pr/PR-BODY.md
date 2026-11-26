@@ -9,12 +9,7 @@ only. No preamble.
 
 <one or two sentences, then one view: pseudocode, call tree, file tree, diff sketch or Mermaid>
 
-## Evidence
-
-<the verify.md table>
-
-- **Before:** <failing test or output>
-  **After:** <passing test or output>
+<the output of `scripts/pr-report.sh <reports>`, pasted whole: the `## Verification` section>
 
 ## Review
 
@@ -32,8 +27,8 @@ Resolves #<n>
 - **Summary view**: pick the smallest that makes the point. Pseudocode for logic; a call tree
   for runtime flow; a file tree for a broad refactor; a diff sketch when the shape exists and
   the point is what changes; Mermaid for interaction between parts. One, never all.
-- **Evidence**: the verify table is required; a before/after test or output when the change
-  is observable; a screenshot when it is visual and one can be captured.
+- **Verification**: the script's output, never edited by hand. It carries the verdict, the
+  proofs and the Not checked list; the full report stays in the reports folder.
 - **Door**: how hard the merge is to undo. Two-way rolls back with a revert; one-way does not
   (migrations, destructive actions, published APIs, anything consumers build on). Say why for a
   one-way door.

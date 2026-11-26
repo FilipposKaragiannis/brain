@@ -9,17 +9,22 @@ tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 
 ## Role
 Open or update the pull request for an item from the verify report, with the house body, the
-right base branch, the verify summary, the quiz when one exists, and the review requests.
+right base branch, the verdict, the proofs and the Not checked list, the quiz when one exists, and
+the review requests.
 
 ## Inputs
 The item (its `parent`, acceptance lines, `state.base`), the task branch in the claimed
-worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verify.md` (must be pass), `<reports>/explain.html` and
-`quiz.md` when the explain step ran, the PR body template in the `flow:pr` skill, the repo's
-`.github/PULL_REQUEST_TEMPLATE.md` when there is one, and `.flow/config.yaml` (`base`).
+worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` (must be pass), the
+Verification section `<plugin>/scripts/pr-report.sh <reports>` prints from it,
+`<reports>/explain.html` and `quiz.md` when the explain step ran, the PR body template in the
+`flow:pr` skill, the repo's `.github/PULL_REQUEST_TEMPLATE.md` when there is one, and
+`.flow/config.yaml` (`base`).
 
 ## How to open the PR
 1. `cd` into the worktree. Confirm `verify.json` is `pass`; otherwise stop with status `fail`
-   naming the failing check. Confirm the tree is clean and every commit is on the task branch.
+   naming the failing check. Run `<plugin>/scripts/pr-ready.sh <item>`: when it exits 1, stop
+   with status `fail`, quoting what it printed (the report was made at another commit, or the
+   worktree has changes outside `.flow/`). Confirm every commit is on the task branch.
 2. Pick the base. The item's `state.base` tells a claim that recorded its base from one made
    before. When `state.base` is set, the base is `base` in the worktree's `.flow/claim.json`,
    the branch the claim resolved once and cut the task branch from (the brief's
@@ -41,9 +46,13 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    with changes is never `done` without a PR. Otherwise push: `git push -u origin <branch>`.
 4. Body: the repo template when one exists, else the house template: Summary with the
    smallest view that makes the point (pseudocode, call tree, file tree, diff sketch or
-   Mermaid, one of them), Evidence before and after from the verify report, Merge danger
-   (one-way or two-way door, blast radius in one word), the `verify.md` table, and
-   `Resolves #<n>` for a GitHub item (a local item gets `Item: <id>`). Glossary words only.
+   Mermaid, one of them), the Verification section, Merge danger (one-way or two-way door,
+   blast radius in one word), and `Resolves #<n>` for a GitHub item (a local item gets
+   `Item: <id>`). Glossary words only. The Verification section is the output of
+   `<plugin>/scripts/pr-report.sh <reports>`, pasted whole and never edited: the verdict, the
+   proofs and the Not checked list. With a repo template it goes at the template's verification
+   or testing section, else at the end before `Resolves`. When the script exits non-zero, stop
+   with status `fail` naming it and its message.
    Open the PR with the whole body at once: `gh pr create --base <base> --head <branch> --title
    <item title> --body-file <file>`. The PR is a GitHub PR on the origin whatever tracker holds
    the item; a local or Jira item gets one too, and its tracker only records it (step 6). A
@@ -64,8 +73,10 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    the API. Never write a reviewer mention yourself.
 8. When the base is not the default branch, warn in the result that the merge will not
    auto-close the item; the closeout step closes it.
-9. Updating an existing PR (the state has `pr`): push, edit the body's verify section, add one
-   comment with what changed since the last push.
+9. Updating an existing PR (the state has `pr`): push, replace the `## Verification` section
+   with the script's new output (the section runs from that heading to the next `## ` heading,
+   the `Resolves #<n>` or `Item: <id>` line or the end, whichever comes first, so the footer
+   stays), add one comment with what changed since the last push.
 
 ## Output
 The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
@@ -74,7 +85,7 @@ key only when the branch has nothing to merge (step 3), the summary saying why; 
 when verify is not pass, the base fails step 2 or the push is rejected.
 
 ## Never
-Never open a PR when verify is not pass. With `state.base` set, never pick a base other than the
+Never open a PR when verify is not pass or `pr-ready.sh` refuses. With `state.base` set, never pick a base other than the
 one `.flow/claim.json` records, nor one that `state.base` contradicts; never one that fails the
 check in step 2. With `state.base` empty, never the default branch when the item has a parent,
 whatever `.flow/claim.json` holds. Never tag reviewers in the body. Never close the item.

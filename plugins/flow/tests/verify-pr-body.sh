@@ -1,0 +1,314 @@
+#!/bin/sh
+# verify-pr-body.sh: pr-report.sh renders the verify report as the Verification section of a pull
+# request body: the heading, the verdict and the count, one proofs row per acceptance line (a live
+# proof names its file and links nothing, a test proof names its test), the Not checked list and no
+# checks table; a folder with no report or a report without a key the section needs stops it with
+# the reason. Each text capture under evidence/, nested or not, shows its last lines in a collapsed
+# block with a fence no backtick run closes and no control character, a live proof of it points
+# there, and the excerpts stop at the budget; an image shows none, a binary file is only named, and
+# a link is never read. The reports come from the real verify, on the local adapter in throwaway
+# repos, from a proofs file and captures the suite writes. Exit 0 when every check passes, 1 on any failure. run.sh runs it.
+# shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
+. "$(dirname "$0")/_base_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+. "$here/_verify_fixture.sh"
+
+section_heading="## Verification"
+first_section_lines=4
+count_line_number=2
+rendered_exit=0
+missing_report_exit=1
+usage_exit=2
+unreadable_proofs_bullet="- \`proofs.json\`, \`error\`: "
+missing_capture_bullet="- Line 1, \`error\`: "
+test_name=Greet_WithName_PrintsHello
+mention_text="@octocat Closes #1"
+test_with_backtick="Greet_With\`Name"
+build_only_reason="the Unity client has no capture command yet"
+blocked_reason="the staging server is down"
+not_checked_title="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from _pr_report import NOT_CHECKED_TITLE; print(NOT_CHECKED_TITLE)' "$plugin/scripts")"
+verify_report_constant() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report; print(getattr(_verify_report, sys.argv[2]))' "$plugin/scripts" "$1"; }
+not_checked_none="$(verify_report_constant NOT_CHECKED_NONE)"
+verdict_line="$(verify_report_constant VERDICT_LINE)"
+failed_status="$(verify_report_constant FAILED)"
+verdict_line_number=3
+house_template="$plugin/skills/pr/PR-BODY.md"
+pr_report_constant() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _pr_report; print(getattr(_pr_report, sys.argv[2]))' "$plugin/scripts" "$1"; }
+excerpt_lines_kept="$(pr_report_constant EXCERPT_LINES)"
+excerpt_line_characters="$(pr_report_constant EXCERPT_LINE_CHARACTERS)"
+excerpt_budget="$(pr_report_constant EXCERPT_BUDGET_CHARACTERS)"
+summary_line="$(pr_report_constant SUMMARY_LINE)"
+summary_after_name="${summary_line#*%s}"
+summary_before_name="${summary_line%%%s*}"; summary_after_name="${summary_after_name%%, %s*}"
+details_open="$(pr_report_constant DETAILS_OPEN)"
+details_close="$(pr_report_constant DETAILS_CLOSE)"
+excerpt_below="$(pr_report_constant EXCERPT_BELOW)"
+body_full="$(pr_report_constant BODY_FULL)"
+kept_line="$(pr_report_constant KEPT_LINE)"
+dropped_log_lines=7
+long_log_lines=$((excerpt_lines_kept + dropped_log_lines))
+backtick_run_length=5
+backtick_run="$(printf "%${backtick_run_length}s" "" | tr " " "\`")"
+notes_marker="the login page greeted the owner"
+nested_marker="the nested step finished"
+outside_marker="a secret kept outside the evidence folder"
+files_past_budget=1
+line_break_characters=1
+first_budget_file=1
+login_proof_line=1
+budget_file_characters=$((excerpt_lines_kept * (excerpt_line_characters + line_break_characters)))
+budget_files=$((excerpt_budget / budget_file_characters + files_past_budget))
+smallest_block_characters=40
+empty_capture_files=$((excerpt_budget / smallest_block_characters))
+# capture_gate <name>: a gate that runs capture-<name>.sh from the work folder, which
+# write_capture writes once new_item has named the reports folder.
+capture_gate() { printf "  capture: 'sh %s/capture-%s.sh'\n" "$work" "$1"; }
+write_capture() { printf '%s\n' "$2" > "$work/capture-$1.sh"; }
+commit_test_command() {
+  mkdir -p "$worktree/.standards" && printf '{"test": "%s"}\n' "$1" > "$worktree/.standards/config.json"
+  git -C "$worktree" add .standards/config.json && git -C "$worktree" commit -qm "test command"
+}
+# write_proofs <proofs list>: proofs.json for the worktree's head, as the verifier writes it.
+write_proofs() { printf '{"head": "%s", "proofs": %s}\n' "$(git -C "$worktree" rev-parse HEAD)" "$1" > "$reports/proofs.json"; }
+report_value() { json_value "$1" < "$reports/verify.json"; }
+# render <reports> <name>: pr-report.sh on the folder; stdout in <name>.out, stderr in <name>.err
+# and the exit code in <name>.code under the work folder.
+render() { "$plugin/scripts/pr-report.sh" "$1" > "$work/$2.out" 2> "$work/$2.err"; echo "$?" > "$work/$2.code"; }
+rendered() { cat "$work/$1.out"; }
+render_code() { cat "$work/$1.code"; }
+section_row() { awk -v line="$2" 'index($0, "| " line " |") == 1' "$work/$1.out"; }
+section_row_lines() { awk -F '|' '/^\| [0-9?]/ { gsub(/ /, "", $2); print $2 }' "$work/$1.out"; }
+section_not_checked() { awk -v title="$not_checked_title" '$0 == title { listed = 1; next } listed && $0 == "" { exit } listed' "$work/$1.out"; }
+json_proof_lines() { python3 -c 'import json,sys; print("\n".join(str(proof["line"]) for proof in json.load(open(sys.argv[1]))["proofs"]))' "$reports/verify.json"; }
+# excerpt_block <name> <file>: the collapsed block whose summary names the file, to its closing tag.
+excerpt_block() {
+  awk -v summary="$summary_before_name$2$summary_after_name" -v closing_tag="$details_close" \
+    'index($0, summary) == 1 { shown = 1 } shown { print } shown && $0 == closing_tag { exit }' "$work/$1.out"
+}
+line_before_summary() { awk -v summary="$summary_before_name$2$summary_after_name" 'index($0, summary) == 1 { print previous; exit } { previous = $0 }' "$work/$1.out"; }
+excerpt_fence() { excerpt_block "$1" "$2" | awk '/^```/ { sub(/[a-z]+$/, ""); print; exit }'; }
+excerpt_lines() { excerpt_block "$1" "$2" | awk 'fence == "" && /^```/ { fence = $0; sub(/[a-z]+$/, "", fence); next } fence != "" && $0 == fence { exit } fence != ""'; }
+long_log_tail() { seq "$long_log_lines" | tail -n "$excerpt_lines_kept" | sed 's/^/log line /'; }
+fence_length() { fence_length_fence="$(excerpt_fence "$1" "$2")"; echo "${#fence_length_fence}"; }
+kept_line_of() { printf '%s`%s`%s\n' "${kept_line%%%s*}" "$1" "${kept_line#*%s}"; }
+budget_file_name() { printf "budget-%0${#budget_files}d.log" "$1"; }
+first_lines_expected() { printf '%s\n\n%s\n%s\n' "$section_heading" "$(report_value verdict)" "$(sed -n "${count_line_number}p" "$reports/verify.md")"; }
+
+echo "one proof of each grade, all holding"
+new_item every-grade "$(capture_gate every-grade)"
+write_capture every-grade "mkdir -p '$reports/evidence' && echo png > '$reports/evidence/login-error.png'"
+commit_test_command true
+write_proofs "[{\"line\": 1, \"text\": \"greet prints hello\", \"grade\": \"test\", \"test\": \"$test_name\"},
+  {\"line\": 2, \"text\": \"the login error shows\", \"grade\": \"live\", \"evidence\": \"evidence/login-error.png\"},
+  {\"line\": 3, \"text\": \"the client renders\", \"grade\": \"build-only\", \"reason\": \"$build_only_reason\"},
+  {\"line\": 4, \"text\": \"the staging deploy works\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"}]"
+verify >/dev/null 2>&1
+every_grade_reports="$reports"
+render "$every_grade_reports" every-grade
+check "Render_PassingReport_ExitsZero: the pr-creator pastes the section only when the script succeeds" \
+  '[ "$(render_code every-grade)" = "$rendered_exit" ]'
+check "Render_PassingReport_FirstLinesAreHeadingVerdictAndCount: the section opens with its heading, then verify's own verdict and count" \
+  '[ "$(rendered every-grade | head -n "$first_section_lines")" = "$(first_lines_expected)" ]'
+check "Render_ReportWithProofs_HasOneRowPerAcceptanceLine: a reviewer sees each graded line once" \
+  '[ -n "$(json_proof_lines)" ] && [ "$(section_row_lines every-grade)" = "$(json_proof_lines)" ]'
+check "Render_LiveProof_NamesTheFileWithoutALink: a link relative to the reports folder resolves in no pull request" \
+  'section_row every-grade 2 | grep -qF "\`login-error.png\`" && ! section_row every-grade 2 | grep -qF "]("'
+check "Render_TestProof_NamesTheTest: a reviewer finds the test that proves the line" \
+  'section_row every-grade 1 | grep -qF "\`$test_name\`"'
+check "Render_BuildOnlyAndBlockedLines_ListedUnderNotChecked: a reviewer sees what was left out and why" \
+  '[ "$(section_not_checked every-grade | tr "\n" "|")" = "- Line 3, \`build-only\`: \`$build_only_reason\`.|- Line 4, \`blocked\`: \`$blocked_reason\`.|" ]'
+check "Render_Report_CarriesNoChecksTable: the checks stay in the full report in the reports folder" \
+  'grep -q "^## Checks" "$every_grade_reports/verify.md" && [ -n "$(rendered every-grade)" ] && ! rendered every-grade | grep -qE "^## Checks|^\\| check \\|"'
+
+echo "text, media, binary, nested and linked captures"
+new_item excerpts "$(capture_gate excerpts)"
+{ printf "evidence='%s/evidence'\noutside='%s/outside-secret.txt'\nlong_log_lines=%s\nbacktick_run='%s'\n" \
+    "$reports" "$work" "$long_log_lines" "$backtick_run"
+  printf "notes_marker='%s'\nnested_marker='%s'\noutside_marker='%s'\n" "$notes_marker" "$nested_marker" "$outside_marker"
+  cat <<'CAPTURE'
+mkdir -p "$evidence/nested"
+awk -v lines="$long_log_lines" 'BEGIN { for (line = 1; line <= lines; line++) print "log line " line }' > "$evidence/login.log"
+printf '%s\n' "$notes_marker" > "$evidence/notes.txt"
+printf 'before %s after\n' "$backtick_run" > "$evidence/ticks.txt"
+printf 'plain \033[31mred\033[0m \033]8;;https://example.invalid/hidden\033\\link\033]8;;\033\\ bell\007 return\r\n' > "$evidence/colours.log"
+printf 'not really a png\n' > "$evidence/screen.png"
+printf 'core\000dump\n' > "$evidence/core.bin"
+printf '%s\n' "$nested_marker" > "$evidence/nested/step.log"
+printf '%s\n' "$outside_marker" > "$outside"
+ln -s "$outside" "$evidence/linked.log"
+CAPTURE
+} > "$work/capture-excerpts.sh"
+commit_test_command true
+write_proofs '[{"line": 1, "text": "the login log shows the greeting", "grade": "live", "evidence": "evidence/login.log"}]'
+verify >/dev/null 2>&1
+render "$reports" excerpts
+check "Render_TextEvidence_ShowsInACollapsedBlock: a reviewer reads the capture in the pull request without it filling the page" \
+  '[ -n "$details_open" ] && [ "$(line_before_summary excerpts notes.txt)" = "$details_open" ] && excerpt_lines excerpts notes.txt | grep -qxF "$notes_marker"'
+check "Render_LongLog_KeepsOnlyTheLastLines: the end of a log holds the outcome, and the body stays short" \
+  '[ -n "$(excerpt_lines excerpts login.log)" ] && [ "$(excerpt_lines excerpts login.log)" = "$(long_log_tail)" ]'
+check "Render_EvidenceWithBackticks_FenceIsLongerThanAnyRun: a capture that holds a fence cannot close the block early" \
+  'excerpt_lines excerpts ticks.txt | grep -qF "$backtick_run" && [ "$(fence_length excerpts ticks.txt)" -gt "$backtick_run_length" ]'
+check "Render_ImageEvidence_HasNoExcerpt: an image is no text, so it shows only where a proof names it" \
+  '[ -n "$details_open" ] && rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF screen.png'
+check "Render_BinaryEvidence_NamedWithoutExcerpt: a reviewer learns the file exists without bytes that render as noise" \
+  'rendered excerpts | grep -qxF -e "$(kept_line_of core.bin)" && [ -z "$(excerpt_block excerpts core.bin)" ]'
+check "Render_EvidenceWithColours_ExcerptHasNoControlCharacters: terminal codes would show as noise in the pull request" \
+  '[ -n "$(excerpt_lines excerpts colours.log)" ] && [ "$(excerpt_lines excerpts colours.log | LC_ALL=C tr -d "\001-\010\013-\037\177")" = "$(excerpt_lines excerpts colours.log)" ]'
+check "Render_LiveTextProof_CellPointsToTheExcerpt: a reviewer finds the capture that proves the line below the table" \
+  '[ -n "$excerpt_below" ] && section_row excerpts "$login_proof_line" | grep -qF "\`login.log\`$excerpt_below"'
+check "Render_NestedTextEvidence_ShowsInACollapsedBlock: a capture may write into a folder of its own" \
+  'excerpt_lines excerpts nested/step.log | grep -qxF "$nested_marker"'
+check "Render_LinkInEvidenceFolder_HasNoExcerpt: a link could publish a file from outside the evidence folder" \
+  '[ -n "$details_open" ] && rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF -e "$outside_marker" -e linked.log'
+
+echo "captures past the excerpt budget"
+new_item over-budget "$(capture_gate over-budget)"
+{ printf "evidence='%s/evidence'\nlines=%s\ncharacters=%s\nbudget_files=%s\n" \
+    "$reports" "$excerpt_lines_kept" "$excerpt_line_characters" "$budget_files"
+  cat <<'CAPTURE'
+mkdir -p "$evidence"
+file_number=1
+while [ "$file_number" -le "$budget_files" ]; do
+  awk -v lines="$lines" -v characters="$characters" 'BEGIN { while (length(row) < characters) row = row "x"; for (line = 1; line <= lines; line++) print row }' \
+    > "$evidence/budget-$(printf "%0${#budget_files}d" "$file_number").log"
+  file_number=$((file_number + 1))
+done
+CAPTURE
+} > "$work/capture-over-budget.sh"
+commit_test_command true
+verify >/dev/null 2>&1
+render "$reports" over-budget
+check "Render_EvidenceOverBudget_LeavesTheExcerptOut: the body stays under GitHub's limit however much the captures hold" \
+  '[ -n "$body_full" ] && [ -n "$(excerpt_fence over-budget "$(budget_file_name "$first_budget_file")")" ] && excerpt_block over-budget "$(budget_file_name "$budget_files")" | grep -qxF -e "$body_full" && [ -z "$(excerpt_fence over-budget "$(budget_file_name "$budget_files")")" ]'
+
+echo "many empty captures"
+new_item empty-captures "$(capture_gate empty-captures)"
+write_capture empty-captures "mkdir -p '$reports/evidence' && cd '$reports/evidence' && seq -f 'empty-%04g.log' $empty_capture_files | xargs touch"
+commit_test_command true
+verify >/dev/null 2>&1
+render "$reports" empty-captures
+excerpts_characters() { awk -v opening_tag="$details_open" '$0 == opening_tag { shown = 1 } shown' "$work/$1.out" | wc -c | tr -d " "; }
+check "Render_ManyEmptyCaptures_ExcerptsStayWithinTheBudget: summaries, fences and left-out notices count, so no number of captures overflows the body" \
+  '[ -n "$details_open" ] && rendered empty-captures | grep -qxF "$details_open" && [ "$(excerpts_characters empty-captures)" -le "$excerpt_budget" ]'
+
+echo "every line proven"
+new_item all-proven "  ok: 'true'"
+commit_test_command true
+write_proofs "[{\"line\": 1, \"text\": \"greet prints hello\", \"grade\": \"test\", \"test\": \"$test_name\"}]"
+verify >/dev/null 2>&1
+render "$reports" all-proven
+check "Render_NothingUnchecked_NotCheckedSaysNone: an empty list still says so, as verify's report does" \
+  '[ -n "$not_checked_none" ] && [ "$(section_not_checked all-proven)" = "$not_checked_none" ]'
+
+echo "a failing report"
+new_item failing "  broken: 'false'"
+commit_test_command true
+verify >/dev/null 2>&1
+failing_head="$(git -C "$worktree" rev-parse HEAD)"
+render "$reports" failing
+check "Render_FailingReport_VerdictSaysFailAtTheHead: a reviewer never reads a failed run as a pass" \
+  '[ "$(rendered failing | sed -n "${verdict_line_number}p")" = "$(printf "$verdict_line" "$failed_status" "$failing_head")" ]'
+
+echo "a live proof with no captured file"
+new_item missing-capture "  ok: 'true'"
+commit_test_command true
+write_proofs '[{"line": 1, "text": "the login error shows", "grade": "live", "evidence": "evidence/missing.png"}]'
+verify >/dev/null 2>&1
+render "$reports" missing-capture
+check "Render_ProofThatDoesNotHold_ListedUnderNotChecked: an error is not proven, so the reviewer sees it with the unchecked lines" \
+  'section_not_checked missing-capture | grep -qF -e "$missing_capture_bullet"'
+
+echo "a proofs file that is not JSON"
+new_item unreadable-proofs "  ok: 'true'"
+commit_test_command true
+printf 'not json {\n' > "$reports/proofs.json"
+verify >/dev/null 2>&1
+render "$reports" unreadable-proofs
+check "Render_ProofsFileNotJson_NotCheckedNamesTheFile: the reviewer learns the proofs were unreadable, not that every line was skipped" \
+  'section_not_checked unreadable-proofs | grep -qF -e "$unreadable_proofs_bullet"'
+
+echo "a folder with no report"
+mkdir -p "$work/no-report"
+render "$work/no-report" no-report
+check "Render_NoVerifyJson_ExitsOne: the pr-creator stops instead of pasting an empty section" \
+  '[ "$(render_code no-report)" = "$missing_report_exit" ]'
+check "Render_NoVerifyJson_NamesTheFolder: the owner learns which folder holds no report" \
+  'grep -qF "$work/no-report" "$work/no-report.err"'
+
+echo "a report of an older shape"
+mkdir -p "$work/old-shape"
+python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); del report["proofs"]; json.dump(report, open(sys.argv[2], "w"))' \
+  "$every_grade_reports/verify.json" "$work/old-shape/verify.json"
+render "$work/old-shape" old-shape
+check "Render_ReportWithoutProofsKey_ExitsOne: a report verify wrote before proofs fails fast" \
+  '[ "$(render_code old-shape)" = "$missing_report_exit" ]'
+check "Render_ReportWithoutProofsKey_NamesTheKey: the owner learns what the old report lacks" \
+  'grep -qF "proofs" "$work/old-shape.err"'
+
+echo "a report whose fields have the wrong type"
+# write_report_with_field <row> <key> <json value>: the every-grade report with one field replaced,
+# written as verify.json in the folder wrong-type-<row> under the work folder.
+write_report_with_field() {
+  mkdir -p "$work/wrong-type-$1"
+  python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); report[sys.argv[3]]=json.loads(sys.argv[4]); json.dump(report, open(sys.argv[2], "w"))' \
+    "$every_grade_reports/verify.json" "$work/wrong-type-$1/verify.json" "$2" "$3"
+}
+wrong_type_rows='verdict	7
+verdict	"Verdict: pass at a\n\nCloses #9 @octocat"
+proofs	[{"line": 1, "text": "the log shows it", "grade": "live", "evidence": ""}]
+proofs	[{"line": 1, "text": "the log shows it", "grade": "live", "evidence": "   "}]
+proofs	[{"line": 1, "text": "greet prints hello", "grade": "test", "test": ""}]
+verdict	"Verdict: maybe so at abc"
+verdict	"Verdict: pass at abc <img src=x>"
+proven	"7"
+acceptance_lines	"7"
+proofs	null
+proofs	"ab"
+proofs	[1, 2]
+proofs	[{"line": 1, "text": "greet prints hello", "grade": "test"}]
+not_checked	null
+not_checked	[{"line": 3, "text": "the client renders", "grade": "build-only"}]'
+wrong_type_row=0
+while IFS='	' read -r wrong_key wrong_value; do
+  wrong_type_row=$((wrong_type_row + 1))
+  write_report_with_field "$wrong_type_row" "$wrong_key" "$wrong_value"
+  render "$work/wrong-type-$wrong_type_row" "wrong-type-$wrong_type_row"
+  check "Render_FieldOfTheWrongType_ExitsOne ($wrong_key: $wrong_value): the pr-creator stops, because a section from a malformed report would mislead the reviewer" \
+    '[ "$(render_code "wrong-type-$wrong_type_row")" = "$missing_report_exit" ]'
+  check "Render_FieldOfTheWrongType_EndsWithoutATraceback ($wrong_key: $wrong_value): the reason is stated, because a crash tells the owner nothing" \
+    '! grep -q Traceback "$work/wrong-type-$wrong_type_row.err"'
+  check "Render_FieldOfTheWrongType_NamesTheField ($wrong_key: $wrong_value): stderr names the field, because the owner must know which one to fix" \
+    'grep -qF "$wrong_key" "$work/wrong-type-$wrong_type_row.err"'
+done <<ROWS
+$wrong_type_rows
+ROWS
+
+echo "acceptance text that holds markup"
+mkdir -p "$work/markup"
+python3 -c 'import json,sys
+report=json.load(open(sys.argv[1]))
+report["proofs"][0]["text"]=sys.argv[3]
+report["proofs"][0]["test"]=sys.argv[4]
+report["not_checked"][0]["reason"]=sys.argv[3]
+json.dump(report, open(sys.argv[2], "w"))' "$every_grade_reports/verify.json" "$work/markup/verify.json" "$mention_text" "$test_with_backtick"
+render "$work/markup" markup
+check "Render_AcceptanceTextWithMentionAndKeyword_ShownInACodeSpan: the pull request notifies nobody and closes no issue" \
+  'section_row markup 1 | grep -qF "\`$mention_text\`"'
+check "Render_TestNameWithBacktick_FenceIsLongerThanTheRun: the backtick cannot end the code span early" \
+  'section_row markup 1 | grep -qF "\`\`$test_with_backtick\`\`"'
+check "Render_NotCheckedReasonWithMention_ShownInACodeSpan: the reason notifies nobody" \
+  'section_not_checked markup | grep -qF "\`$mention_text\`"'
+
+echo "no reports folder given"
+"$plugin/scripts/pr-report.sh" > /dev/null 2>&1; echo "$?" > "$work/no-argument.code"
+check "Render_NoArgument_ExitsTwo: a usage error is told apart from a missing report" \
+  '[ "$(render_code no-argument)" = "$usage_exit" ]'
+
+echo "the house pull request body"
+check "HouseTemplate_VerificationSection_IsTheReportScriptOutput: every pull request carries the verdict, the proofs and the Not checked list the script renders" \
+  'grep -qF "scripts/pr-report.sh <reports>" "$house_template" && grep -qF "\`$section_heading\`" "$house_template"'
+check "HouseTemplate_HasNoEvidenceSection: the old check table section is gone, so no body carries it" \
+  '[ -s "$house_template" ] && ! grep -qx "## Evidence" "$house_template"'
+
+if [ "$fails" -eq 0 ]; then echo "verify-pr-body: ok"; else echo "verify-pr-body: $fails failed"; exit 1; fi
