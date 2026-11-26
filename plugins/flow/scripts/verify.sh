@@ -317,10 +317,15 @@ log_check_files() {
   [ "$#" -eq 0 ] || { printf '  files:\n'; printf '    %s\n' "$@"; } >> "$log"
 }
 
+summary_pattern_set() {
+  # summary_pattern_set <check name> <pattern>: the pattern the report reads the check's summary
+  # line by. An empty pattern sets nothing.
+  [ -z "$2" ] || printf '%s\000%s\000' "$1" "$2" >> "$summary_patterns"
+}
+
 run_check() {
-  # run_check <name> <command> <kind: gate|signal> <summary pattern> [files]: true when the
-  # command passed.
-  name="$1"; command="$2"; kind="$3"; check_summary_pattern="$4"; files="${5:-}"
+  # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
+  name="$1"; command="$2"; kind="$3"; files="${4:-}"
   IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
   printf '\n== %s: %s\n' "$name" "$command" >> "$log"
   log_check_files "$@"
@@ -330,27 +335,25 @@ run_check() {
     check_status="fail"; [ "$kind" = "signal" ] && check_status="signal"
   fi
   summary="$(tail -c "+$log_start" "$log")"
-  [ -z "$check_summary_pattern" ] || printf '%s\000%s\000' "$name" "$check_summary_pattern" >> "$summary_patterns"
   [ "$check_status" = "fail" ] && failed "$name"
   record "$name" "$check_status" "$command" "$summary" "$(( $(now_seconds) - check_started ))" ""
   [ "$check_status" = "pass" ]
 }
 
 scoped_check() {
-  # scoped_check <name> <command> <globs, one per line> <build|test> <summary pattern>: a build or
-  # test command.
+  # scoped_check <name> <command> <globs, one per line> <build|test>: a build or test command.
   # With globs it runs only when a changed file matches one. A test pass kept for the same command
   # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
   # --fresh runs the command whatever is kept.
   if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
-  set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4" "$5"
+  set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key="$(check_key "$2" "$3")"
   if [ "$4" = test ] && [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
   fi
-  if run_check "$1" "$2" gate "$5"; then check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
+  if run_check "$1" "$2" gate; then check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
   else check_drop "$inputs_key"; fi
 }
 
@@ -361,7 +364,9 @@ planned_checks() {
   if [ "${planned_count:-0}" -eq 0 ]; then skipped "$2" "no $1 command in .standards/config.json"; return; fi
   planned_index=0; planned_summary_pattern="$(cfg "verify.summary.$1")"
   while [ "$planned_index" -lt "$planned_count" ]; do
-    scoped_check "$(json_get "$planned" "$1.$planned_index.name")" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")" "$1" "$planned_summary_pattern"
+    planned_name="$(json_get "$planned" "$1.$planned_index.name")"
+    summary_pattern_set "$planned_name" "$planned_summary_pattern"
+    scoped_check "$planned_name" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")" "$1"
     planned_index=$((planned_index + 1))
   done
 }
@@ -384,19 +389,19 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
     files="$(printf '%s' "$changed_units" | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" existing "$prefix" "$extensions")"
-    if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "" "$files"; ran_format=1; all_files="$all_files$files"; fi
+    if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
   i=$((i + 1))
 done
 [ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule$listed_files_only"
 planned_checks test tests
-mutation="$(json_get "$std" mutation)"; mutation_summary_pattern="$(cfg verify.summary.mutation)"
+mutation="$(json_get "$std" mutation)"; summary_pattern_set mutation "$(cfg verify.summary.mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
   case "$mutation" in
-    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$mutation_summary_pattern" "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
-    *) run_check mutation "$mutation" signal "$mutation_summary_pattern" ;;
+    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
+    *) run_check mutation "$mutation" signal ;;
   esac
 fi
 for name in $(yaml_keys "$(config_file)" gates); do
@@ -404,7 +409,8 @@ for name in $(yaml_keys "$(config_file)" gates); do
   if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; gate_summary_pattern="$(cfg "gates.$name.summary")"; fi
   [ -n "$command" ] || continue
   if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
-  run_check "gate $name" "$command" gate "$gate_summary_pattern"
+  summary_pattern_set "gate $name" "$gate_summary_pattern"
+  run_check "gate $name" "$command" gate
 done
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
