@@ -12,7 +12,7 @@ item="$1"
 number="$(issue_number "$item")" || exit "$EXIT_USAGE"
 repository="$(gh_repo)" || exit 1
 labels="$(gh issue view "$number" -R "$repository" --json labels -q '.labels[].name')" || die "cannot read the labels of $item"
-comments="$(gh api --paginate --slurp "repos/$repository/issues/$number/comments?per_page=100")" || die "cannot read the comments of $item"
+comments="$(gh api --paginate --slurp "repos/$repository/issues/$number/comments?per_page=$GH_REST_PAGE_SIZE")" || die "cannot read the comments of $item"
 state_comment_ids="$(printf '%s' "$comments" | cached_python3 -I -c '
 import json, sys
 marker = sys.argv[1]

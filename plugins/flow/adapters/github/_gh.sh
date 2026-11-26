@@ -7,6 +7,7 @@
 # lib/flow.sh wraps gh in a function, so the check looks past it to the command.
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 STATE_MARKER="<!-- flow:state -->"
+GH_REST_PAGE_SIZE=100
 
 gh_repo() {
   r="$(cfg "github.repo")"
