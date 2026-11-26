@@ -60,7 +60,7 @@ trap 'check_end $?' EXIT
 # fetch_base_branch: fetches the base from origin into origin/<base>, and says so when it cannot.
 fetch_base_branch() {
   git -C "$main" remote get-url origin >/dev/null 2>&1 || return 0
-  fetch_said="$(git -C "$main" fetch -q origin "$base" 2>&1)" && return 0
+  fetch_said="$(git -C "$main" fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" 2>&1)" && return 0
   job_say "could not fetch $base, so the check runs on the $base fetched last: $(printf '%s\n' "$fetch_said" | tail -n 1)"
 }
 # base_commit: the base's commit, origin/<base> as the last fetch left it, else the local <base>.

@@ -298,5 +298,14 @@ check "BaseGitReadsAsAnOption_IsRefused: the base is no valid branch name, so th
 check "BaseGitReadsAsAnOption_RunsNoCommand: the base never reaches git, so the command it carries never runs" \
   '[ ! -e "$option_base_marker" ]'
 
+echo "checks: a fetch mapping that leaves the base out"
+git -C "$root/app" config remote.origin.fetch '+refs/heads/unmapped:refs/remotes/origin/unmapped'
+remote_commit main pushed-past-the-mapping.txt
+origin_main_past_the_mapping="$(git -C "$root/origin.git" rev-parse main)"
+run_probe 0
+git -C "$root/app" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+check "FetchMappingWithoutTheBase_StillChecksTheFetchedBase: the run fetches the base into origin/<base> itself, so the newest commit on origin is what the check sees" \
+  '[ -n "$origin_main_past_the_mapping" ] && [ "$(report_line "$work/probe.report" head)" = "$origin_main_past_the_mapping" ]'
+
 [ "$fails" -eq 0 ] && { echo "checks: ok"; exit 0; }
 echo "checks: $fails failed"; exit 1
