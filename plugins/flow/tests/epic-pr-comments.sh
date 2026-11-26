@@ -30,6 +30,7 @@ cat > "$work/bin/claude" <<'HOST'
 printf '%s\t%s\t%s\t%s\t%s\n' "$PWD" "$(git rev-parse HEAD 2>/dev/null)" "$(ls "$COPIED_FILE" 2>/dev/null)" "$(ls "$SETUP_MARK" 2>/dev/null)" "$*" >> "$HOST_LOG"
 [ -z "${LEAVE_WORK:-}" ] || printf 'half done\n' > "$LEAVE_WORK"
 [ -z "${LEAVE_COMMIT:-}" ] || { printf 'committed\n' > "$LEAVE_COMMIT" && git add -- "$LEAVE_COMMIT" && git commit -qm "$LEAVE_COMMIT"; }
+[ -z "${BREAK_ORIGIN:-}" ] || git remote set-url origin "$BREAK_ORIGIN"
 HOST
 chmod +x "$work/bin/claude"
 pass_start() { grep "comments $epic" "$HOST_LOG" | tail -1 | cut -f"$1"; }
@@ -53,6 +54,13 @@ check_all "EpicPrWithAFreePool_PassReleasesItsPoolWorktreeWhenItEnds: the epic h
   '[ -z "$("$P/scripts/steward.sh" find "$epic")" ]'
 check_all "EpicPrWithAFreePool_SetupRunsBeforeThePassStarts: the pass builds and tests in its worktree, so worktree_setup must run there as for any claim" \
   '[ "$(pass_start_set_up)" = "$setup_mark" ]'
+
+echo "comments job on an epic PR whose pass could not reach origin when it ended"
+BREAK_ORIGIN="$work/unreachable.git" "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
+git remote set-url origin "$work/origin.git"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check_all "EpicPrWhosePassEndedWithOriginUnreachable_UnchangedRunReleasesThePoolWorktree: a run with nothing new starts no pass, so unless it lets go of the clean worktree the last pass kept, nothing ever does" \
+  '[ -z "$(pass_start_folder)" ] && [ -z "$("$P/scripts/steward.sh" find "$epic")" ]'
 
 echo "comments job on an epic PR whose pass committed and did not push"
 : > "$HOST_LOG"; LEAVE_COMMIT=unpushed.txt "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1

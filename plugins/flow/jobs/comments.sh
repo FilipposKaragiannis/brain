@@ -377,6 +377,12 @@ let_go_of_pass_worktree() {
   if epic_pass_end_worktree "$2" "$3" 2>"$out.why"; then rm -f "$4"; job_say "$1: let go of $3 after the pass" >/dev/null; return 0; fi
   job_say "$1: $3 stays for the next pass, which continues from it: $(steward_said "$out.why")" >/dev/null
 }
+# A worktree the last pass kept because the remote could not be read when it ended has no later
+# pass to let go of it while the PR stays unchanged.
+let_go_of_kept_worktree() {
+  let_go_of_kept_worktree_path="$(epic_pass_kept_worktree "$2" "$3")" || return 0
+  let_go_of_pass_worktree "$1" "$2" "$let_go_of_kept_worktree_path" "$3"
+}
 # pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
@@ -395,9 +401,11 @@ pass() {
   forced=""
   if [ -z "$one" ] && [ -z "$answer" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$f" 2>/dev/null)" ]; then
     if [ -z "$awaiting" ]; then
+      let_go_of_kept_worktree "$t" "$2" "$f.worktree"
       job_say "$t: nothing new since the last pass, skipped" >/dev/null; outcome unchanged; return 0
     fi
     if [ "$(cat "$f.forced" 2>/dev/null)" = "$awaiting" ]; then
+      let_go_of_kept_worktree "$t" "$2" "$f.worktree"
       job_say "$t: open thread(s) $awaiting still wait on a reply after a pass, skipped" >/dev/null
       once "$f.told" "$awaiting" && tell "$t: review thread(s) on $pull still wait on a reply after two passes (last comments $awaiting). Answer them, or run the pass by hand: jobs/comments.sh <host> $t."
       outcome waits "thread(s) $awaiting unanswered after two passes"; return 0
