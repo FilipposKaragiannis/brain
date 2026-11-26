@@ -13,8 +13,6 @@
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-# The numbered lines the broken check prints, the first and last of which a bug's tail is checked
-# for; the bytes of the one huge line it prints instead, and the bound its bug's body stays under.
 numbered_output_lines=50
 first_output_line=1
 huge_line_bytes=100000
@@ -24,38 +22,26 @@ bug_body_byte_bound=9000
 split_character_count=5000
 # The branch a base: line the broken check prints names, which a bug's base must never become.
 base_line_branch=nowhere
-# The exit code jobs.sh gives a name or a setting it refuses.
 refused_exit=2
-# The runs history prints, and its rows: two header lines, then the newest run.
+# history prints two header lines, then the newest run.
 history_runs_shown=5
 newest_history_row=3
-# report_line <report> <field>: the value the probe wrote for the field.
 report_line() { sed -n "s/^$2 //p" "$1"; }
-# history_row <schedule> <row>: one row of the schedule's history table.
 history_row() { "$jobs_script" history "$1" "$history_runs_shown" | sed -n "$2p"; }
-# run_probe <exit code>: one run of the smoke check, whose probe ends with the exit code; the run's
-# own exit code is the function's.
 run_probe() {
   echo "$1" > "$work/probe.exit"; rm -f "$work/probe.report"
   "$check_job" claude --as check-smoke > "$work/run.out" 2>&1
 }
-# check_bugs <name>: the open bugs whose title names the check, oldest first, as JSON.
-check_bugs() {
+open_bugs_naming() {
   "$local_adapter/list.sh" --kind bug \
     | python3 -c 'import json,sys; print(json.dumps([item for item in json.load(sys.stdin) if sys.argv[1] in item["title"].split()]))' "$1"
 }
-# bug_count <name>: how many open bugs name the check.
-bug_count() { check_bugs "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
-# newest_bug <name> <field>: one field of the newest open bug naming the check.
-newest_bug() { check_bugs "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1][sys.argv[1]])' "$2"; }
-# run_broken <mode>: one run of the broken check, its probe passing or printing the mode's output
-# and failing; the run's own exit code is the function's.
+bug_count() { open_bugs_naming "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+newest_bug() { open_bugs_naming "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1][sys.argv[1]])' "$2"; }
 run_broken() {
   echo "$1" > "$work/broken.mode"
   "$check_job" claude --as check-broken > "$work/broken-run.out" 2>&1
 }
-# write_config: the config from config_base and config_bug_adapter, adapters.bug left out when
-# the adapter is empty.
 write_config() {
   {
     printf 'adapters:\n  default: local\n'
@@ -75,9 +61,7 @@ jobs:
 YAML
   } > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
 }
-# set_base <branch>: base in the config.
 set_base() { config_base="$1"; write_config; }
-# set_bug_adapter <name>: adapters.bug in the config, or none when the name is empty.
 set_bug_adapter() { config_bug_adapter="$1"; write_config; }
 jobs_script="$plugin/scripts/jobs.sh"
 check_job="$plugin/jobs/check.sh"
