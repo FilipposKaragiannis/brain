@@ -3,10 +3,10 @@
 # reports: the count of acceptance lines proven live or by test on the Markdown's second line and
 # in the JSON, one graded proof per line in the JSON and in a Proofs table, and the lines graded
 # build-only, blocked or error in the Not checked list. A live proof needs a file under evidence/,
-# a test proof a passing tests check, a file written for another commit grades no line, and a
-# proofs file that is no JSON never stops the report. Each run's gate writes its evidence, as a
-# capture does, and the suite writes proofs.json alone, never a report. On the local adapter in
-# throwaway repos.
+# a test proof a test name and a passing tests check, a line number outside the file or used twice
+# is an error, a file written for another commit grades no line, and a proofs file that is no JSON
+# object never stops the report. Each run's gate writes its evidence, as a capture does, and the
+# suite writes proofs.json alone, never a report. On the local adapter in throwaway repos.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -34,6 +34,7 @@ proof_rows() { awk -F '|' '/^## / { in_proofs = ($0 == "## Proofs") } in_proofs 
 proof_row() { awk -v line="$1" '/^## / { in_proofs = ($0 == "## Proofs") } in_proofs && index($0, "| " line " |") == 1' "$reports/verify.md"; }
 json_proof_grades() { python3 -c 'import json,sys; print("\n".join("%s:%s" % (proof["line"], proof["grade"]) for proof in json.load(open(sys.argv[1]))["proofs"]))' "$reports/verify.json"; }
 json_not_checked_lines() { python3 -c 'import json,sys; print(" ".join("%s:%s:%s" % (entry["line"], entry["grade"], entry["reason"]) for entry in json.load(open(sys.argv[1]))["not_checked"]))' "$reports/verify.json"; }
+json_not_checked_grades() { python3 -c 'import json,sys; print(" ".join("%s:%s" % (entry["line"], entry["grade"]) for entry in json.load(open(sys.argv[1]))["not_checked"]))' "$reports/verify.json"; }
 not_checked_bullets() { awk '/^## / { in_list = ($0 == "## Not checked") } in_list && /^- /' "$reports/verify.md"; }
 
 echo "one proof of each grade, all holding"
@@ -115,6 +116,10 @@ check "SecondOfTwoProofsOfOneLine_IsAnError: neither proof of a line graded twic
   '[ "$(report_value proofs.7.grade)" = error ]'
 check "TwoProofsOfOneLine_ReasonSaysTheLineIsGradedTwice: the verifier learns which line to fix" \
   'report_value proofs.6.reason | grep -q "more than once"'
+check "LiveProofWithNoCapturedFile_MarkdownRowGradesItError: the Markdown never shows the claimed live grade" \
+  '[ "$(proof_rows | head -n 1)" = "1:error" ]'
+check "LiveProofWithNoCapturedFile_JsonNotCheckedHoldsTheLineAsAnError: a reader of the JSON sees the line was not proven" \
+  'json_not_checked_lines | grep -q "^1:error:"'
 check "ProofsThatDoNotHold_MarkdownCountsNoLine: an error is never counted as proven" \
   '[ "$(count_line)" = "0 of 8 acceptance lines proven live or by test" ]'
 check "ProofsThatDoNotHoldWithEveryCheckPassing_StatusIsPass: a proof is the verifier's fault, never a failed check of the code" \
@@ -132,6 +137,9 @@ check "ProofsFileForAnotherCommit_GradesEveryLineAnError: proofs of an older com
   '[ "$(json_proof_grades | tr "\n" " ")" = "1:error 2:error " ]'
 check "ProofsFileForAnotherCommit_CountsNoLine: the count is 0 of the file's lines" \
   '[ "$(count_line)" = "0 of 2 acceptance lines proven live or by test" ]'
+
+check "ProofsFileForAnotherCommit_JsonNotCheckedHoldsEveryLine: each line of a stale file is listed as not checked" \
+  '[ "$(json_not_checked_grades)" = "1:error 2:error" ]'
 
 echo "a proof whose text cannot be written as UTF-8"
 new_item surrogate "  ok: 'true'"
@@ -162,5 +170,32 @@ check "ProofsFileNotJson_MarkdownCountsNoLines: no line is graded from a file ve
   '[ "$(count_line)" = "0 of 0 acceptance lines proven live or by test" ]'
 check "ProofsFileNotJson_NotCheckedNamesTheFile: the reviewer learns the proofs were unreadable" \
   'not_checked_bullets | grep -q "^- proofs.json, error: "'
+
+echo "line numbers outside the file and a test proof with no name"
+new_item out-of-range ""
+commit_test_command true
+write_proofs '[{"line": 0, "text": "before the first", "grade": "blocked", "reason": "x"},
+  {"line": 4, "text": "past the last", "grade": "blocked", "reason": "x"},
+  {"line": 2, "text": "unnamed test", "grade": "test", "test": ""}]'
+verify >/dev/null 2>&1
+check "ProofOfLineZero_IsAnError: lines are numbered from one" \
+  '[ "$(report_value proofs.0.grade)" = error ]'
+check "ProofOfALinePastTheFile_IsAnError: a line number above the number of entries names no acceptance line" \
+  '[ "$(report_value proofs.1.grade)" = error ]'
+check "TestProofWithNoTestName_IsAnError: a test proof must name the test a reviewer can find" \
+  '[ "$(report_value proofs.2.grade)" = error ]'
+check "TestProofWithNoTestNameWithTheTestsCheckPassing_IsNotCounted: a passing tests check alone proves no line" \
+  '[ "$(count_line)" = "0 of 3 acceptance lines proven live or by test" ]'
+
+echo "a proofs file that is a list, not an object"
+new_item bare-list "  ok: 'true'"
+printf '[{"line": 1, "text": "a", "grade": "blocked", "reason": "x"}]\n' > "$reports/proofs.json"
+verify >/dev/null 2>&1
+check "ProofsFileThatIsAList_MarkdownCountsNoLines: only an object with a proofs list is a proofs file" \
+  '[ "$(count_line)" = "0 of 0 acceptance lines proven live or by test" ]'
+check "ProofsFileThatIsAList_NotCheckedNamesTheFile: the reviewer learns the proofs file had the wrong shape" \
+  'not_checked_bullets | grep -q "^- proofs.json, error: "'
+check "ProofsFileThatIsAList_StatusIsTheChecksStatus: a proofs file of the wrong shape never fails verify" \
+  '[ "$(report_status)" = pass ]'
 
 if [ "$fails" -eq 0 ]; then echo "verify-proofs: ok"; else echo "verify-proofs: $fails failed"; exit 1; fi
