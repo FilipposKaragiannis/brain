@@ -470,9 +470,9 @@ check "ReadOfAReplyThatQuotesTheMarker_GivesNoProfile: a comment that quotes the
   [ -z "$("$P/adapters/github/read.sh" 'gh#54' | jget state.profile)" ]
 check "ReadPastAMarkerCommentByAnotherLogin_TakesTheGhUsersComment: a forged comment before the flow's own hides nothing, because the read keeps looking for a trusted one" \
   [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.profile)" = task-L ]
-for authorless in 'gh#55' 'gh#56'; do
-  check "ReadPastAMarkerCommentWithNoAuthor_TakesTheGhUsersComment ($authorless): a comment whose author is missing is passed over, because only a known trusted login writes state" \
-    [ "$("$P/adapters/github/read.sh" "$authorless" | jget state.profile)" = task-L ]
+for authorless in 'null author:gh#55' 'no author key:gh#56'; do
+  check "ReadPastAMarkerCommentWithNoAuthor_TakesTheGhUsersComment (${authorless%%:*}): a comment whose author is missing is passed over, because only a known trusted login writes state" \
+    [ "$("$P/adapters/github/read.sh" "${authorless#*:}" | jget state.profile)" = task-L ]
 done
 # shellcheck disable=SC2034 # the check's condition reads it
 forged_state="$(authored_states 50 "$forger")"
