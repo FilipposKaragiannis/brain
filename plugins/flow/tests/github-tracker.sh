@@ -491,6 +491,15 @@ check "WriteStateWithTheGhUserOutsideAnswerFrom_Refuses: a first state comment t
   [ "$write_state_code" -ne 0 ]
 check "WriteStateWithTheGhUserOutsideAnswerFrom_PostsNoComment: the issue gets no state comment, because the gh user's would be ignored" \
   [ "$(marker_comment_count 53 "$gh_user")" = 0 ]
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  answer_from: [%s, %s]\nnotify:\n  desktop: false\n' "$teammate" "$gh_user" > .flow/config.yaml
+"$P/adapters/github/write-state.sh" 'gh#52' attempts=5 >/dev/null 2>&1
+check "WriteStateBesideATeammatesStateComment_PatchesIt: the teammate's comment holds the write, because a login github.answer_from lists writes the issue's state comment" \
+  [ "$(authored_states 52 "$teammate" | jget attempts)" = 5 ]
+check "WriteStateBesideATeammatesStateComment_PostsNoSecond: the gh user posts no state comment of its own, because a second one would split the state" \
+  [ "$(marker_comment_count 52 "$gh_user")" = 0 ]
+"$P/adapters/github/strip-state.sh" 'gh#52' >/dev/null 2>&1
+check "StripStateOfATeammatesStateComment_DeletesIt: the teammate's state comment is gone, because a login github.answer_from lists wrote it for the flow" \
+  [ "$(marker_comment_count 52 "$teammate")" = 0 ]
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nnotify:\n  desktop: false\n' > .flow/config.yaml
 gh_user_lookups_failing=99
 printf '%s\ngh: HTTP 401: Bad credentials\napi user\n' "$gh_user_lookups_failing" > "$FAKE_GH_DIR/fail"

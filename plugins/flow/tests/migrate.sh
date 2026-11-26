@@ -163,7 +163,7 @@ record import > "$work/foreign.out" 2>&1
 check "ImportOfALocalItemWithAGithubId_RecordsNothingForThatId: because a tracker's list speaks only for its own items" \
   'has_no_record "$foreign_id"'
 check "ImportOfAnIdOfNoAdaptersShape_ReportsNoImportOfIt: because only an id its adapter's slug.sed gives back reaches the tracker" \
-  '! grep -qxF -- "import $misshaped_id, held by this machine" "$work/foreign.out"'
+  '! grep -qxF -e "import $misshaped_id" -e "import $misshaped_id, held by this machine" "$work/foreign.out"'
 
 echo "import under a locale that cannot spell a worktree: every row still comes out"
 latin_locale=en_US.ISO8859-1
