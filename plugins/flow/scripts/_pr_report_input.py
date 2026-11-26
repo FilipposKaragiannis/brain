@@ -59,6 +59,12 @@ class ReadReport:
     problem: str
 
 
+@dataclass(frozen=True)
+class ParsedEntries:
+    entries: Tuple[Any, ...]
+    problem: str
+
+
 EMPTY_REPORT = VerifyReport(verdict="", proven=0, acceptance_lines=0, proofs=(), not_checked=())
 
 
@@ -88,19 +94,21 @@ def parsed_not_checked(entry: Any) -> Optional[NotChecked]:
     return NotChecked(line=entry["line"], text=entry["text"], grade=entry["grade"], reason=entry[REASON_KEY])
 
 
-def parsed_entries(values: Any, parse: Callable[[Any], Optional[Any]]) -> Optional[Tuple[Any, ...]]:
+def parsed_entries(values: Any, parse: Callable[[Any], Optional[Any]]) -> ParsedEntries:
     if not isinstance(values, list):
-        return None
+        return ParsedEntries(entries=(), problem="is no list")
     entries = tuple(parse(value) for value in values)
-    return None if any(entry is None for entry in entries) else entries
+    if any(entry is None for entry in entries):
+        return ParsedEntries(entries=(), problem="has a malformed entry")
+    return ParsedEntries(entries=entries, problem="")
 
 
 def malformed_key(document: dict) -> str:
     checks = (("verdict", isinstance(document["verdict"], str) and VERDICT_SHAPE.fullmatch(document["verdict"]) is not None),
               ("proven", is_whole_number(document["proven"])),
               ("acceptance_lines", is_whole_number(document["acceptance_lines"])),
-              ("proofs", parsed_entries(document["proofs"], parsed_proof) is not None),
-              ("not_checked", parsed_entries(document["not_checked"], parsed_not_checked) is not None))
+              ("proofs", not parsed_entries(document["proofs"], parsed_proof).problem),
+              ("not_checked", not parsed_entries(document["not_checked"], parsed_not_checked).problem))
     return next((key for key, sound in checks if not sound), "")
 
 
@@ -124,6 +132,6 @@ def read_report(reports: str) -> ReadReport:
         return failed("the verify report in %s has a malformed `%s`" % (reports, bad_key))
     return ReadReport(report=VerifyReport(verdict=document["verdict"], proven=document["proven"],
                                           acceptance_lines=document["acceptance_lines"],
-                                          proofs=parsed_entries(document["proofs"], parsed_proof),
-                                          not_checked=parsed_entries(document["not_checked"], parsed_not_checked)),
+                                          proofs=parsed_entries(document["proofs"], parsed_proof).entries,
+                                          not_checked=parsed_entries(document["not_checked"], parsed_not_checked).entries),
                       problem="")
