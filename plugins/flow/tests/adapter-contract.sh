@@ -593,8 +593,7 @@ else
   skip "no set_$name or scope_config_$name in this suite to scope a list"
 fi
 
-# strip-state (adapters/README.md, Operations): per backend, full_state_gone_<name> <id> exits 0
-# once the backend's store, read whole, holds none of the state write-state keeps beside its labels.
+# Each backend's store is read whole, never through read.sh, whose state always carries defaults.
 full_state_gone_local() {
   python3 -B -c 'import sys
 sys.path.insert(0, sys.argv[1]); import _item
