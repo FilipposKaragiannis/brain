@@ -402,6 +402,10 @@ git push -q origin HEAD || fail "task branch push failed"
 printf 'more\n' > more.txt && git add more.txt && git commit -qm "unpushed task commit"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$task_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; [ -z "$out" ] && pass "PushedTaskBranchTrackingTheBase_ReportAtThePushedCopyPasses: the PR head is the task branch's own pushed copy, because the tracked upstream is only the base" || fail "report at the pushed task branch blocked while it tracks the base: $out"
+git config branch.task-branch.remote . && git config branch.task-branch.merge refs/heads/main || fail "local parent tracking setup failed"
+out="$(gate '{}')"; [ -z "$out" ] && pass "TaskBranchTrackingALocalParent_ReportAtTheOriginCopyPasses: the PR head is the task branch on origin, because the PR lives on origin whatever the branch pulls from" || fail "report at the origin copy blocked while the branch tracks a local parent: $out"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(git rev-parse HEAD)" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; printf '%s' "$out" | grep -q "$task_commit" && pass "TaskBranchTrackingALocalParent_ReportAtUnpushedHeadBlocks: the report is refused against the origin copy, because a commit not on origin is not in the PR" || fail "report at the unpushed head not blocked while the branch tracks a local parent: $out"
 git switch -q main && git branch -q -D task-branch && git remote remove origin || fail "gate cleanup failed"
 rm -rf .flow
 

@@ -7,8 +7,8 @@
 # Blocks (decision: block) while a step is in flight and its result is missing, and at the pr
 # step while the verify report is not pass (until attempts reach 3, which is an escalation and a
 # human gate), and at the pr step whenever the report's head commit is not the PR head (the report
-# holds the short id, so it matches by prefix): the pushed copy of the worktree's own branch (read
-# locally, no network call), or the worktree HEAD before one exists.
+# holds the short id, so it matches by prefix): the worktree's own branch as pushed to origin, where
+# the PR lives (read locally, no network call), or the worktree HEAD before one exists.
 # Honours stop_hook_active so one block never becomes a loop. FLOW_HOME overrides the main
 # worktree's .flow (tests).
 . "$(dirname "$0")/lib.sh"
@@ -30,10 +30,7 @@ reports="$(json_get "$run" "reports")"
 verify_attempt_limit=3
 pr_head() {
   pr_head_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"
-  if [ -n "$pr_head_branch" ]; then
-    pr_head_remote="$(git config "branch.$pr_head_branch.remote" 2>/dev/null)"
-    git rev-parse --verify --quiet "refs/remotes/${pr_head_remote:-origin}/$pr_head_branch^{commit}" 2>/dev/null && return
-  fi
+  [ -n "$pr_head_branch" ] && git rev-parse --verify --quiet "refs/remotes/origin/$pr_head_branch^{commit}" 2>/dev/null && return
   git rev-parse --verify --quiet 'HEAD^{commit}'
 }
 stale_report_reason() {
