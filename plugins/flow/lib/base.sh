@@ -4,6 +4,11 @@
 # scripts/gate.sh, hooks/worktree-create.sh and skills/init/scripts/init.sh.
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
 
+# The exit codes of a claim (steward.sh claim and claim-tip, claim_epic_branch) that the call or
+# the config refuses, that finds no free worktree, and that waits for what holds it to clear.
+# shellcheck disable=SC2034 # read by scripts/next.sh, scripts/steward.sh and the claim libs
+claim_call_refused=2 claim_pool_full=3 claim_refused=4
+
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
 

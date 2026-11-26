@@ -17,8 +17,9 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
 (`gates`, `feel_test_paths`, `verify.limit`), `.standards/testing-guide.md`.
 
 ## How to verify
-1. `cd` into the worktree. Confirm the branch is the item's task branch and the tree is clean
-   apart from `.flow/`. An uncommitted change is a `fail` with that as the summary.
+1. `cd` into the worktree. Confirm the branch is the item's task branch (for a closeout, the
+   epic branch) and the tree is clean apart from `.flow/`. An uncommitted change is a `fail`
+   with that as the summary.
 2. Start the run: `"<plugin>/scripts/verify.sh" <item> --start`. It runs build, format on the
    changed files, tests, mutation (a signal) and every project gate, once each, detached from
    your shell, and writes `<reports>/verify.json` and `verify.md`. A build or test command
@@ -39,8 +40,11 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
    look for, in the owner's words.
 
 ## Closeout (epic)
-Read every sub-item through the adapter; any open one is a `fail` naming it. Run `verify.sh`
-on the epic branch when there is one, started and waited for as in step 2. Walk the epic's
+Read every sub-item through the adapter; any open one is a `fail` naming it. When the epic has
+an epic branch, the brief's worktree is a pool worktree on it at the tip the remote holds, set up
+like any other, with the epic's start as its base: run `verify.sh` there, started and waited for
+as in step 2, and never make a checkout of your own. With no epic branch the worktree is the main
+checkout and there is no branch to verify. Walk the epic's
 acceptance lines as in step 4; the result is `done` only when every line is proven. Never close
 the epic and never open its pull request: after a `done` the orchestrator opens the PR from the
 epic branch into the epic's base and the merge closes the epic, or it closes the epic itself

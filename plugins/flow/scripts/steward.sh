@@ -15,6 +15,13 @@
 #                                                created. A new claim of an item outside its
 #                                                tracker's scope exits 2 (adhoc: names have no
 #                                                tracker, no scope)
+#   steward.sh claim-tip <item> <branch> [--base <branch>]
+#                                                claim a free pool worktree on <branch>, which
+#                                                must be on the remote, at the tip the remote
+#                                                holds (an epic's closeout: lib/remote_tip_claim.sh);
+#                                                print its path. A local <branch> behind the tip
+#                                                moves up to it; one ahead or diverged, or checked
+#                                                out elsewhere, exits 4 with why
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh owner <branch>                    print the item whose pool claim holds the branch
 #                                                as its task branch, or nothing
@@ -128,6 +135,7 @@
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
 . "$FLOW_PLUGIN/lib/slow_steps.sh"
 . "$FLOW_PLUGIN/lib/epic_base.sh"
+. "$FLOW_PLUGIN/lib/remote_tip_claim.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -252,13 +260,22 @@ cmd_claim() {
   else
     git -C "$free" switch -q -c "$branch" "$ref" || die "cannot create $branch from $ref in $free"
   fi
-  mkdir -p "$free/.flow"
-  json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
-    "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
+  record_claim_unlock_and_set_up "$free" "$item" "$branch" "$base" "claimed $(basename "$free")"
+}
+
+# record_claim_unlock_and_set_up <worktree> <item> <branch> <base> <event>: its caller holds
+# claim_lock and has put <worktree> on <branch>.
+record_claim_unlock_and_set_up() {
+  record_claim_worktree="$1"; record_claim_item="$2"; record_claim_branch="$3"; record_claim_base="$4"; record_claim_event="$5"
+  record_claim_name="$(basename "$record_claim_worktree")"
+  mkdir -p "$record_claim_worktree/.flow"
+  json_obj "item=$record_claim_item" "worktree=$record_claim_worktree" "name=$record_claim_name" "branch=$record_claim_branch" \
+    "base=$record_claim_base" "step=" "claimed_at=$(now_iso)" "host=$(host_name)" > "$record_claim_worktree/.flow/claim.json"
   flow_unlock
-  set_up_again_when_outdated "$free" >&2
-  write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
-  printf '%s\n' "$free"
+  set_up_again_when_outdated "$record_claim_worktree" >&2
+  write_state "$record_claim_item" "worktree=$record_claim_name" "base=$record_claim_base" "branch=$record_claim_branch" \
+    "last_event=$(now_iso) $record_claim_event"
+  printf '%s\n' "$record_claim_worktree"
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
@@ -948,7 +965,8 @@ health_ago() { hpy ago "$1"; }
 # with its remote branch (fast-forward when only behind; push when only ahead of a branch that
 # exists and jobs.health.push is true, else say it once) and with its base (merge it in once the
 # branch is more than behind_base commits behind, has no PR and waits at no gate: a PR's conflicts
-# are the comments job's). Leave in $health_sync the refs a merge needs an agent for, one per line: the remote
+# are the comments job's; never into an epic's own branch, which lib/epic_base.sh keeps up on the
+# remote, since a local merge would put a closeout's claim ahead of the tip claim-tip takes). Leave in $health_sync the refs a merge needs an agent for, one per line: the remote
 # branch when the two diverged, the base when its merge conflicts.
 health_branch_state() {
   hb_item="$1"; hb_path="$2"; hb_branch="$3"; hb_base="$(base_ref "$4")"; hb_pr="$5"; health_sync=""
@@ -973,6 +991,7 @@ health_branch_state() {
     fi
   fi
   [ -z "$hb_pr" ] || return 0
+  [ "$hb_branch" != "$(epic_branch "$hb_item")" ] || return 0
   hb_late="$(git -C "$hb_path" rev-list --count "HEAD..$hb_base" 2>/dev/null)"
   [ "${hb_late:-0}" -gt "$behind_base" ] || return 0
   # A diverged branch goes to the agent whole: the base merge waits for the remote one.
@@ -1913,10 +1932,18 @@ cmd_resume() {
   [ -z "$health_gate" ] || exit 4
 }
 
+# The exit code of a call steward.sh refuses: a command it does not know, or one missing its arguments.
+usage_refused=2
+# The header's title and its indented usage lines, read up to the first line past them so a
+# command added to the header is printed too.
+usage_text() {
+  awk '/^#   steward\.sh / { in_usage = 1 } in_usage && !/^#   / { exit } /^#/ && !/^#!/ { print }' "$1"
+}
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
   claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>] [--branch <name>]" 2; cmd_claim "$@" ;;
+  claim-tip) [ $# -ge 2 ] || die "usage: claim-tip <item> <branch> [--base <branch>]" "$usage_refused"; cmd_claim_tip "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
   owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
@@ -1934,5 +1961,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,49p' "$0"; exit 2 ;;
+  *) usage_text "$0"; exit "$usage_refused" ;;
 esac

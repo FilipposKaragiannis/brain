@@ -10,8 +10,10 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
+# An epic's closeout runs in a pool worktree on its epic branch at the remote tip, based on the
+# epic's start (lib/epic_closeout_claim.sh), and in the main checkout when the remote has no epic branch.
 # Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
-# an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch, or an epic's closeout cannot claim its epic branch at the remote tip (the remote could not be asked, its start does not resolve, the local branch is ahead or checked out elsewhere) · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
@@ -27,6 +29,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/blockers.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/epic_closeout_claim.sh"
 . "$FLOW_PLUGIN/lib/branch.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -177,14 +180,21 @@ depth="$(json_get "$profiles" "review_depth.$profile")"
 # The architect runs where its cost pays: the profile's switch in profiles.json (architect).
 architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
 config_base="$(cfg_or base main)"
+pool_worktree=""; code=0
 if [ "$(step_field "$step" worktree)" = "true" ]; then
-  worktree="$(claim_at_base "$item" "$data")"; code=$?
-  case "$code" in
-    0) ;;
-    3) [ -z "$named" ] || exit 3; FLOW_NEXT_FULL="$item"; pick_again ;;
-    4) [ -z "$named" ] || exit 4; pick_again ;;
-    *) exit "$code" ;;
-  esac
+  pool_worktree="$(claim_at_base "$item" "$data")"; code=$?
+elif [ "$step" = closeout ] && [ "$kind" = epic ]; then
+  pool_worktree="$(claim_epic_branch "$item" "$data")"; code=$?
+fi
+# shellcheck disable=SC2154 # lib/base.sh, sourced above, sets the claim exit codes
+case "$code" in
+  0) ;;
+  "$claim_pool_full") [ -z "$named" ] || exit "$code"; FLOW_NEXT_FULL="$item"; pick_again ;;
+  "$claim_refused") [ -z "$named" ] || exit "$code"; pick_again ;;
+  *) exit "$code" ;;
+esac
+if [ -n "$pool_worktree" ]; then
+  worktree="$pool_worktree"
   branch="$(json_get "$(cat "$worktree/.flow/claim.json")" branch)"
   claim="$(cat "$worktree/.flow/claim.json")"
   json_set "$claim" step "$(json_string "$step")" > "$worktree/.flow/claim.json"

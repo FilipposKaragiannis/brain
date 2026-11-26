@@ -13,6 +13,8 @@
 # against the claim's base) the item closes and its worktree is released, no merge gate raised;
 # with none and changes to merge it raises an escalation gate. A lookup gh cannot answer leaves
 # changes at the merge gate, where the sweep looks again.
+# An epic's closeout releases its pool worktree on the epic branch whatever its outcome
+# (lib/epic_closeout_claim.sh); a write that stops advance.sh keeps it for the retry's reports.
 # A gate and the step past it are one tracker write (gate.sh raise ... -- step=...), and a re-size
 # lands in the write that moves the step: a write the tracker refuses leaves the item at its step,
 # size and profile with its run, and advance.sh run again applies the step again. The run keeps
@@ -26,10 +28,12 @@
 # waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/epic_closeout_claim.sh"
 . "$FLOW_PLUGIN/lib/pull_request.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 HOLD_NOT_WRITTEN=3
+NEXT_STEP_READY=0 WAITING=4 ITEM_DONE=6
 [ $# -ge 1 ] || die "usage: advance.sh <item> [--status ...]" 2
 item="$1"; shift
 as_json=0; status=""; summary=""; new_size=""; gate=""; message=""
@@ -127,7 +131,7 @@ escalate_unopened_epic_pull_request() {
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the epic's pull request could not be opened. Open it, then clear the gate.**
 
 $(cat "$reports/epic-pr.err")" >/dev/null || gate_not_recorded escalation
-  report 4 "" escalation
+  release_closeout_claim_and_report "$WAITING" "" escalation
 }
 
 close_epic_with_nothing_to_merge() {
@@ -135,7 +139,7 @@ close_epic_with_nothing_to_merge() {
   adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null 2>&1 && return 0
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the tracker refused to close the epic. Clear the gate to run the closeout again, or close the epic by hand.**" >/dev/null \
     || gate_not_recorded escalation
-  report 4 "" escalation
+  release_closeout_claim_and_report "$WAITING" "" escalation
 }
 
 wait_for_the_merge_of() {
@@ -146,7 +150,7 @@ $1 brings the epic's branch into its base. ${summary:-$step done.}" "$step" \
     -- "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $1 waits for the merge" >/dev/null \
     || gate_not_recorded merge
   finish_run
-  report 4 "done" merge
+  release_closeout_claim_and_report "$WAITING" "done" merge
 }
 
 close_out_epic() {
@@ -204,6 +208,11 @@ report() {
   if [ "$as_json" -eq 1 ]; then json_obj "item=$item" "step=$step" "status=$status" "next_step=$2" "gate=$3" "profile=$profile" "size=$size" "attempts:=$attempts"; echo
   else echo "advance: $item - $step $status -> ${2:-$3}"; fi
   exit "$1"
+}
+
+release_closeout_claim_and_report() {
+  release_epic_closeout_claim "$FLOW_PLUGIN" "$step" "$kind" "$item"
+  report "$@"
 }
 
 [ -z "$touches" ] || adapter write-state "$item" "touches=$touches" >/dev/null || state_not_recorded "the touches"
@@ -282,7 +291,7 @@ case "$status" in
     remember_asked "$gate"
     raise_asked "$gate" "${message:-$summary}"
     step_write "$item" "step=$step" >/dev/null
-    report 4 "" "$gate" ;;
+    release_closeout_claim_and_report "$WAITING" "" "$gate" ;;
   fail|lost)
     rm -f "$asked_file"
     # A verify run that was stopped (its limit, a signal, a run that died: the report's `stopped`)
@@ -302,7 +311,7 @@ case "$status" in
     if [ "$attempts" -ge "${max:-3}" ]; then
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "Step $step failed $attempts times. Last: ${summary:-no summary}" \
         -- "attempts=$attempts" >/dev/null || gate_not_recorded escalation
-      report 4 "" escalation
+      release_closeout_claim_and_report "$WAITING" "" escalation
     fi
     fix="$(json_get "$profiles" "fix_step.$step")"; [ -n "$fix" ] || fix="$step"
     [ "$status" != lost ] || fix="$step"
@@ -310,7 +319,7 @@ case "$status" in
       || state_not_recorded "attempt $attempts of step $step"
     adapter comment "$item" --body "Step $step failed (attempt $attempts of ${max:-3}): ${summary:-no summary}. Back to $fix." >/dev/null
     finish_run
-    report 0 "$fix" "" ;;
+    release_closeout_claim_and_report "$NEXT_STEP_READY" "$fix" "" ;;
   done) ;;
   *) die "unknown status '$status' (done, fail, gate or lost)" 2 ;;
 esac
@@ -352,7 +361,7 @@ if [ -z "$following" ]; then
     || state_not_recorded "step done"
   adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Every step of $profile ran." >/dev/null
   finish_run
-  report 6 "done" ""
+  release_closeout_claim_and_report "$ITEM_DONE" "done" ""
 fi
 [ "$step" != pr ] || [ "$following" != gate:merge ] || settle_unrecorded_pull_request
 case "$following" in
