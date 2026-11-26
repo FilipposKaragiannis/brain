@@ -321,7 +321,6 @@ async function readPlan(roots: string[], item: string): Promise<GatePlan | null>
 
 const VERIFY_REPORT_FILE = 'verify.md';
 
-/** The item's verify report: the first non-blank `VERIFY_REPORT_FILE` in its reports under each root in turn, or null once `signal` ends the read. */
 async function readVerifyReport(roots: string[], item: string, signal: AbortSignal): Promise<GateReport | null> {
   for (const root of roots) {
     if (signal.aborted) return null;
@@ -331,15 +330,10 @@ async function readVerifyReport(roots: string[], item: string, signal: AbortSign
   return null;
 }
 
-/** The gate kinds whose card always shows the item's verify report. */
 const VERIFY_REPORT_GATES = ['merge', 'feel-test'];
 const ESCALATION_GATE = 'escalation';
 const VERIFY_STEP = 'verify';
 
-/**
- * Whether the gate's card shows the item's verify report. An escalation shows it only when verify
- * failed; one with no `fromStep`, from an older plugin, cannot be told from another escalation.
- */
 function showsVerifyReport(gate: GateRecord): boolean {
   if (VERIFY_REPORT_GATES.includes(gate.gate)) return true;
   return gate.gate === ESCALATION_GATE && gate.fromStep === VERIFY_STEP;
