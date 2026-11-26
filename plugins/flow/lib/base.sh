@@ -1,7 +1,8 @@
 # The base of an item: the branch its work starts from and its PR merges into. Resolved once, when
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
 # lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh,
-# scripts/gate.sh, hooks/worktree-create.sh and skills/init/scripts/init.sh.
+# scripts/gate.sh, scripts/jobs.sh, jobs/check.sh, hooks/worktree-create.sh and
+# skills/init/scripts/init.sh.
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
 
 # The exit codes of a claim (steward.sh claim and claim-tip, claim_epic_branch) that the call or

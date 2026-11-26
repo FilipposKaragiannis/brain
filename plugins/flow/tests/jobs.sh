@@ -804,7 +804,7 @@ FLOW_HOME="$home2" "$J" uninstall next-codex > "$work/uninstall.out" 2>&1
 check "uninstall takes a schedule the config no longer names, and status drops it" sh -c "grep -q '^next-codex: unscheduled' '$work/uninstall.out' && [ ! -f '$work/agents/$lbl.next-codex.plist' ] && grep -q 'bootout gui/.*/$lbl.next-codex' '$LAUNCH_LOG' && ! FLOW_HOME='$home2' '$J' status | grep -q next-codex"
 printf 'jobs:\n  schedule:\n    next_codex: every 30m\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install > "$work/install.out" 2>&1; code=$?
-check "install refuses a bad schedule name, exit 2, saying what a name is" sh -c "[ $code = 2 ] && grep -q 'flow: no job next_codex: a schedule is one of next comments intake retro health, or one of them, a dash and a label' '$work/install.out' && [ ! -f '$work/agents/$lbl.next_codex.plist' ]"
+check "install refuses a bad schedule name, exit 2, saying what a name is" sh -c "[ $code = 2 ] && grep -q 'flow: no job next_codex: a schedule is one of next comments intake retro health check, or one of them, a dash and a label' '$work/install.out' && [ ! -f '$work/agents/$lbl.next_codex.plist' ]"
 printf 'jobs:\n  schedule:\n    next-1: every 30m\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-1 > "$work/install.out" 2>&1; code=$?
 check "install refuses a label that does not start with a letter: next-1 is a worker of next" sh -c "[ $code = 2 ] && grep -q \"the schedule name next-1 has the label '1'\" '$work/install.out' && [ ! -f '$work/agents/$lbl.next-1.plist' ]"

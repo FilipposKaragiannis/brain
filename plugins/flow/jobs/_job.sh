@@ -83,9 +83,10 @@ job_drop_stale_run_locks() {
 # <schedule>.lock, and exit 0 quietly when another run of the schedule is alive; a lock whose pid is not is stale.
 # The schedules of one job but next (intake and intake-nightly) share that job's state, the notes
 # and ledger, the lessons or the claims, so they take turns on <job>.shared.lock as well: a run
-# that finds another schedule of its job alive skips. next has the pick lock instead. run
-# (comments): <schedule>-<pid>.lock and no shared lock, so runs of every schedule overlap and the
-# job guards its own state; the stale run locks go first.
+# that finds another schedule of its job alive skips. next has the pick lock instead. The checks
+# share no state, each in its own checkout, so they take no shared lock: a long one never makes
+# another skip. run (comments): <schedule>-<pid>.lock and no shared lock, so runs of every
+# schedule overlap and the job guards its own state; the stale run locks go first.
 job_lock() {
   job_shared=
   d="$(job_log_dir)/$job.lock"
@@ -99,7 +100,8 @@ job_lock() {
   trap 'job_end $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  [ "$job_lock_kind" = schedule ] && [ "$(job_base)" != next ] || return 0
+  [ "$job_lock_kind" = schedule ] || return 0
+  case "$(job_base)" in next|check) return 0 ;; esac
   _s="$(job_log_dir)/$(job_base).shared.lock"
   if mkdir_exclusive "$_s"; then :; else
     _spid="$(cat "$_s/pid" 2>/dev/null)"

@@ -618,6 +618,22 @@ yaml_nested() {
     END { exit !nested }' "$1"
 }
 
+# yaml_inline_list <file> <dotted.path>: 0 when the key's value is an inline list as yaml_get reads
+# it, its quotes stripped first, so a caller can refuse a value yaml_get would split into items.
+yaml_inline_list() {
+  _inline_at="$(yaml_line "$1" "$2")"
+  [ -n "$_inline_at" ] || return 1
+  awk -v at="$_inline_at" '
+    NR == at {
+      body = $0; sub(/^ */, "", body); sub(/[ \t]+#.*$/, "", body)
+      value = substr(body, index(body, ":") + 1); sub(/^[ \t]+/, "", value); sub(/[ \t]+$/, "", value)
+      if (value ~ /^".*"$/ || value ~ /^'\''.*'\''$/) value = substr(value, 2, length(value) - 2)
+      listed = value ~ /^\[/
+      exit
+    }
+    END { exit !listed }' "$1"
+}
+
 # yaml_line <file> <dotted.path>: the line number of the key, quoted or not, empty when it is
 # absent. For messages that point the owner at the line to fix.
 yaml_line() {
