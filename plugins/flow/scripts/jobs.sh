@@ -9,7 +9,7 @@
 #   stop <name>            end the running run and every session under it
 #   pause <name|all>       later runs exit at once until resume; a running run finishes
 #   resume <name|all>
-#   install [name|all]     write and load each schedule jobs.schedule names
+#   install [name|all]     write and load each schedule jobs.schedule and jobs.checks name
 #   uninstall [name|all]   unload it and remove its schedule file; takes a schedule the config no
 #                          longer names too
 # The schedules live in .flow/config.yaml: jobs.schedule.<name> is "every 30m [args]", "daily
@@ -26,6 +26,12 @@
 # longer names. run and install refuse a bad jobs.host, effort or jobs.workers (exit 2), naming
 # its line in the config, a next schedule whose args set --workers while jobs.workers does too,
 # and a bad schedule name.
+# The project's own checks are schedules too: each key under jobs.checks (smoke) runs the check job
+# as check-<name> (check-smoke), its command and its schedule under it: jobs.checks.smoke.command and
+# jobs.checks.smoke.schedule, the timing alone. The bare name check is no schedule. run and install
+# refuse a malformed entry or a base that is no valid branch name (lib/scheduled_checks.sh), or a
+# missing .flow/jobs/check.sh, exit 2; install with no name refuses jobs.checks set as a value and
+# a jobs.schedule.check-<name> key too.
 # On macOS a schedule is a launchd agent, com.<repo>.flow.<name>, loaded at login: it runs while
 # you are logged in and the Mac is awake; a comments agent starts its run in the background, so
 # its next interval starts a run while one is alive. Elsewhere install prints the crontab lines to add.
@@ -34,7 +40,9 @@ set -u
 . "$FLOW_PLUGIN/lib/host.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
 . "$FLOW_PLUGIN/lib/process.sh"
-JOBS="next comments intake retro health"
+. "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/scheduled_checks.sh"
+JOBS="next comments intake retro health check"
 log="$(flow_home)/log"; main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 agents="${FLOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"
 prefix="com.$(basename "$main" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n-' '-').flow"
@@ -42,17 +50,24 @@ scheduler="${FLOW_SCHEDULER:-$([ "$(uname)" = Darwin ] && echo launchd || echo c
 host="$(cfg_or jobs.host claude)"
 domain="gui/$(id -u)"
 py() { cached_python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" "$@"; }
-spec() { cfg "jobs.schedule.$1"; }
+# schedule_key <name>: the config key that sets the schedule: jobs.checks.<check>.schedule for a check.
+schedule_key() { case "$1" in check-*) printf 'jobs.checks.%s.schedule' "${1#check-}" ;; *) printf 'jobs.schedule.%s' "$1" ;; esac; }
+spec() { cfg "$(schedule_key "$1")"; }
 # job_of <name>: the job a schedule runs (next for next-codex).
 job_of() { printf '%s' "${1%%-*}"; }
 # known <name>: a schedule name, or a refusal saying why not, exit 2.
 known() { py name "$1" $JOBS || exit 2; }
 # named <name>: known, and a job or a schedule the config names: run, pause and resume take these.
-named() { known "$1"; [ "$1" = "$(job_of "$1")" ] || [ -n "$(spec "$1")" ] || die "no schedule $1: set jobs.schedule.$1 in .flow/config.yaml" 2; }
-# schedules: every job, then each other schedule the config names, in its order.
+named() { known "$1"; [ "$1" = "$(job_of "$1")" ] || [ -n "$(spec "$1")" ] || die "no schedule $1: set $(schedule_key "$1") in .flow/config.yaml" 2; }
+# schedules: every job but check, then each check, then each other schedule the config names, in
+# its order. A check is set under jobs.checks alone, so a jobs.schedule.check-<name> key is none.
 schedules() {
-  echo $JOBS | tr ' ' '\n'
-  for n in $(yaml_keys "$(config_file)" jobs.schedule); do case " $JOBS " in *" $n "*) ;; *) echo "$n" ;; esac; done
+  for job_name in $JOBS; do [ "$job_name" = check ] || echo "$job_name"; done
+  for check_name in $(yaml_keys "$(config_file)" jobs.checks); do echo "check-$check_name"; done
+  for schedule_name in $(yaml_keys "$(config_file)" jobs.schedule); do
+    case " $JOBS " in *" $schedule_name "*) continue ;; esac
+    case "$schedule_name" in check-*) ;; *) echo "$schedule_name" ;; esac
+  done
 }
 # orphans: the schedules installed here that the config no longer names, from their agents.
 orphans() {
@@ -64,9 +79,15 @@ orphans() {
     py name "$n" $JOBS 2>/dev/null && echo "$n"
   done
 }
+# targets <name|all>: the schedules install writes; all takes each one with a schedule, after
+# the config's checks pass checks_problems and each check under jobs.checks passes checks_ok, so
+# an entry with no schedule, jobs.checks set as a value or a jobs.schedule.check-<name> key is refused.
 targets() {
   case "${1:-all}" in
-    all) for j in $(schedules); do [ -z "$(spec "$j")" ] || { known "$j"; echo "$j"; }; done ;;
+    all)
+      checks_said="$(checks_problems)"
+      [ -z "$checks_said" ] || { printf '%s\n' "$checks_said" | sed 's/^/flow: /' >&2; exit 2; }
+      for j in $(schedules); do checks_ok "$j"; [ -z "$(spec "$j")" ] || { known "$j"; echo "$j"; }; done ;;
     *) known "$1"; echo "$1" ;;
   esac
 }
@@ -100,10 +121,21 @@ live() {
   done
   if loaded "$1"; then launchctl print "$domain/$(label "$1")" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)$/\1/p'; fi
 }
+# checks_ok <name>...: each check among the names has an entry that can run, and the wrapper its
+# schedule starts, or exit 2 saying what to fix.
+checks_ok() {
+  for schedule_name in "$@"; do
+    case "$schedule_name" in check-*) ;; *) continue ;; esac
+    entry_problem="$(check_problem "${schedule_name#check-}")"
+    [ -z "$entry_problem" ] || { printf 'flow: %s\n' "$entry_problem" >&2; exit 2; }
+    [ -x "$main/.flow/jobs/check.sh" ] || die "$schedule_name needs .flow/jobs/check.sh, which is missing: run flow:init to install it" 2
+  done
+}
 # settings_ok <name>...: the jobs settings a run would refuse are refused here, before anything
-# starts: jobs.host for every schedule, its host's model and effort for the jobs that start
-# sessions unless the schedule's args give an --effort, jobs.workers for next, and a next schedule that sets --workers beside it.
+# starts: a check's entry and wrapper (checks_ok), jobs.host for every schedule, its host's model
+# and effort for the jobs that start sessions unless the schedule's args give an --effort, jobs.workers for next, and a next schedule that sets --workers beside it.
 settings_ok() {
+  checks_ok "$@"
   _bad="$(host_jobs_host_problem)"
   if [ -z "$_bad" ]; then for _j in "$@"; do case "$(job_of "$_j")" in comments|intake|retro)
     case " $(spec "$_j") " in *" --effort "*) continue ;; esac

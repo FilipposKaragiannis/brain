@@ -13,7 +13,9 @@ Each row names the slot that runs it:
 - verify gate: an entry under `gates` in `.flow/config.yaml`; the verifier runs it after the tests.
 - commit gate: an entry in `gates[]` in `.standards/config.json`, with `when` set to `commit`,
   `push` or `ci`; the git hooks or the CI action run it.
-- scheduled check: a CI workflow with an `on: schedule` trigger; neither plugin runs it.
+- scheduled check: an entry under `jobs.checks` in `.flow/config.yaml`; the flow's check job runs
+  it on its schedule from a clean checkout of the base. A CI workflow with an `on: schedule`
+  trigger works too.
 - nothing: no slot runs it, so it runs only when an agent or the owner starts it by hand.
 
 A row whose command is `not set up` is a check the project does not have yet.

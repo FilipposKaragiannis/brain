@@ -8,6 +8,7 @@
   _jobs.py args <schedule>
   _jobs.py host <schedule>
   _jobs.py name <name> <job>...
+  _jobs.py check-schedule <schedule>
   _jobs.py workers <where> <jobs.workers value> [<host>=<count>...]
 
 A schedule is "every 30m [args]", "every 2h [args]", "daily 02:00 [args]" or
@@ -16,9 +17,11 @@ claude or codex run the schedule on that host: host prints it (nothing when the 
 and args leaves it out. Another plain word there is refused, as a host misspelled; an item id or
 an option is an arg as before. A schedule's name is a job, or the job, a dash and a label of a
 lowercase letter then lowercase letters and digits (next-codex): name exits 2 saying why one is
-not. The runs come from <log dir>/runs.1.jsonl and runs.jsonl, one line per run that the job
-library writes; launchd adds whether the schedule is loaded and its own run count. Times print in
-local time.
+not. The check job runs only as check-<name>, one schedule per jobs.checks entry, so the bare name
+check is none. check-schedule prints why a schedule cannot run a check, nothing when it can: a check
+runs no agent, so its schedule is the timing alone, with no args and no host word. The runs come
+from <log dir>/runs.1.jsonl and runs.jsonl, one line per run that the job library writes; launchd
+adds whether the schedule is loaded and its own run count. Times print in local time.
 
 workers reads jobs.workers (lib/workers.sh passes it): a one-line map {claude: 1, codex: 2}, or
 the host=count pairs of a block map, and prints the plan, one host:count line per host with
@@ -71,11 +74,26 @@ def parse(spec):
 # name_problem: why the name is no schedule name, or nothing. The label starts with a letter, so
 # next-codex never reads as a worker of next (next-1).
 def name_problem(name, jobs):
+    if name == "check":
+        return "a check runs as check-<name>: set jobs.checks.<name> in .flow/config.yaml"
     job, dash, label = name.partition("-")
     if job not in jobs:
         return "no job %s: a schedule is one of %s, or one of them, a dash and a label (next-codex)" % (name, " ".join(jobs))
     if dash and not re.fullmatch(r"[a-z][a-z0-9]*", label):
         return "the schedule name %s has the label %r: a label is a lowercase letter, then lowercase letters and digits (next-codex, next-gh81)" % (name, label)
+    return ""
+
+
+# check_schedule_problem: why the schedule cannot run a check, or nothing.
+def check_schedule_problem(schedule: str) -> str:
+    try:
+        parsed = parse(schedule)
+    except ValueError as error:
+        return str(error)
+    if parsed["host"]:
+        return "the schedule %r names the host %s: a check runs no agent, so its schedule is the timing alone" % (schedule, parsed["host"])
+    if parsed["args"]:
+        return "the schedule %r has the args %s: a check's schedule is the timing alone" % (schedule, " ".join(parsed["args"]))
     return ""
 
 
@@ -497,6 +515,10 @@ def main():
         if problem:
             print("flow: %s" % problem, file=sys.stderr)
             sys.exit(2)
+    elif command == "check-schedule":
+        problem = check_schedule_problem(args[0])
+        if problem:
+            print(problem)
     else:
         sys.exit("flow: unknown command %s" % command)
 
