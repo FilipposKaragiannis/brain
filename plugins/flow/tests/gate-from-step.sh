@@ -10,8 +10,6 @@
 trap 'sandbox_close $?' EXIT
 
 max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$plugin/profiles.json")"
-# escalated_at <title> <step>: a new task one attempt short at <step>, whose run there fails, so
-# advance.sh raises the escalation; prints the item.
 escalated_at() {
   escalated_item="$(new_task "$1")"
   "$local_adapter/write-state.sh" "$escalated_item" "step=$2" profile=task-S "attempts=$((max_attempts - 1))" >/dev/null
@@ -20,7 +18,6 @@ escalated_at() {
   finish_step "$escalated_item"
   printf '%s' "$escalated_item"
 }
-# listed_from_step <item>: the from_step gate.sh list --json gives the item's gate.
 listed_from_step() {
   "$plugin/scripts/gate.sh" list --json | python3 -c 'import json,sys
 gates = [gate for gate in json.load(sys.stdin) if gate["item"] == sys.argv[1]]
