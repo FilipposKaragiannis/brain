@@ -121,6 +121,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/branch.sh"
+. "$FLOW_PLUGIN/lib/pull_request.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
@@ -908,11 +909,10 @@ read_pull_request_state() {
   pull_request_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pull_request_view" state 2>/dev/null
 }
 
-# link_pr <item> <pr>: the PR on the tracker (adapter link-pr), then in the item's flow record with
-# the pr_host the tracker took (record_linked_pr).
+# link_pr <item> <pr>: the PR on the tracker and in the item's flow record. The sweep runs no step,
+# so no host is known: comments.sh author_host reads it from the PR body.
 link_pr() {
-  adapter link-pr "$1" "$2" >/dev/null || { echo "flow: could not record $2 on $1" >&2; return 1; }
-  record_linked_pr "$1" >/dev/null || echo "flow: could not write state for $1" >&2
+  link_and_record_pull_request "$1" "$2" "" || echo "flow: could not write state for $1" >&2
 }
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.

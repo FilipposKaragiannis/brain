@@ -1,7 +1,8 @@
 #!/bin/sh
 # state-join.sh: the flow record joined onto the adapter's item (item_read, items_join,
 # items_listed; scripts/state.sh read and join) and the run and gate rows listed from the records
-# (record_list, run_record, gate_record; scripts/state.sh list), on the local adapter in a
+# (record_list, run_record, gate_record; scripts/state.sh list) and the PR a link writes to the
+# record (link_and_record_pull_request in lib/pull_request.sh), on the local adapter in a
 # throwaway repo. Each mode is set in the repo's config, but for the checks of FLOW_TRACKER_STATE.
 # The mode switches the mirror only: an item with no record reads the tracker's state in both.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
@@ -144,15 +145,22 @@ flow run_record "$broken" >/dev/null 2>&1; code=$?
 check "RunRecordOfAnUnreadableRecord_ExitsOne: one item's row is never read as none from a corrupt record" '[ "$code" -eq 1 ]'
 rm -f "$(record path "$broken")"
 
-echo "record_linked_pr: the PR link-pr left on the tracker"
+echo "link_and_record_pull_request: the tracker told, the PR in the record"
+pull_request_flow() { sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/pull_request.sh" && "$@"' flow "$@"; }
+tracker_state_is none
 linked="$(new_task "Linked")"
-"$local_adapter/link-pr.sh" "$linked" https://example.invalid/pull/31 >/dev/null
-printed="$(flow record_linked_pr "$linked")"
-check "LinkedPr_IsCopiedIntoTheRecord: the record takes the PR the worker linked on the tracker" \
+pull_request_flow link_and_record_pull_request "$linked" https://example.invalid/pull/31 codex >/dev/null 2>&1
+check "LinkedPr_IsWrittenToTheRecord: the record holds the PR, because no tracker holds it any more" \
   '[ "$(record get "$linked" pr)" = https://example.invalid/pull/31 ]'
-check "LinkedPr_IsPrinted: the caller learns the PR it copied" '[ "$printed" = https://example.invalid/pull/31 ]'
-unlinked="$(new_task "Unlinked")"
-check "NoLinkedPr_PrintsNothing: an item with no PR on the tracker has none to copy" '[ -z "$(flow record_linked_pr "$unlinked")" ]'
+check "LinkedPr_RecordsTheHostGiven: a codex host is kept as pr_host, because it picks the PR's reviewers" \
+  '[ "$(record get "$linked" pr_host)" = codex ]'
+check "LinkedPrUnderNone_LeavesTheTrackerStateEmpty: the tracker takes no pr, because link-pr writes no state" \
+  '[ -z "$(tracker "$linked" pr)" ]'
+shell_linked="$(new_task "Linked from a shell")"
+pull_request_flow link_and_record_pull_request "$shell_linked" https://example.invalid/pull/32 shell >/dev/null 2>&1
+check "LinkedPrFromAShell_RecordsNoHost: a host that is neither claude nor codex is left out, because only those two have reviewer lists" \
+  '[ -z "$(record get "$shell_linked" pr_host)" ]'
+tracker_state_is ""
 
 [ "$fails" -eq 0 ] && { echo "state-join: ok"; exit 0; }
 echo "state-join: $fails failed"; exit 1

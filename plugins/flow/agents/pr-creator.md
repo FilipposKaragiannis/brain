@@ -48,16 +48,15 @@ it), the task branch in the claimed worktree and its `.flow/claim.json` (`base`)
    `Resolves #<n>` for a GitHub item (a local item gets `Item: <id>`). Glossary words only.
    Open the PR with the whole body at once: `gh pr create --base <base> --head <branch> --title
    <item title> --body-file <file>`. The PR is a GitHub PR on the origin whatever tracker holds
-   the item; a local or Jira item gets one too, and its tracker only records it (step 6). A
+   the item; a local or Jira item gets one too, and its tracker is told of it (step 6). A
    pushed branch is no PR: when `gh pr create` fails, stop with status `fail` naming it.
 5. When a quiz exists (`<reports>/quiz.md`): open as a draft (`--draft`) and say in the
    result that the PR goes ready when the owner passes the quiz in the console. Never post the
    quiz, its answers or a link to it on the PR: the console shows it on the Gates and Pull
    requests pages.
-6. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`. It also records the
-   host that wrote the PR, which picks the reviewers in step 7. When it fails (a local item
-   file can lie outside the worktree you may write), the step does not fail: say so in the
-   result, and the orchestrator records the URL from the result's `pr`.
+6. Report the PR's URL under `pr` in the result; never call `link-pr.sh`. The orchestrator
+   links it on the item's tracker and records it with the host the run started on, since the
+   flow record lies outside the worktree you may write.
 7. Request reviews with `<plugin>/scripts/comments.sh request-review <pr> "<ask>"`: the ask
    is to review the diff line by line for correctness and to check the implementation against
    the item's acceptance lines. The script asks each reviewer of the author host's list in

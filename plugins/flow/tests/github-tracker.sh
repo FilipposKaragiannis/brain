@@ -353,8 +353,6 @@ https://chatgpt.com/codex/tasks/task_e_6a1f"; "$P/scripts/comments.sh" request-r
 check "request-review: a PR whose body says Codex wrote it asks the codex list" [ "$(asked)" = "mona" ]
 pr_as flow/x "Adds the slide."; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: a PR whose author host is unknown asks the default list" [ "$(asked)" = "hubot" ]
-env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
-check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
 record set 'gh#21' pr=https://gh/pull/91 pr_host=codex >/dev/null
 pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]

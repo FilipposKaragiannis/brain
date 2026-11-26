@@ -119,6 +119,10 @@ comments_jira() {
 def text(node): return node.get("text", "") + "".join(text(c) for c in node.get("content", []))
 [print(text(c["body"])) for c in json.load(open(sys.argv[1]))["issues"][sys.argv[2]]["comments"]]' "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
 }
+remote_links_jira() {
+  python3 -c 'import json,sys; [print(remote_link["object"]["url"]) for remote_link in json.load(open(sys.argv[1]))["issues"][sys.argv[2]].get("remotelinks", [])]' \
+    "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
+}
 blip_jira() { printf '1\n503\n' > "$FAKE_JIRA_DIR/fail"; }
 
 type "setup_$name" >/dev/null 2>&1 || { echo "adapter-contract: no backend setup for $name in $0" >&2; exit 2; }
@@ -234,11 +238,14 @@ echo " comment, link-pr, close"
 printf 'contract comment from stdin\n' | "$A/comment.sh" "$t1" >/dev/null 2>&1
 check "comment --body lands on the item" '"comments_$name" "$t1" | grep -q "contract comment from --body"'
 check "comment from stdin lands on the item" '"comments_$name" "$t1" | grep -q "contract comment from stdin"'
-"$A/link-pr.sh" "$t2" https://example.test/pull/7 >/dev/null 2>&1
-check "link-pr records the PR in the state" '[ "$(field "$t2" state.pr)" = https://example.test/pull/7 ]'
-check "link-pr says the PR in a comment" '"comments_$name" "$t2" | grep -q "https://example.test/pull/7"'
-env -u CLAUDECODE CODEX_THREAD_ID=t "$A/link-pr.sh" "$t2" https://example.test/pull/8 >/dev/null 2>&1
-check "link-pr records the host that wrote the PR as pr_host" '[ "$(field "$t2" state.pr_host)" = codex ]'
+env -u CLAUDECODE CODEX_THREAD_ID=t "$A/link-pr.sh" "$t2" https://example.test/pull/7 >/dev/null 2>&1
+check "LinkPr_LeavesTrackerStateEmpty: the tracker holds no pr, because the flow record is where the PR is recorded" '[ -z "$(field "$t2" state.pr)" ]'
+check "LinkPrFromACodexSession_LeavesNoPrHost: the tracker holds no pr_host, because the flow records the host from the run" '[ -z "$(field "$t2" state.pr_host)" ]'
+check "LinkPr_SaysThePrInAComment: the PR is named on the item, because that comment is how the tracker learns of it" '"comments_$name" "$t2" | grep -q "https://example.test/pull/7"'
+if [ "$name" = jira ]; then
+  check "LinkPrOnJira_AddsTheRemoteLink: the issue links the PR, because Jira shows a PR through its remote links" \
+    '[ "$(remote_links_jira "$t2")" = https://example.test/pull/7 ]'
+fi
 "$A/close.sh" "$t1" --comment "closed by the contract" >/dev/null 2>&1
 check "close makes the item closed" '[ "$(field "$t1" status)" = closed ]'
 check "ClosedItem_ReadsCategoryDone: a closed item is in the done category, because closed work is never to do" '[ "$(field "$t1" category)" = done ]'

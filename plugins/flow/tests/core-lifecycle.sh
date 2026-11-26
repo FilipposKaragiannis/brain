@@ -42,10 +42,8 @@ printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_
 check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
-check "link-pr"           [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr)" = "https://example/pr/1" ]
-env -u CODEX_THREAD_ID -u CODEX_SANDBOX CLAUDECODE=1 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
-check "link-pr: a Claude session is recorded as the PR's host" [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr_host)" = "claude" ]
-"$P/adapters/local/write-state.sh" "$t2" pr=
+check "LocalLinkPr_SaysThePrInAComment: the item's comments name the PR, because a comment is all link-pr leaves on the item" \
+  sh -c "sed -n '/^## Comments/,\$p' .flow/items/task/2.md | grep -q 'PR: https://example/pr/1'"
 
 echo "steward"
 w1="$("$P/scripts/steward.sh" claim "$t1")"
@@ -105,9 +103,12 @@ for s in test review; do "$P/scripts/next.sh" "$t1" >/dev/null; "$P/scripts/adva
 "$P/scripts/next.sh" "$t1" >/dev/null
 printf '{"status":"pass","attempts":2,"checks":[{"name":"tests","status":"pass","summary":"ok"}]}\n' > "$reports/verify.json"
 check "verify pass -> pr" sh -c "'$P/scripts/advance.sh' '$t1' --json | grep -q '\"next_step\":\"pr\"'"
-"$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$reports/pr.json"
-"$P/scripts/advance.sh" "$t1" >/dev/null 2>&1; code=$?
+env -u CODEX_THREAD_ID -u CODEX_SANDBOX CLAUDECODE=1 "$P/scripts/next.sh" "$t1" >/dev/null
+printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$reports/pr.json"
+env -u CLAUDECODE CODEX_THREAD_ID=t "$P/scripts/advance.sh" "$t1" >/dev/null 2>&1; code=$?
 check_all "pr done -> merge gate (exit 4), step done" '[ "$code" -eq 4 ] && [ "$(record get "$t1" gate)" = "merge" ] && [ "$(record get "$t1" step)" = "done" ]'
+check "PrStepDone_RecordsThePrOfItsResult: the record holds the URL the pr step reported, because the worker cannot write the record" [ "$(record get "$t1" pr)" = https://gh/pull/90 ]
+check "PrStepDone_RecordsTheHostTheRunStartedOn: a run started in Claude records claude as pr_host, because the run's host wrote the PR, not the session that advances it" [ "$(record get "$t1" pr_host)" = claude ]
 check "pr done at the merge gate: the claim says done, as the issue does" [ "$(claim_step "$t1")" = done ]
 "$P/scripts/gate.sh" clear "$t1" merged >/dev/null
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?

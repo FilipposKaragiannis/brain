@@ -63,13 +63,10 @@
 #                               named on stderr
 #   run_record <item>           the item's run row; nothing with none; 1 a record that does not parse
 #   gate_record <item>          the item's gate row; nothing with none; 1 a record that does not parse
-#   record_linked_pr <item>     the pr and pr_host link-pr left on the tracker, copied into the
-#                               record; prints the PR, nothing when the tracker holds none. The
-#                               adapter's code when its read fails; record_set's when the write does
 # With no record yet, record_set and take_item start one from the tracker's state (lazy seed).
 # record_get, record_show, record_set, take_item, record_archive, record_list with an item,
-# run_record, gate_record and record_linked_pr refuse, exit 2, an id that is not of its adapter's
-# shape (item_id_shaped).
+# run_record and gate_record refuse, exit 2, an id that is not of its adapter's shape
+# (item_id_shaped).
 
 EXIT_USAGE=2
 
@@ -191,16 +188,6 @@ gate_record() (
   [ $# -eq 1 ] || die "usage: gate_record <item>" "$EXIT_USAGE"
   item_shape_required "$1"
   state_reader row --kind gates --item "$1" </dev/null
-)
-
-record_linked_pr() (
-  [ $# -eq 1 ] || die "usage: record_linked_pr <item>" "$EXIT_USAGE"
-  item_shape_required "$1"
-  flow_record_tracker_item="$( (adapter read "$1") </dev/null)" || exit
-  flow_record_pr="$(json_get "$flow_record_tracker_item" state.pr)"
-  [ -n "$flow_record_pr" ] || exit 0
-  record_set "$1" "pr=$flow_record_pr" "pr_host=$(json_get "$flow_record_tracker_item" state.pr_host)" </dev/null || exit
-  printf '%s\n' "$flow_record_pr"
 )
 
 # state_reader <command> [<option>...]: one _state.py read that joins or lists, in this flow home.

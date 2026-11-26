@@ -28,7 +28,7 @@ PYTHON
 "$P/scripts/comments.sh" reply 90 501 "fixed in abc123"
 "$P/scripts/comments.sh" resolve T_1
 printf 'the body' | gh pr create --base main --head flow/x --title T --body-file - >/dev/null
-env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
+"$P/scripts/state.sh" set 'gh#21' pr=https://gh/pull/91 pr_host=codex >/dev/null
 seed "$review_request_age_seconds" running 0 chase
 python3 -I - "$FAKE_GH_DIR/issues.json" "$review_request_age_seconds" "$(date +%s)" <<'PYTHON'
 import json

@@ -118,7 +118,7 @@ plugins/flow/tests/sessions.sh	SC2034	1
 plugins/flow/tests/sessions.sh	SC2154	3
 plugins/flow/tests/state-disk.sh	SC2034	4
 plugins/flow/tests/state-disk.sh	SC2154	4
-plugins/flow/tests/state-join.sh	SC2034	6
+plugins/flow/tests/state-join.sh	SC2034	4
 plugins/flow/tests/state-join.sh	SC2154	6
 plugins/flow/tests/state-readers.sh	SC2034	1
 plugins/flow/tests/state-readers.sh	SC2154	6

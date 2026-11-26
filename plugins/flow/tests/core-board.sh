@@ -101,7 +101,7 @@ check "gh label replaced" sh -c "grep -q 'add-label step:test --remove-label ste
 check "gh one state comment" [ "$(python3 -c 'import json; print(len([c for c in json.load(open("'"$FAKE_GH_DIR"'/issues.json"))["issues"][1]["comments"] if "flow:state" in c["body"]]))')" = "1" ]
 "$P/adapters/github/comment.sh" 'gh#11' --body "hello"
 "$P/adapters/github/link-pr.sh" 'gh#11' https://gh/pr/5
-check "gh link-pr"        [ "$("$P/adapters/github/read.sh" 'gh#11' | jget state.pr)" = "https://gh/pr/5" ]
+check "GithubLinkPr_SaysThePrInAComment: the issue's comments name the PR, because link-pr writes no state" sh -c "grep -q 'PR: https://gh/pr/5' '$FAKE_GH_DIR/issues.json'"
 "$P/adapters/github/close.sh" 'gh#11' --comment done
 check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget status)" = "closed" ]
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"

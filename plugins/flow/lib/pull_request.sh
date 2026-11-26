@@ -1,7 +1,18 @@
-# What a pr step done with no PR recorded leaves on its task branch, one word for the caller to act
-# on: found <url> (a PR whose head is the branch), nothing-to-merge, unopened (changes and no PR) or
-# unanswered (changes, and gh could not say whether a PR exists). Sourced after lib/flow.sh by
-# scripts/advance.sh.
+# The PR of an item: linked on its tracker and written to its record by the one function the
+# orchestrator scripts call, and what a pr step done with no PR recorded leaves on its task branch,
+# one word for the caller to act on: found <url> (a PR whose head is the branch), nothing-to-merge,
+# unopened (changes and no PR) or unanswered (changes, and gh could not say whether a PR exists).
+# Sourced after lib/flow.sh by scripts/advance.sh, scripts/epic-pr.sh and scripts/steward.sh.
+
+# link_and_record_pull_request <item> <url> <host>: the tracker is told of the PR (adapter link-pr),
+# a refusal only warned, then the record takes pr and pr_host. The host is kept only when it is
+# claude or codex. Exit record_set's code.
+link_and_record_pull_request() (
+  [ $# -eq 3 ] || die "usage: link_and_record_pull_request <item> <url> <host>" "$EXIT_USAGE"
+  adapter link-pr "$1" "$2" </dev/null >/dev/null || echo "flow: the tracker of $1 did not take $2" >&2
+  case "$3" in claude|codex) linked_host="$3" ;; *) linked_host="" ;; esac
+  record_set "$1" "pr=$2" "pr_host=$linked_host" </dev/null
+)
 
 # pull_request_on_branch <home> <branch>: the URL of a PR whose head is the branch, or nothing; fails
 # when gh cannot answer. The same lookup as the sweep's.
