@@ -46,7 +46,6 @@ below. Any other file is named as kept in the reports folder, and a media file s
 proof cell. The walk follows no link and opens none, because the excerpt goes public.
 """
 import html
-import json
 import os
 import posixpath
 import re
@@ -56,28 +55,28 @@ from dataclasses import dataclass
 from typing import FrozenSet, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _verify_proofs import EVIDENCE_FOLDER, GRADE_LIVE  # noqa: E402
+from _pr_report_input import TEXT_ENCODING, NotChecked, Proof, VerifyReport, read_report  # noqa: E402
+from _verify_proofs import EVIDENCE_FOLDER, FILE_LINE, GRADE_ERROR, GRADE_LIVE, GRADE_TEST  # noqa: E402
 from _verify_report import (  # noqa: E402
     COUNT_LINE,
+    NOT_CHECKED_FILE,
+    NOT_CHECKED_LINE,
+    NOT_CHECKED_NONE,
     PROOFS_TABLE_HEAD,
+    SEE_NOT_CHECKED,
+    UNKNOWN_LINE,
     md_cell,
-    not_checked_lines,
-    proof_cell,
-    shown_line,
 )
 from _verify_text import one_line, terminal_free  # noqa: E402
 
-REPORT_FILE = "verify.json"
 SECTION_HEADING = "## Verification"
 NOT_CHECKED_TITLE = "**Not checked**"
-REQUIRED_KEYS = ("verdict", "proven", "acceptance_lines", "proofs", "not_checked")
 BACKTICK = "`"
 BACKTICK_RUN = re.compile("`+")
 CODE_SPAN_PADDING = " "
 FENCE_LONGER_BY = 1
 MEDIA_EXTENSIONS = frozenset((".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov", ".webm"))
 NULL_BYTE = b"\0"
-TEXT_ENCODING = "utf-8"
 SINGLE_LINE = 1
 EXCERPT_LINES = 20
 EXCERPT_LINE_CHARACTERS = 300
@@ -91,27 +90,13 @@ SUMMARY_LINE = "<summary><code>%s</code>, %s</summary>"
 ONE_LINE = "1 line"
 LINE_COUNT = "%d lines"
 LAST_LINES = "last %d of %s"
+PIPE = "|"
 PIPE_ENTITY = "&#124;"
 BODY_FULL = "excerpt left out: the body is full"
 EXCERPT_BELOW = ", excerpt below"
 KEPT_LINE = "- %s, kept in the reports folder."
 RENDERED_EXIT = 0
 FAILED_EXIT = 1
-
-
-@dataclass(frozen=True)
-class VerifyReport:
-    verdict: str
-    proven: int
-    acceptance_lines: int
-    proofs: Tuple[dict, ...]
-    not_checked: Tuple[dict, ...]
-
-
-@dataclass(frozen=True)
-class ReadReport:
-    report: VerifyReport
-    problem: str
 
 
 @dataclass(frozen=True)
@@ -125,26 +110,6 @@ class TextEvidence:
 class EvidenceFiles:
     excerpted: Tuple[TextEvidence, ...]
     kept: Tuple[str, ...]
-
-
-EMPTY_REPORT = VerifyReport(verdict="", proven=0, acceptance_lines=0, proofs=(), not_checked=())
-
-
-def read_report(reports: str) -> ReadReport:
-    try:
-        with open(os.path.join(reports, REPORT_FILE), encoding="utf-8") as report_stream:
-            document = json.load(report_stream)
-    except (OSError, ValueError, RecursionError) as error:
-        return ReadReport(report=EMPTY_REPORT, problem="no verify report in %s: %s" % (reports, error))
-    if not isinstance(document, dict):
-        return ReadReport(report=EMPTY_REPORT, problem="no verify report in %s: %s is no JSON object" % (reports, REPORT_FILE))
-    missing = [key for key in REQUIRED_KEYS if key not in document]
-    if missing:
-        return ReadReport(report=EMPTY_REPORT, problem="the verify report in %s has no `%s`" % (reports, missing[0]))
-    return ReadReport(report=VerifyReport(verdict=document["verdict"], proven=document["proven"],
-                                          acceptance_lines=document["acceptance_lines"],
-                                          proofs=tuple(document["proofs"]), not_checked=tuple(document["not_checked"])),
-                      problem="")
 
 
 def is_media(name: str) -> bool:
@@ -215,21 +180,40 @@ def code_span(value: str) -> str:
     return fence + padding + value + padding + fence
 
 
-def live_proof_cell(entry: dict, excerpted_names: FrozenSet[str]) -> str:
-    name = posixpath.relpath(entry["evidence"], EVIDENCE_FOLDER)
-    return code_span(md_cell(name, None)) + (EXCERPT_BELOW if name in excerpted_names else "")
+def shown_line(line: Optional[int]) -> str:
+    return UNKNOWN_LINE if line is None else str(line)
 
 
-def section_proof_cell(entry: dict, excerpted_names: FrozenSet[str]) -> str:
-    return live_proof_cell(entry, excerpted_names) if entry["grade"] == GRADE_LIVE else proof_cell(entry)
+def cell_span(value: str) -> str:
+    return code_span(md_cell(value, None))
 
 
-def proofs_table(proofs: Tuple[dict, ...], excerpted_names: FrozenSet[str]) -> List[str]:
+def proof_cell(proof: Proof, excerpted_names: FrozenSet[str]) -> str:
+    if proof.grade == GRADE_LIVE:
+        name = posixpath.relpath(proof.detail, EVIDENCE_FOLDER)
+        return cell_span(name) + (EXCERPT_BELOW if name in excerpted_names else "")
+    if proof.grade in (GRADE_TEST, GRADE_ERROR):
+        return cell_span(proof.detail)
+    return SEE_NOT_CHECKED
+
+
+def proofs_table(proofs: Tuple[Proof, ...], excerpted_names: FrozenSet[str]) -> List[str]:
     if not proofs:
         return []
-    rows = ["| %s | %s | %s | %s |" % (shown_line(entry), md_cell(entry["text"], None), entry["grade"],
-                                       section_proof_cell(entry, excerpted_names)) for entry in proofs]
+    rows = ["| %s | %s | %s | %s |" % (shown_line(proof.line), cell_span(proof.text), cell_span(proof.grade),
+                                       proof_cell(proof, excerpted_names)) for proof in proofs]
     return [*PROOFS_TABLE_HEAD, *rows, ""]
+
+
+def not_checked_line(entry: NotChecked) -> str:
+    reason = code_span(one_line(entry.reason.rstrip(".")))
+    if entry.line == FILE_LINE:
+        return NOT_CHECKED_FILE % (code_span(one_line(entry.text)), code_span(one_line(entry.grade)), reason)
+    return NOT_CHECKED_LINE % (shown_line(entry.line), code_span(one_line(entry.grade)), reason)
+
+
+def not_checked_lines(not_checked: Tuple[NotChecked, ...]) -> List[str]:
+    return [not_checked_line(entry) for entry in not_checked] or [NOT_CHECKED_NONE]
 
 
 def line_count_text(count: int) -> str:
@@ -239,7 +223,7 @@ def line_count_text(count: int) -> str:
 def summary_line(evidence: TextEvidence) -> str:
     shown = len(evidence.excerpt)
     extent = line_count_text(shown) if shown == evidence.line_count else LAST_LINES % (shown, line_count_text(evidence.line_count))
-    return SUMMARY_LINE % (html.escape(one_line(evidence.name)).replace("|", PIPE_ENTITY), extent)
+    return SUMMARY_LINE % (html.escape(one_line(evidence.name)).replace(PIPE, PIPE_ENTITY), extent)
 
 
 def excerpt_characters(evidence: TextEvidence) -> int:
@@ -275,7 +259,7 @@ def kept_lines(kept: Tuple[str, ...]) -> List[str]:
 def verification_section(report: VerifyReport, evidence: EvidenceFiles) -> List[str]:
     excerpted_names = frozenset(text_file.name for text_file in evidence.excerpted)
     return [SECTION_HEADING, "", report.verdict, COUNT_LINE % (report.proven, report.acceptance_lines), "",
-            *proofs_table(report.proofs, excerpted_names), NOT_CHECKED_TITLE, *not_checked_lines(list(report.not_checked)),
+            *proofs_table(report.proofs, excerpted_names), NOT_CHECKED_TITLE, *not_checked_lines(report.not_checked),
             *excerpt_blocks(evidence.excerpted), *kept_lines(evidence.kept)]
 
 

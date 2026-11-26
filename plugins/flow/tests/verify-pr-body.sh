@@ -20,9 +20,11 @@ count_line_number=2
 rendered_exit=0
 missing_report_exit=1
 usage_exit=2
-unreadable_proofs_bullet="- proofs.json, error: "
-missing_capture_bullet="- Line 1, error: "
+unreadable_proofs_bullet="- \`proofs.json\`, \`error\`: "
+missing_capture_bullet="- Line 1, \`error\`: "
 test_name=Greet_WithName_PrintsHello
+mention_text="@octocat Closes #1"
+test_with_backtick="Greet_With\`Name"
 build_only_reason="the Unity client has no capture command yet"
 blocked_reason="the staging server is down"
 not_checked_title="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from _pr_report import NOT_CHECKED_TITLE; print(NOT_CHECKED_TITLE)' "$plugin/scripts")"
@@ -113,7 +115,7 @@ check "Render_LiveProof_NamesTheFileWithoutALink: a link relative to the reports
 check "Render_TestProof_NamesTheTest: a reviewer finds the test that proves the line" \
   'section_row every-grade 1 | grep -qF "\`$test_name\`"'
 check "Render_BuildOnlyAndBlockedLines_ListedUnderNotChecked: a reviewer sees what was left out and why" \
-  '[ "$(section_not_checked every-grade | tr "\n" "|")" = "- Line 3, build-only: $build_only_reason.|- Line 4, blocked: $blocked_reason.|" ]'
+  '[ "$(section_not_checked every-grade | tr "\n" "|")" = "- Line 3, \`build-only\`: \`$build_only_reason\`.|- Line 4, \`blocked\`: \`$blocked_reason\`.|" ]'
 check "Render_Report_CarriesNoChecksTable: the checks stay in the full report in the reports folder" \
   'grep -q "^## Checks" "$every_grade_reports/verify.md" && [ -n "$(rendered every-grade)" ] && ! rendered every-grade | grep -qE "^## Checks|^\\| check \\|"'
 
@@ -231,6 +233,37 @@ check "Render_ReportWithoutProofsKey_ExitsOne: a report verify wrote before proo
   '[ "$(render_code old-shape)" = "$missing_report_exit" ]'
 check "Render_ReportWithoutProofsKey_NamesTheKey: the owner learns what the old report lacks" \
   'grep -qF "proofs" "$work/old-shape.err"'
+
+echo "a report whose fields have the wrong type"
+mkdir -p "$work/null-proofs" "$work/null-not-checked"
+python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); report[sys.argv[3]]=None; json.dump(report, open(sys.argv[2], "w"))' \
+  "$every_grade_reports/verify.json" "$work/null-proofs/verify.json" proofs
+python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); report[sys.argv[3]]=None; json.dump(report, open(sys.argv[2], "w"))' \
+  "$every_grade_reports/verify.json" "$work/null-not-checked/verify.json" not_checked
+render "$work/null-proofs" null-proofs
+render "$work/null-not-checked" null-not-checked
+check "Render_ProofsThatAreNull_ExitsOneWithNoTraceback: the pr-creator stops on a stated reason, not a crash" \
+  '[ "$(render_code null-proofs)" = "$missing_report_exit" ] && ! grep -q Traceback "$work/null-proofs.err"'
+check "Render_ProofsThatAreNull_NamesTheKey: the owner learns which field to look at" \
+  'grep -qF "proofs" "$work/null-proofs.err"'
+check "Render_NotCheckedThatIsNull_ExitsOneWithNoTraceback: the pr-creator stops on a stated reason, not a crash" \
+  '[ "$(render_code null-not-checked)" = "$missing_report_exit" ] && ! grep -q Traceback "$work/null-not-checked.err"'
+
+echo "acceptance text that holds markup"
+mkdir -p "$work/markup"
+python3 -c 'import json,sys
+report=json.load(open(sys.argv[1]))
+report["proofs"][0]["text"]=sys.argv[3]
+report["proofs"][0]["test"]=sys.argv[4]
+report["not_checked"][0]["reason"]=sys.argv[3]
+json.dump(report, open(sys.argv[2], "w"))' "$every_grade_reports/verify.json" "$work/markup/verify.json" "$mention_text" "$test_with_backtick"
+render "$work/markup" markup
+check "Render_AcceptanceTextWithMentionAndKeyword_ShownInACodeSpan: the pull request notifies nobody and closes no issue" \
+  'section_row markup 1 | grep -qF "\`$mention_text\`"'
+check "Render_TestNameWithBacktick_FenceIsLongerThanTheRun: the backtick cannot end the code span early" \
+  'section_row markup 1 | grep -qF "\`\`$test_with_backtick\`\`"'
+check "Render_NotCheckedReasonWithMention_ShownInACodeSpan: the reason notifies nobody" \
+  'section_not_checked markup | grep -qF "\`$mention_text\`"'
 
 echo "no reports folder given"
 "$plugin/scripts/pr-report.sh" > /dev/null 2>&1; echo "$?" > "$work/no-argument.code"
