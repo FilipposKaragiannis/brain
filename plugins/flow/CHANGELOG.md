@@ -1,5 +1,15 @@
 # flow
 
+## 1.52.0 (2026-11-26)
+
+- A comments pass on an epic's PR works in a worktree on the epic branch at its remote tip: a pool
+  worktree it claims (`steward.sh claim <epic> --branch epic/<n>` now stands at that tip, even over
+  an older local branch), or with the pool full or the branch checked out elsewhere a temporary
+  one (`steward.sh tmp tip`), with the copies and the setup. The pass lets go of it when it ends,
+  and keeps it while it holds work the remote lacks, untracked files counted even when git config
+  hides them. With no worktree to be had the epic gets an escalation gate, and the pass does not
+  count toward the two-pass skip.
+
 ## 1.51.0 (2026-11-26)
 
 - A project runs its own checks on a schedule. Each key under `jobs.checks` in
