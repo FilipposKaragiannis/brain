@@ -169,6 +169,8 @@ check "ImportBesideAnIdOfNoAdaptersShape_ReportsTheImportOfAnIdOfTheLocalShape: 
   'reports_import_of "$work/foreign.out" "$shaped"'
 check "ImportOfAnIdOfNoAdaptersShape_ReportsNoImportOfIt: because only an id its adapter's slug.sed gives back reaches the tracker" \
   '! reports_import_of "$work/foreign.out" "$misshaped_id"'
+check "ImportOfAnIdOfNoAdaptersShape_SeedsNoRecord: because an id that only shares another item's slug would plant that item's record" \
+  '[ "$(ls .flow/state)" = "$(basename "$(record path "$shaped")")" ] || { ls .flow/state; false; }'
 
 echo "import under a locale that cannot spell a worktree: every row still comes out"
 latin_locale=en_US.ISO8859-1
