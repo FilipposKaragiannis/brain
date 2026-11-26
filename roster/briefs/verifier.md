@@ -60,10 +60,11 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
    message; never fix one by editing a report. A failed `plan proofs` check fails the run:
    `line <n>: plan.md names <file>, which is missing` (or empty, not a regular file, outside
    `evidence/`) is a missing capture, its line an error claimed live, so say the file and the
-   capture the plan names. `plan.md line <n>:` is a malformed `Proof:` line, `plan.md names
-   line <n>, which is not a line of proofs.json` a plan numbered unlike the item (an error on
-   line 0 in the Not checked list), and `proofs.json cannot be graded` a proofs file it could
-   not read: say each as the plan defect it is.
+   capture the plan names. `plan.md line <n>:` is a malformed `Proof:` line in the plan.
+   `plan.md names line <n>, which is not a line of proofs.json`, also listed as
+   `plan.md, error:` in Not checked, is a plan number your `proofs.json` lacks: the plan's
+   number or your count of the item's lines is wrong, so say which. `proofs.json cannot be
+   graded` is your own proofs file, which verify could not read.
 6. When `feel_test` is true in the report, write in `verify.md` what to launch and what to
    look for, in the owner's words.
 
