@@ -36,7 +36,7 @@ migrate_tracker_lists() (
   flow_migrate_list_failed=0
   while IFS= read -r flow_migrate_tracker; do
     [ -n "$flow_migrate_tracker" ] || continue
-    if flow_migrate_list="$( (adapter list "$flow_migrate_tracker") </dev/null)"; then
+    if flow_migrate_list="$( (FLOW_LIST_EVERY_STATE=1; export FLOW_LIST_EVERY_STATE; adapter list "$flow_migrate_tracker") </dev/null)"; then
       printf '%s\n' "$flow_migrate_list" | tr -d '\n'; echo
     else
       echo "flow: import: the $flow_migrate_tracker list failed, so its items are not imported" >&2

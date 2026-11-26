@@ -212,12 +212,21 @@ check "GithubWriteState_PutsTheStepLabelOnTheIssue: because the strip below need
   'issue_has_label 11 step:implement'
 check "GithubWriteState_PutsTheStateCommentOnTheIssue: because the strip below needs a comment to delete" \
   '[ "$(state_comment_count 11)" = "$state_comments_written" ]'
+"$plugin/adapters/github/write-state.sh" gh#12 attempts=1 "answer=keep the ball" >/dev/null 2>&1
+check "GithubWriteStateOfAnswerAndAttempts_PutsNoFlowLabelOnTheIssue: because the import below must find the state in the comment alone" \
+  '[ "$(flow_label_count 12)" = 0 ]'
+check "GithubWriteStateOfAnswerAndAttempts_PutsTheStateCommentOnTheIssue: because the import below needs a comment to read" \
+  '[ "$(state_comment_count 12)" = "$state_comments_written" ]'
 record import --strip > "$work/github.out" 2>&1; code=$?
 check "GithubImportStrip_ExitsZero: because the import and the strip landed" '[ "$code" -eq 0 ]'
 check "GithubImportStrip_RecordsTheStep: because the import runs before the strip" '[ "$(record get gh#11 step)" = implement ]'
 check "GithubImportStrip_TakesTheFlowLabelsOff: because the record holds the state now" '[ "$(flow_label_count 11)" = 0 ]'
 check "GithubImportStrip_DeletesTheStateComment: because the record holds the state now" '[ "$(state_comment_count 11)" = 0 ]'
 check "GithubImportStrip_KeepsTheSizeLabel: because the size is the issue's own" 'issue_has_label 11 size:S'
+check "GithubImportOfAnIssueWithStateInItsCommentAlone_RecordsTheAnswer: because an unlabelled issue's comment is tracker state too" \
+  '[ "$(record get gh#12 answer)" = "keep the ball" ]'
+check "GithubImportStripOfAnIssueWithStateInItsCommentAlone_DeletesTheStateComment: because the record holds the state now" \
+  '[ "$(state_comment_count 12)" = 0 ]'
 
 [ "$fails" -eq 0 ] && { echo "migrate: ok"; exit 0; }
 echo "migrate: $fails failed"; exit 1

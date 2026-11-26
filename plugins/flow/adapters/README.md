@@ -68,7 +68,8 @@ and says so on stderr (`--type` on a tracker without types);
 it never fails for one. `--blocked-by` may name items of other adapters. A tracker scope bounds
 the list first (Tracker scope, below), and a tracker limit caps what is left. A `list` cut short by
 a tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
-every item).
+every item). With `FLOW_LIST_EVERY_STATE` set, a `list` gives each item the state the tracker
+holds for it, even where a cheaper list would leave it out (`state.sh import`).
 
 Exit codes, for every script:
 

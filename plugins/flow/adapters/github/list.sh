@@ -7,6 +7,7 @@
 # gh user), labels, state and kind, or its query as search qualifiers. A scope goes to GitHub as
 # search qualifiers (_query.py), and its kinds and the pick's fields are matched before
 # github.limit counts an issue, so the limit counts the issues they keep.
+# With FLOW_LIST_EVERY_STATE set (state.sh import), the state comment of every issue is read.
 . "$(dirname "$0")/_gh.sh"
 ready_rules
 scope_filter github
