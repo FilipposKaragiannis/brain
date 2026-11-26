@@ -66,8 +66,11 @@ ROWS
 
 migrate_shaped_rows() (
   flow_migrate_tab="$(printf '\t')"
+  flow_migrate_shaped_ids="
+$(printf '%s\n' "$1" | cut -f2 | migrate_shaped_ids)
+"
   while IFS="$flow_migrate_tab" read -r flow_migrate_kind flow_migrate_item flow_migrate_detail; do
-    if migrate_row_shaped "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail"; then
+    if migrate_row_shaped "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail" "$flow_migrate_shaped_ids"; then
       printf '%s\t%s\t%s\n' "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail"
     elif [ -n "$flow_migrate_kind" ]; then
       echo "flow: import: a row that is no import, skip or strip of an item id is ignored" >&2
@@ -78,8 +81,19 @@ ROWS
 )
 
 migrate_row_shaped() {
-  case "$1:$3" in import:held|import:unheld|skip:?*|strip:) [ -n "$2" ] ;; *) return 1 ;; esac
+  [ -n "$2" ] || return 1
+  case "$1:$3" in import:held|import:unheld|skip:?*|strip:) ;; *) return 1 ;; esac
+  case "$4" in *"
+$2
+"*) return 0 ;; *) return 1 ;; esac
 }
+
+migrate_shaped_ids() (
+  flow_migrate_slugs="$(tr ':/#' '---')"
+  for flow_migrate_slug_file in "$FLOW_PLUGIN"/adapters/*/slug.sed; do
+    [ ! -f "$flow_migrate_slug_file" ] || printf '%s\n' "$flow_migrate_slugs" | sed -n -f "$flow_migrate_slug_file"
+  done
+)
 
 migrate_import_row() (
   flow_migrate_held=""; [ "$3" != held ] || flow_migrate_held=", held by this machine"

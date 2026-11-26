@@ -153,9 +153,17 @@ foreign_id=gh#5
 python3 -c 'import re, sys
 path = sys.argv[1]; text = open(path).read()
 open(path, "w").write(re.sub(r"(?m)^id: .*$", "id: " + sys.argv[2], text, count=1))' "$(item_path "$foreign")" "$foreign_id"
+misshaped="$(new_task "Id of no adapter's shape")"
+"$local_adapter/write-state.sh" "$misshaped" step=review
+misshaped_id="local:task#5"
+python3 -c 'import re, sys
+path = sys.argv[1]; text = open(path).read()
+open(path, "w").write(re.sub(r"(?m)^id: .*$", "id: " + sys.argv[2], text, count=1))' "$(item_path "$misshaped")" "$misshaped_id"
 record import > "$work/foreign.out" 2>&1
 check "ImportOfALocalItemWithAGithubId_RecordsNothingForThatId: because a tracker's list speaks only for its own items" \
   'has_no_record "$foreign_id"'
+check "ImportOfAnIdOfNoAdaptersShape_ReportsNoImportOfIt: because only an id its adapter's slug.sed gives back reaches the tracker" \
+  '! grep -qxF -- "import $misshaped_id, held by this machine" "$work/foreign.out"'
 
 echo "import under a locale that cannot spell a worktree: every row still comes out"
 latin_locale=en_US.ISO8859-1
