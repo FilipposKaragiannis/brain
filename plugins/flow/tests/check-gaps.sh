@@ -76,6 +76,9 @@ jobs:
     listed:
       command: [ -f README.md ]
       schedule: daily 02:00
+    quotedlisted:
+      command: "[ -f README.md ]"
+      schedule: daily 02:00
     scalar: true
 YAML
 init_gaps "$work/init-malformed.out"
@@ -93,6 +96,8 @@ check "CheckWithScheduleArgs_IsAnInitGapAtItsLine: a check's schedule is the tim
   'gap_named "$work/init-malformed.out" jobs.checks.withargs withargs'
 check "CheckCommandStartingWithABracket_IsAnInitGapAtItsLine: the config reads it as a list, so init names the entry and its line" \
   'gap_named "$work/init-malformed.out" jobs.checks.listed listed'
+check "CheckCommandStartingWithAQuotedBracket_IsAnInitGapAtItsLine: the config strips the quotes and reads it as a list, so init names the entry and its line" \
+  'gap_named "$work/init-malformed.out" jobs.checks.quotedlisted quotedlisted'
 check "CheckSetAsAValue_IsAnInitGapAtItsLine: an entry holds a command and a schedule, so init names a scalar one and its line" \
   'gap_named "$work/init-malformed.out" jobs.checks.scalar scalar'
 check "CheckUnderJobsSchedule_IsAnInitGapAtItsLine: a check is set under jobs.checks, so init names the jobs.schedule key and its line" \

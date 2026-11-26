@@ -19,14 +19,6 @@ check_output() { printf '%s/log/check-%s.out' "$(flow_home)" "$1"; }
 # every named schedule takes. The C locale, so no letter outside ASCII passes the ranges.
 check_name_valid() { (LC_ALL=C; case "$1" in ''|[!a-z]*|*[!a-z0-9]*) exit 1 ;; esac); }
 
-# check_command_listed <name>: true when the command's value starts with [, quoted or not, which
-# the config reader takes for a list of items.
-check_command_listed() {
-  check_command_line="$(yaml_line "$(config_file)" "jobs.checks.$1.command")"
-  [ -n "$check_command_line" ] || return 1
-  sed -n "${check_command_line}p" "$(config_file)" | grep -q "^[^:]*:[[:space:]]*[\"']\{0,1\}\["
-}
-
 # check_entry_problem <name>: why the entry is no check by its name or its shape, or nothing.
 check_entry_problem() {
   check_name_valid "$1" || { printf 'the name is a lowercase letter, then lowercase letters and digits (smoke, audit2)'; return; }
@@ -39,7 +31,7 @@ check_entry_problem() {
 # runs no agent, so its schedule is the timing alone: no args, no host word.
 check_fields_problem() {
   [ -n "$(cfg "jobs.checks.$1.command")" ] || { printf 'has no command'; return; }
-  ! check_command_listed "$1" || { printf 'its command starts with [, which the config reads as a list: start it another way, such as test'; return; }
+  ! yaml_inline_list "$(config_file)" "jobs.checks.$1.command" || { printf 'its command starts with [, which the config reads as a list: start it another way, such as test'; return; }
   check_schedule="$(cfg "jobs.checks.$1.schedule")"
   [ -n "$check_schedule" ] || { printf 'has no schedule'; return; }
   python3 -I "$FLOW_PLUGIN/scripts/_jobs.py" check-schedule "$check_schedule"
