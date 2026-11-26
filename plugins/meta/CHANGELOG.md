@@ -1,5 +1,11 @@
 # meta
 
+## 1.1.9 (2026-11-26)
+
+- The map says each flow once. The Playbooks section is gone; what only it said, the stations,
+  what each diamond wants from you, the commands that drive a line and the unattended and
+  playtest-note runs, now sits in the Flows section.
+
 ## 1.1.8 (2026-11-21)
 
 - The retro skill applies its marketplace changes in a throwaway worktree cut from the remote's

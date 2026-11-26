@@ -1,5 +1,25 @@
 # flow
 
+## 1.50.0 (2026-11-26)
+
+- The explain page opens with the user-visible change and the verify verdict, then traces one
+  concrete example through the change. It shows one diagram; a second needs a reason in its
+  caption. A diagram labels what the reader sees, keeps variable names out, stays near 20
+  arrows and says what it hides.
+- The page no longer repeats the PR body: the file tree section is gone, and "What to check by
+  hand" lists what no test or live run proved as steps the owner takes. The quiz is unchanged.
+- The text board opens with "Waiting on you", then Health, Overlapping claims, Trackers not read,
+  Items, Pool and Spend: the order the owner acts on them. Before, the pool came first and the
+  gates fifth. `board.sh --json` is unchanged.
+- An empty Waiting on you, Items or Pool section is one heading line that says so
+  (`## Waiting on you: nothing`, `## Items: none open`, `## Pool: no worktrees`), never a table
+  header with no rows.
+- The PR body opens with the verify verdict, `Verdict: pass at <sha>`, and how many acceptance
+  lines are proven live or by test. Then three sections, always in this order: Summary,
+  Verification and Merge danger. The old Evidence and Review sections fold into Verification.
+- Verification always has a Not checked list, which says "nothing" when every acceptance line
+  is proven. The summary keeps one view, never several.
+
 ## 1.49.1 (2026-11-26)
 
 - An epic with an epic branch closes out in a pool worktree on that branch, at the tip the remote
