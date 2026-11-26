@@ -393,7 +393,7 @@ ${summary:-$step done.}" "$step" -- "step=$after" "profile=$profile" "attempts=0
       back="$(json_get "$profiles" "fix_step.$step")"
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" feel-test "**$(json_get "$profiles" "gates.feel-test.asks")**
 
-Verify passed and the change touches rendered code. What to launch and what to look for: \`$reports/verify.md\`. Signing off continues with $following." "${back:-$step}" \
+Verify passed and the change touches rendered code. \`$reports/verify.md\` holds the verdict, the proofs and the Not checked list, then what to launch and what to look for. Signing off continues with $following." "${back:-$step}" \
         -- "step=$following" "profile=$profile" "attempts=0" ${resized:+"$resized"} "$moved_on" >/dev/null || gate_not_recorded feel-test
       report 4 "$following" feel-test
     fi
