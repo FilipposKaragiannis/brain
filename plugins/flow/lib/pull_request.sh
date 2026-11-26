@@ -9,8 +9,8 @@ link_and_record_pull_request() (
   [ $# -eq 3 ] || die "usage: link_and_record_pull_request <item> <url> <host>" "$EXIT_USAGE"
   pull_request_shaped "$2" || die "$2 is no PR URL or #<n>, so $1 links no PR" "$EXIT_USAGE"
   adapter link-pr "$1" "$2" </dev/null >/dev/null || echo "flow: the tracker of $1 did not take $2" >&2
-  case "$3" in claude|codex) linked_host="$3" ;; *) linked_host="" ;; esac
-  record_set "$1" "pr=$2" "pr_host=$linked_host" </dev/null
+  case "$3" in claude|codex) link_and_record_host="$3" ;; *) link_and_record_host="" ;; esac
+  record_set "$1" "pr=$2" "pr_host=$link_and_record_host" </dev/null
 )
 
 pull_request_shaped() {
