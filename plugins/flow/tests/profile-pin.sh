@@ -3,8 +3,9 @@
 # throwaway repos and on the GitHub fake. A start writes no size estimate and pins the profile; a
 # size edited on the tracker after it is the next start's size; a re-size writes the estimate and
 # one comment, never the tracker's size; next.sh --profile pins a profile and refuses, before any
-# write, an unknown name, a profile without the item's step and a call with no item; a flow: label
-# selects no profile.
+# write, an unknown name, a profile without the item's step and a call with no item, and accepts a
+# profile that holds a started item's step; the flow's own re-size re-selects over a pin, and says
+# a profile change only when there is one; a flow: label selects no profile.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -62,6 +63,30 @@ check "ProfileOption_PinsTheProfile: the record holds the named profile over the
   '[ "$(record get "$pinned" profile)" = task-M ]'
 check "ProfileOption_StartsAtTheProfilesFirstStep: an unstarted item begins where the pinned profile begins" \
   '[ "$(printf "%s" "$pinned_start" | json_value step)" = design ]'
+
+echo "--profile: a pin on a started item, and a re-size after a pin"
+started_at_implement="$(new_task "Started small, pinned deeper")"
+start_step "$started_at_implement"; end_run "$started_at_implement"
+next_json "$started_at_implement" --profile task-L >/dev/null
+check "ProfileHoldingTheStartedItemsStep_PinsIt: task-L has implement, so the item at implement goes on under it" \
+  '[ "$(record get "$started_at_implement" profile)" = task-L ]'
+
+regrown="$(new_task "Pinned, then found bigger")"
+next_json "$regrown" --profile task-M >/dev/null
+step_result "$regrown" design '{"status":"done","summary":"It reaches three modules.","size":"L"}'
+finish_step "$regrown"
+check "ResizeAfterAProfilePin_SelectsTheProfileOfTheNewSize: the flow's own re-size re-selects over a pin" \
+  '[ "$(record get "$regrown" profile)" = task-L ]'
+
+echo "re-size within one profile"
+same_profile="$("$plugin/scripts/new.sh" task "Large, then larger" --size L --body "Large from the start.")"
+start_step "$same_profile"
+step_result "$same_profile" design '{"status":"done","summary":"It reaches five modules.","size":"XL"}'
+finish_step "$same_profile"
+check "ResizeThatKeepsTheProfile_StillPostsTheComment: every re-size that raises no gate is said on the item" \
+  'grep -q "Re-sized L -> XL at step design" "$(item_file "$same_profile")"'
+check "ResizeThatKeepsTheProfile_SaysNoProfileChange: L and XL both select task-L, so no profile line is posted" \
+  '! grep -q "Profile task-" "$(item_file "$same_profile")"'
 
 echo "--profile: refusals write nothing"
 unknown="$(new_task "Unknown profile")"
