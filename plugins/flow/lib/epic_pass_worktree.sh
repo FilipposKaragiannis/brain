@@ -65,6 +65,7 @@ epic_pass_pushed() {
 
 epic_pass_end_worktree() {
   epic_pass_pushed "$1" "$2" || { echo "flow: $2 holds commits origin/$(epic_branch "$1") lacks, or the remote cannot be read" >&2; return 1; }
+  [ -z "$(git -C "$2" status --porcelain --untracked-files=normal -- . ':!.flow' 2>/dev/null)" ] || { echo "flow: $2 holds uncommitted changes" >&2; return 1; }
   if epic_pass_temporary "$2"; then "$FLOW_PLUGIN/scripts/steward.sh" tmp remove "$2" >/dev/null; return; fi
   "$FLOW_PLUGIN/scripts/steward.sh" release "$2" >/dev/null
 }

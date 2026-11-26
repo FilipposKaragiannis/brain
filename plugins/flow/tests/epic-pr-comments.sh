@@ -70,6 +70,15 @@ check_all "EpicPrWhosePassLeftUnpushedCommits_NextPassStartsInTheSameWorktree: a
   '[ -n "$committed_in" ] && [ "$(physical "$(pass_start_folder)")" = "$(physical "$committed_in")" ]'
 git -C "$committed_in" reset -q --hard "$remote_epic_tip"; "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
 
+echo "comments job on an epic PR whose pass left only untracked work, hidden by git config"
+git config status.showUntrackedFiles no
+: > "$HOST_LOG"; LEAVE_WORK=untracked.txt "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
+untracked_in="$(pass_start_folder)"
+check_all "EpicPrWhosePassLeftUntrackedWorkHiddenByConfig_PoolWorktreeStaysClaimed: a release would hand the untracked files to the next item that claims the worktree, so the epic must keep it" \
+  '[ -n "$untracked_in" ] && [ "$(physical "$("$P/scripts/steward.sh" find "$epic")")" = "$(physical "$untracked_in")" ]'
+git config --unset status.showUntrackedFiles
+rm -f "$untracked_in/untracked.txt"; "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
+
 echo "comments job on an epic PR with every pool worktree claimed"
 for task in $other_tasks; do "$P/scripts/steward.sh" claim "$task" >/dev/null 2>&1; done
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
