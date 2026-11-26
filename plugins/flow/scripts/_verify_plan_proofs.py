@@ -18,6 +18,7 @@ line the first is named. See scripts/_verify_report.py.
   be read.
 """
 import os
+import posixpath
 import re
 import sys
 from dataclasses import dataclass
@@ -114,7 +115,8 @@ def evidence_path_problem(evidence: str) -> str:
         return ABSOLUTE_PATH
     if PARENT_FOLDER in evidence.split(PATH_SEPARATOR):
         return THROUGH_PARENT_FOLDER
-    return "" if evidence.startswith(EVIDENCE_PREFIX) and NULL_CHARACTER not in evidence else OUTSIDE_EVIDENCE
+    inside = posixpath.normpath(evidence).startswith(EVIDENCE_PREFIX)
+    return "" if inside and NULL_CHARACTER not in evidence else OUTSIDE_EVIDENCE
 
 
 def malformed_path_problems(plan_line: PlanLine, named: NamedProof) -> List[str]:
