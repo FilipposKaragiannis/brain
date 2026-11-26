@@ -1,0 +1,6 @@
+base: main
+ready:
+  needs: [priority]
+retro:
+  commit: false
+config_version: 1.40.0  # the owner's note on the label

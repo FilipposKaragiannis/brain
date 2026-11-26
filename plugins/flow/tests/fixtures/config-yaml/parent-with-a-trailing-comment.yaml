@@ -1,0 +1,6 @@
+base: main
+retro:  # the retro job's settings
+  commit: false
+ready:
+  needs: [priority]
+config_version: 1.40.0

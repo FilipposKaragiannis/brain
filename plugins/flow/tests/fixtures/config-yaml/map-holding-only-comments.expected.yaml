@@ -1,0 +1,7 @@
+base: main
+ready:
+  # needs: [priority, size]   # a commented example is not a key
+  # The priority is a label.
+  needs: [priority, size]  # an item without these is not ready
+# pick:
+config_version: 9.9.9

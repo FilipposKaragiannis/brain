@@ -1,0 +1,6 @@
+base: main
+ready:
+  # needs: [priority, size]   # a commented example is not a key
+  # The priority is a label.
+# pick:
+config_version: 1.40.0

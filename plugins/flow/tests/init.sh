@@ -97,7 +97,9 @@ check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 0\n' > .flow/config.yaml
 check "init: --check flags an empty pool with pool_max 0 as a gap" sh -c "! FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date' && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml: the pool is empty'"
 check "init: lists the gap after an install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' | grep -q 'Gaps'"
-write_command_config() { printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\n%b' "$1" > .flow/config.yaml; }
+# A label init already wrote, so the config has no migration pending; the value is never compared.
+migrated_label=0.0.0
+write_command_config() { printf 'config_version: %s\nadapters:\n  default: local\nbase: main\npool:\npool_max: 1\n%b' "$migrated_label" "$1" > .flow/config.yaml; }
 write_command_config 'worktree_create: workspace new --from {base}\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-create.out" 2>&1; code=$?
 check "InitCheckOfCreateCommandWithoutPath_NamesGap: --check names a worktree_create without {path} as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create has no {path}' "$work/init-create.out"

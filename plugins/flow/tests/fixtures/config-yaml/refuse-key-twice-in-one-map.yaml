@@ -1,0 +1,4 @@
+base: main
+ready:
+  needs: [priority]
+base: develop

@@ -549,7 +549,10 @@ check "init: --check flags an effort the jobs host does not take" sh -c "FLOW_PL
 cp "$work/fresh.config" .flow/config.yaml
 check "init: the fresh config says the lessons log stays on this machine and offers no retro key" sh -c "grep -q 'lessons log .* stays on this machine under .flow/' .flow/config.yaml && ! grep -q '^#* *retro:' .flow/config.yaml"
 printf 'retro:\n  commit: false\n' >> .flow/config.yaml
-check "init: --check names a retro.commit the config still sets as unused, once" [ "$(FLOW_PLUGIN="$plugin_copy" "$init" --check 2>&1 | grep -c 'sets retro.commit, which is unused')" = 1 ]
+cp .flow/config.yaml "$work/retro.config"
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/retro-check.out" 2>&1
+check "InitCheck_RetroCommitSet_ListsItsRemovalAsPendingDrift" grep -q 'drift: .flow/config.yaml: pending migration: retro.commit	' "$work/retro-check.out"
+check "InitCheck_RetroCommitSet_LeavesTheConfigUnchanged" cmp -s "$work/retro.config" .flow/config.yaml
 cp "$work/fresh.config" .flow/config.yaml
 check "init: installs the health job wrapper and its default schedule" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q 'health: true' .flow/config.yaml"
 mkdir -p .flow/answers.lock .flow/health && echo $$ > .flow/answers.lock/pid && echo '{}' > .flow/health/last.json

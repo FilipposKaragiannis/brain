@@ -1,0 +1,6 @@
+base: main
+retro:
+  commit: false  # kept from an older release
+ready:
+  needs: [priority]
+config_version: 1.40.0

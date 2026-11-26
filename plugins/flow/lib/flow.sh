@@ -88,8 +88,10 @@ repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 # init.sh (it shapes the wrappers). Not the manifest: a version bump alone changes no installed
 # file. init stamps its hash; the session-start hook compares.
 flow_install_set() {
-  for f in "$1"/skills/init/scripts/init.sh "$1"/templates/* \
-           "$1"/codex-agents/*.toml; do [ -f "$f" ] && echo "$f"; done | sort
+  for flow_install_set_file in "$1"/skills/init/scripts/init.sh "$1"/skills/init/migrations.json \
+           "$1"/scripts/_config_*.py "$1"/templates/* "$1"/codex-agents/*.toml; do
+    [ -f "$flow_install_set_file" ] && echo "$flow_install_set_file"
+  done | sort
 }
 flow_source_hash() { hash_files $(flow_install_set "$1"); }
 

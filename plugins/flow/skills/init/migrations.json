@@ -1,0 +1,10 @@
+{
+  "steps": [
+    {
+      "name": "retro-commit",
+      "op": "remove",
+      "key": "retro.commit",
+      "reason": "the retro job commits nothing: its lessons stay on this machine under .flow/"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+base: main
+pool:
+- ../app-wt-1
+config_version: 9.9.9
+ready:
+  needs: [priority, size]  # an item without these is not ready

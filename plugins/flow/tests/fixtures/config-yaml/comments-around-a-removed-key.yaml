@@ -1,0 +1,10 @@
+# The owner's notes on this file.
+base: main
+# Above the retro map.
+retro:
+  # Inside the retro map.
+  commit: false
+# After the retro map.
+ready:
+  needs: [priority]
+config_version: 1.40.0

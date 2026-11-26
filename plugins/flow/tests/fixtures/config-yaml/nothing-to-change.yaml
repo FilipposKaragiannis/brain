@@ -1,0 +1,4 @@
+base: main
+ready:
+  needs: [priority]
+config_version: 1.40.0  # init keeps it

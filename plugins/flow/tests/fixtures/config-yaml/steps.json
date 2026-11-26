@@ -1,0 +1,7 @@
+{
+  "steps": [
+    {"name": "retro-commit", "op": "remove", "key": "retro.commit", "reason": "the retro job commits nothing"},
+    {"name": "ready-needs-default", "op": "add", "key": "ready.needs", "value": ["priority", "size"], "comment": "an item without these is not ready", "reason": "ready items need a priority and a size"},
+    {"name": "verify-limit-known", "op": "known", "key": "verify.limit", "reason": "the scripts already read it"}
+  ]
+}

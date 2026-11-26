@@ -1,0 +1,5 @@
+base: main
+retro:  # the retro job's settings
+ready:
+  needs: [priority]
+config_version: 9.9.9

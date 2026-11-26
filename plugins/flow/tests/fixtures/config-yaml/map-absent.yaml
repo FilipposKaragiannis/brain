@@ -1,0 +1,4 @@
+base: main
+pool:
+- ../app-wt-1
+config_version: 1.40.0

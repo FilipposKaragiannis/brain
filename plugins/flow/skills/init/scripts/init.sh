@@ -36,6 +36,7 @@ FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/base.sh"
 . "$plugin/lib/branch.sh"
 . "$plugin/lib/worktree_command.sh"
+. "$plugin/lib/config_migration.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -118,6 +119,9 @@ write_stamp() {
   if [ ! -f "$shared_stamp" ] || ! cmp -s "$scratch/shared-stamp" "$shared_stamp"; then cp "$scratch/shared-stamp" "$shared_stamp" && note "$shared_stamp"; fi
 }
 
+# Before any copy, so every section below reads the migrated config.
+config_migrate flow "$plugin/scripts/_config_migration.py" "$plugin/skills/init/migrations.json" .flow/config.yaml
+
 # 1. Project config, written once.
 if [ ! -f .flow/config.yaml ]; then
   if [ "$check" -eq 1 ]; then drifted ".flow/config.yaml is missing"; else
@@ -134,6 +138,7 @@ if [ ! -f .flow/config.yaml ]; then
     {
       echo "# flow configuration. Read by every flow script on both hosts. Keep it flat: key: value,"
       echo "# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings."
+      echo "config_version: $version  # the flow version that last migrated this file; init keeps it"
       echo "adapters:"
       if [ -n "$repo" ]; then echo "  default: github"; echo "  # bug: local    # keep bugs out of GitHub"; else echo "  default: local"; fi
       echo "# trackers: [github, local]   # the trackers board, next and health read; unset, every one above and local"
@@ -415,7 +420,6 @@ EOF_CHECKS
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_SCOPES
 $(scope_problems)
 EOF_SCOPES
-  [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
   missing_base_notes | sed 's/^/init: note: /'
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
