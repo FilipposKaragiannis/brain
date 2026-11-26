@@ -49,6 +49,9 @@ NO_RECORD = join.NO_RECORD
 NO_OBJECT = MappingProxyType({})
 StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
 RecordedSlugs = namedtuple("RecordedSlugs", ("recorded", "unreadable"))
+Reply = namedtuple("Reply", ("outcome", "output"))
+NO_OUTPUT = ""
+IMPORT_COMMAND = command_line.POOL_COMMAND
 NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 NEW_FILE_MODE = 0o666
 TEMPORARY_NAME_RANDOM_BYTES = 8
@@ -287,15 +290,15 @@ def recorded_slugs_warning_unreadable(options: command_line.Options, listed: tup
         frozenset(schema.item_slug(item) for item, each in stored.items() if each.outcome.code))
 
 
-def command_import(options: command_line.Options, random_bytes: Callable[[int], bytes]) -> schema.Outcome:
+def command_import(options: command_line.Options, random_bytes: Callable[[int], bytes]) -> Reply:
     listing = importing.parsed_lists(sys.stdin.read())
     if listing.problem:
-        return schema.Outcome(schema.EXIT_USAGE, listing.problem)
+        return Reply(schema.Outcome(schema.EXIT_USAGE, listing.problem), NO_OUTPUT)
     slugs = recorded_slugs_warning_unreadable(options, listing.items)
     rows = importing.import_rows(listing.items, slugs.recorded, slugs.unreadable, claimed_items(options))
     unseeded = seed_imports(options, rows, listing.items, random_bytes)
     output = "".join(importing.row_text(row) + "\n" for row in importing.rows_after_writes(rows, unseeded))
-    return schema.Outcome(schema.EXIT_UNREADABLE if slugs.unreadable or unseeded else schema.EXIT_DONE, "", output)
+    return Reply(schema.Outcome(schema.EXIT_UNREADABLE if slugs.unreadable or unseeded else schema.EXIT_DONE, ""), output)
 
 
 def warn(message):
@@ -307,23 +310,31 @@ def commands(random_bytes):
     return MappingProxyType(dict({"set": lambda options: command_set(options, random_bytes),
                                   "take": lambda options: command_take(options, random_bytes),
                                   "get": command_get, "show": command_show, "status": command_status,
-                                  "archive": command_archive,
-                                  "import": lambda options: command_import(options, random_bytes)},
+                                  "archive": command_archive},
                                  **reads.commands(edge)))
+
+
+def command_reply(parsed: command_line.CommandLine, random_bytes: Callable[[int], bytes]) -> Reply:
+    if parsed.outcome.code:
+        return Reply(parsed.outcome, NO_OUTPUT)
+    if parsed.options.command == IMPORT_COMMAND:
+        return command_import(parsed.options, random_bytes)
+    return Reply(commands(random_bytes)[parsed.options.command](parsed.options), NO_OUTPUT)
 
 
 def main(arguments, random_bytes):
     parsed = command_line.parsed(arguments)
     options = parsed.options
     try:
-        outcome = commands(random_bytes)[options.command](options) if not parsed.outcome.code else parsed.outcome
+        reply = command_reply(parsed, random_bytes)
     except OSError as error:
-        outcome = schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error))
-    if outcome.output:
+        reply = Reply(schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error)), NO_OUTPUT)
+    outcome = reply.outcome
+    if reply.output:
         # The records are written by now, so tracker text the locale cannot spell gets a stand-in
         # rather than stopping the rows the caller still acts on.
         sys.stdout.reconfigure(errors="replace")
-        sys.stdout.write(outcome.output)
+        sys.stdout.write(reply.output)
     if outcome.message:
         sys.stderr.write("flow: %s\n" % outcome.message)
     return outcome.code
