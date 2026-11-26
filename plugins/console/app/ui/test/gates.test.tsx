@@ -232,8 +232,8 @@ test.each(VERIFY_REPORT_GATE_KINDS)('GateWithAVerifyReport_VerifyReportOpen ($ki
 test.each(VERIFY_REPORT_GATE_KINDS)('GateWithAVerifyReportAndOtherDocuments_VerifyReportFirst ($kind)', ({ kind }) => {
   const summary = 'The branch is green and the card shows the report. '.repeat(LONG_SUMMARY_SENTENCES);
   renderGate({ ...waitingGate('gh#310', kind), message: summary, questions: [], verifyReport: VERIFY_REPORT, plan: { file: 'plan.md', text: 'Write the drill.' }, body: '## Goal\nHold to charge.' });
-  const firstDocument = document.querySelector('details.gate-doc > summary')?.textContent;
-  expect(firstDocument, `because the report is what the owner reads first at a ${kind} gate, before the summary, the plan and the issue`).toBe('Verify report verify.md');
+  const reportDocument = screen.getByText('Every acceptance line holds.').closest('details');
+  expect(document.querySelector('details.gate-doc'), `because the report is what the owner reads first at a ${kind} gate, before the summary, the plan and the issue`).toBe(reportDocument);
 });
 
 test('GateWithNoVerifyReport_NoVerifyReportShown', () => {
