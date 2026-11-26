@@ -298,6 +298,16 @@ check "BaseGitReadsAsAnOption_IsRefused: the base is no valid branch name, so th
 check "BaseGitReadsAsAnOption_RunsNoCommand: the base never reaches git, so the command it carries never runs" \
   '[ ! -e "$option_base_marker" ]'
 
+echo "checks: a state the run cannot write"
+unwritable_state="$flow_home_folder/log/check-smoke.state"
+rm -f "$unwritable_state"; mkdir "$unwritable_state"; chmod a-w "$unwritable_state"
+run_probe 0; unwritable_state_exit=$?
+chmod u+w "$unwritable_state"; rm -rf "$unwritable_state"
+check "PassWhoseStateCannotBeWritten_ExitsNonzero: a pass left unrecorded is no success, so the run fails" \
+  '[ "$unwritable_state_exit" -ne 0 ]'
+check "PassWhoseStateCannotBeWritten_RunLineSaysThePassWentUnrecorded: the history shows the error, never done: passed" \
+  'history_row check-smoke "$newest_history_row" | grep -q "| error: passed at [^|]*, but could not record the pass in "'
+
 echo "checks: a fetch mapping that leaves the base out"
 git -C "$root/app" config remote.origin.fetch '+refs/heads/unmapped:refs/remotes/origin/unmapped'
 remote_commit main pushed-past-the-mapping.txt

@@ -22,7 +22,9 @@
 # after a fail files none and ends still failing, with the bug's id when there is one; a first fail
 # files none either, as no pass came before it. A bug new.sh cannot file leaves the state passed,
 # so the next fail tries again, and the line says why. A run that stops before its command ends,
-# by a checkout error, a pause, a skip or a stop, leaves the state as it was.
+# by a checkout error, a pause, a skip or a stop, leaves the state as it was. A state the run
+# cannot write is said in its line, and the run exits 1: error: passed at <commit>, but could not
+# record the pass, or the fail's line saying so, after the bug's id when it filed one.
 set -u
 job=check
 . "$(dirname "$0")/_job.sh"
@@ -130,19 +132,24 @@ job_say "running at $short_commit_identifier in $checkout"
 (cd "$checkout" && exec sh -c "$check_command") < /dev/null > "$output" 2>&1
 check_exit=$?
 cat "$output" >> "$(job_log_dir)/$job.log"
-[ "$check_exit" -ne 0 ] || { state_write passed; job_say "done: passed at $short_commit_identifier"; exit 0; }
+if [ "$check_exit" -eq 0 ]; then
+  state_write passed || { job_say "error: passed at $short_commit_identifier, but could not record the pass in $state_file"; exit 1; }
+  job_say "done: passed at $short_commit_identifier"; exit 0
+fi
 failure_line="failed: exited $check_exit at $short_commit_identifier: $(tail -n 1 "$output" | cut -c "1-$check_said_length")"
 previous_state="$(sed -n 1p "$state_file" 2>/dev/null)"
 case "$previous_state" in
   passed)
     if filing_result="$(file_bug "$check_exit")"; then
-      state_write "failed $filing_result"; failure_line="$failure_line; filed bug $filing_result"
+      failure_line="$failure_line; filed bug $filing_result"
+      state_write "failed $filing_result" \
+        || failure_line="$failure_line, but could not record it in $state_file, so the next fail may file it again"
     else
       failure_line="$failure_line; the bug could not be filed: $filing_result"
     fi ;;
   "failed "?*) failure_line="$failure_line; still failing, bug ${previous_state#failed }" ;;
   failed) failure_line="$failure_line; still failing" ;;
-  *) state_write failed ;;
+  *) state_write failed || failure_line="$failure_line; could not record the fail in $state_file" ;;
 esac
 job_say "$failure_line"
 exit 1

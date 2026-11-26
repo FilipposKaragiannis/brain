@@ -12,7 +12,8 @@ bump: minor
   base for the bug; on a public tracker that tail is public. A
   check that stays broken files no second bug, and its run says `still failing, bug <id>`; the
   next fail after a pass files a new one. A bug the tracker refuses is said in the run's line and
-  filed at the next fail. Whether a check passed last lives in `<flow home>/log/check-<name>.state`.
+  filed at the next fail. Whether a check passed last lives in `<flow home>/log/check-<name>.state`;
+  a run that cannot write it says so in its line and exits 1, naming the bug it filed, if any.
 - `init.sh --check` names each check that cannot run as a gap, with its line in
   `.flow/config.yaml`: a name that is not a lowercase letter then lowercase letters and digits, an
   entry with no command or no schedule, a schedule it cannot read or one with args, a command
