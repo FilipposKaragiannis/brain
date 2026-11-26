@@ -141,8 +141,8 @@ trusted_logins() {
 # The caller must stop on a failed read: taken for "no comment yet", it would make write-state
 # start a second state comment from an empty state, dropping the attempts, the PR and the touches.
 state_comment() {
-  comments="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=$GH_REST_PAGE_SIZE")" || return 1
-  printf '%s' "$comments" | cached_python3 -I "$FLOW_PLUGIN/adapters/github/_state_comment.py" first "$STATE_MARKER" "$3"
+  state_comment_pages="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=$GH_REST_PAGE_SIZE")" || return 1
+  printf '%s' "$state_comment_pages" | cached_python3 -I "$FLOW_PLUGIN/adapters/github/_state_comment.py" first "$STATE_MARKER" "$3"
 }
 
 # ensure_label <label>: create it when missing (gh issue edit fails on unknown labels).
