@@ -1675,3 +1675,10 @@ test('EndedAgent_ItsProcessHadASubagent_NoSubagents', async () => {
   facts.ended = [{ ...agentAt(WT3, 'next'), subagents: [REVIEWER], session: { host: 'claude', id: 's', transcript: '/h/s.jsonl', resume: ['claude', '--resume', 's'] }, endedAt: NOW.toISOString() }];
   assert.deepEqual(reconcile(facts).ended.map((ended) => ended.subagents), [[]], 'because an ended session runs nothing, so it lists no live subagents');
 });
+
+test('GateFactWithAVerifyReport_SnapshotGateCarriesTheVerifyReport', async () => {
+  const verifyReport = { file: 'verify.md', text: 'Verdict: pass at 0123abc\n' };
+  const facts = await input();
+  facts.flow = { ...facts.flow, gates: [{ item: 'gh#7', gate: 'merge', message: 'Merge it', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null, verifyReport, options: [], raisedBy: null, answeredBy: null, condition: null, footer: null, fromStep: null }] };
+  assert.deepEqual(gateOf(reconcile(facts), 'gh#7').verifyReport, verifyReport, 'because the card shows the report the daemon read for the gate');
+});

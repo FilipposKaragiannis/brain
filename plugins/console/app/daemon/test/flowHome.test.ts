@@ -218,6 +218,48 @@ test('SplitGateWithItsWorktreeReleased_PlanReadFromThePool', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+/**
+ * A throwaway project whose merge gate on gh#30 waits while gh#30 is claimed in project-wt-1, with
+ * `verifyReport` written to that worktree's reports as `verify.md` unless it is null; `body` gets the project root.
+ */
+async function withMergeGateInItsWorktree<T>(verifyReport: string | null, body: (root: string) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-verify-report-'));
+  try {
+    const root = path.join(dir, 'project');
+    const worktree = path.join(dir, 'project-wt-1');
+    const reports = path.join(worktree, '.flow', 'reports', 'gh-30');
+    mkdirSync(path.join(root, '.flow', 'gates'), { recursive: true });
+    mkdirSync(reports, { recursive: true });
+    writeFileSync(path.join(root, '.flow', 'config.yaml'), 'pool:\n  - ../project-wt-1\n');
+    writeFileSync(path.join(root, '.flow', 'gates', 'gh-30.json'), JSON.stringify({ gate: 'merge', item: 'gh#30', message: 'Merge #31', time: '2026-11-26T09:00:00Z', host: 'shell' }));
+    writeFileSync(path.join(worktree, '.flow', 'claim.json'), JSON.stringify({ item: 'gh#30', worktree, name: 'project-wt-1', branch: 'flow/gh-30', base: 'main', step: 'merge', claimed_at: '2026-11-26T08:00:00Z', host: 'shell' }));
+    if (verifyReport !== null) writeFileSync(path.join(reports, 'verify.md'), verifyReport);
+    return await body(root);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('MergeGateWithAVerifyReportInItsWorktree_VerifyReportRead', async () => {
+  const report = 'Verdict: pass at 0123abc\n\nEvery acceptance line holds.\n';
+  await withMergeGateInItsWorktree(report, async (root) => {
+    const facts = await readFlowHome(root, fakeRunner);
+    assert.deepEqual(facts.gates[0]?.verifyReport, { file: 'verify.md', text: report }, 'because the owner judges a merge on the report verify wrote in the claimed worktree');
+  });
+});
+
+test('MergeGateWithNoVerifyReport_VerifyReportNull', async () => {
+  await withMergeGateInItsWorktree(null, async (root) => {
+    const facts = await readFlowHome(root, fakeRunner);
+    assert.equal(facts.gates[0]?.verifyReport, null, 'because verify deletes the old report when it starts, so a run in progress has none to show');
+  });
+});
+
+test('MergeGateWithABlankVerifyReport_VerifyReportNull', async () => {
+  await withMergeGateInItsWorktree('  \n\n', async (root) => {
+    const facts = await readFlowHome(root, fakeRunner);
+    assert.equal(facts.gates[0]?.verifyReport, null, 'because a blank file says nothing, so the card shows no empty report');
+  });
+});
+
 /** A temp project with a `.flow` home; `body` gets the project root. */
 async function withProject<T>(body: (root: string) => Promise<T>): Promise<T> {
   const root = mkdtempSync(path.join(os.tmpdir(), 'console-stopped-'));
