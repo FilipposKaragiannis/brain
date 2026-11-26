@@ -59,6 +59,8 @@ first_budget_file=1
 login_proof_line=1
 budget_file_characters=$((excerpt_lines_kept * (excerpt_line_characters + line_break_characters)))
 budget_files=$((excerpt_budget / budget_file_characters + files_past_budget))
+smallest_block_characters=40
+empty_capture_files=$((excerpt_budget / smallest_block_characters))
 # capture_gate <name>: a gate that runs capture-<name>.sh from the work folder, which
 # write_capture writes once new_item has named the reports folder.
 capture_gate() { printf "  capture: 'sh %s/capture-%s.sh'\n" "$work" "$1"; }
@@ -179,6 +181,16 @@ verify >/dev/null 2>&1
 render "$reports" over-budget
 check "Render_EvidenceOverBudget_LeavesTheExcerptOut: the body stays under GitHub's limit however much the captures hold" \
   '[ -n "$body_full" ] && [ -n "$(excerpt_fence over-budget "$(budget_file_name "$first_budget_file")")" ] && excerpt_block over-budget "$(budget_file_name "$budget_files")" | grep -qxF -e "$body_full" && [ -z "$(excerpt_fence over-budget "$(budget_file_name "$budget_files")")" ]'
+
+echo "many empty captures"
+new_item empty-captures "$(capture_gate empty-captures)"
+write_capture empty-captures "mkdir -p '$reports/evidence' && cd '$reports/evidence' && seq -f 'empty-%04g.log' $empty_capture_files | xargs touch"
+commit_test_command true
+verify >/dev/null 2>&1
+render "$reports" empty-captures
+excerpts_characters() { awk -v opening_tag="$details_open" '$0 == opening_tag { shown = 1 } shown' "$work/$1.out" | wc -c | tr -d " "; }
+check "Render_ManyEmptyCaptures_ExcerptsStayWithinTheBudget: summaries, fences and left-out notices count, so no number of captures overflows the body" \
+  '[ -n "$details_open" ] && rendered empty-captures | grep -qxF "$details_open" && [ "$(excerpts_characters empty-captures)" -le "$excerpt_budget" ]'
 
 echo "every line proven"
 new_item all-proven "  ok: 'true'"

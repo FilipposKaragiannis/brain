@@ -40,9 +40,10 @@ Every regular file under <reports dir>/evidence/, nested or not, that is not an 
 order, because a reviewer reads the capture where they review: its last EXCERPT_LINES lines, each
 without terminal colours, links or control characters but tab and cut to EXCERPT_LINE_CHARACTERS,
 in a fence one backtick longer than any run in it and at least three, so the capture cannot close
-it. The excerpts share EXCERPT_BUDGET_CHARACTERS, under GitHub's body limit; a file past it keeps
-its summary and says the excerpt was left out. A live proof of such a file says the excerpt is
-below. Any other file is named as kept in the reports folder, and a media file shows only in its
+it. The blocks as rendered, wrappers and line breaks included, share EXCERPT_BUDGET_CHARACTERS,
+under GitHub's body limit; a file past it keeps its summary and says the excerpt was left out, and
+once no summary fits either, one line counts the files left. A live proof of a file with a block
+says the excerpt is below. Any other file is named as kept in the reports folder, and a media file shows only in its
 proof cell. The walk follows no link and opens none, because the excerpt goes public.
 """
 import html
@@ -93,6 +94,7 @@ LAST_LINES = "last %d of %s"
 PIPE = "|"
 PIPE_ENTITY = "&#124;"
 BODY_FULL = "excerpt left out: the body is full"
+REST_LEFT_OUT = "Text captures left out, the body is full: %d"
 EXCERPT_BELOW = ", excerpt below"
 KEPT_LINE = "- %s, kept in the reports folder."
 RENDERED_EXIT = 0
@@ -104,6 +106,12 @@ class TextEvidence:
     name: str
     line_count: int
     excerpt: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExcerptSection:
+    lines: Tuple[str, ...]
+    shown_names: FrozenSet[str]
 
 
 @dataclass(frozen=True)
@@ -226,8 +234,8 @@ def summary_line(evidence: TextEvidence) -> str:
     return SUMMARY_LINE % (html.escape(one_line(evidence.name)).replace(PIPE, PIPE_ENTITY), extent)
 
 
-def excerpt_characters(evidence: TextEvidence) -> int:
-    return sum(len(line) + len(LINE_BREAK) for line in evidence.excerpt)
+def rendered_characters(lines: List[str]) -> int:
+    return sum(len(line) + len(LINE_BREAK) for line in lines)
 
 
 def excerpt_block(evidence: TextEvidence) -> List[str]:
@@ -239,15 +247,21 @@ def left_out_block(evidence: TextEvidence) -> List[str]:
     return [DETAILS_OPEN, summary_line(evidence), "", BODY_FULL, DETAILS_CLOSE]
 
 
-def excerpt_blocks(excerpted: Tuple[TextEvidence, ...]) -> List[str]:
+def rest_left_out(count: int) -> List[str]:
+    return ["", REST_LEFT_OUT % count] if count else []
+
+
+def excerpt_section(excerpted: Tuple[TextEvidence, ...]) -> ExcerptSection:
     blocks: List[str] = []
-    budget_used = 0
-    for evidence in excerpted:
-        characters = excerpt_characters(evidence)
-        within_budget = budget_used + characters <= EXCERPT_BUDGET_CHARACTERS
-        budget_used += characters if within_budget else 0
-        blocks += ["", *(excerpt_block(evidence) if within_budget else left_out_block(evidence))]
-    return blocks
+    for position, evidence in enumerate(excerpted):
+        after = len(excerpted) - position - 1
+        room = EXCERPT_BUDGET_CHARACTERS - rendered_characters(blocks) - rendered_characters(rest_left_out(after))
+        candidates = (["", *excerpt_block(evidence)], ["", *left_out_block(evidence)])
+        fitting = next((block for block in candidates if rendered_characters(block) <= room), None)
+        if fitting is None:
+            return ExcerptSection(tuple(blocks + rest_left_out(after + 1)), frozenset(shown.name for shown in excerpted[:position]))
+        blocks += fitting
+    return ExcerptSection(tuple(blocks), frozenset(shown.name for shown in excerpted))
 
 
 def kept_lines(kept: Tuple[str, ...]) -> List[str]:
@@ -257,10 +271,10 @@ def kept_lines(kept: Tuple[str, ...]) -> List[str]:
 
 
 def verification_section(report: VerifyReport, evidence: EvidenceFiles) -> List[str]:
-    excerpted_names = frozenset(text_file.name for text_file in evidence.excerpted)
+    excerpts = excerpt_section(evidence.excerpted)
     return [SECTION_HEADING, "", report.verdict, COUNT_LINE % (report.proven, report.acceptance_lines), "",
-            *proofs_table(report.proofs, excerpted_names), NOT_CHECKED_TITLE, *not_checked_lines(report.not_checked),
-            *excerpt_blocks(evidence.excerpted), *kept_lines(evidence.kept)]
+            *proofs_table(report.proofs, excerpts.shown_names), NOT_CHECKED_TITLE, *not_checked_lines(report.not_checked),
+            *excerpts.lines, *kept_lines(evidence.kept)]
 
 
 def main(argv: List[str]) -> int:
