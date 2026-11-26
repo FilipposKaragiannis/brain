@@ -193,25 +193,32 @@ check "ImportStripWithARecordThatDoesNotParse_StillStripsTheNext: because one un
   'no_stripped_key_left "$cleanable"'
 
 echo "import --strip that a tracker refuses for one item: the rest still runs"
-new_repo refusals
-refusing="$("$local_adapter/create.sh" bug "Tracker refuses the strip" --size S --body x)"
-"$local_adapter/write-state.sh" "$refusing" step=plan
-record set "$refusing" last_event=recorded >/dev/null 2>&1
-cleanable="$(new_task "Strips cleanly")"
-"$local_adapter/write-state.sh" "$cleanable" step=plan
-record set "$cleanable" last_event=recorded >/dev/null 2>&1
-refusing_folder="$(dirname "$(item_path "$refusing")")"
-chmod a-w "$refusing_folder"
-record import --strip > "$work/refusals.out" 2>&1; code=$?
-chmod u+w "$refusing_folder"
-check "ImportStripThatATrackerRefuses_ExitsOne: because part of the run failed" \
-  '[ "$code" -eq "$import_partly_failed" ]'
-check "ImportStripThatATrackerRefuses_NamesTheRefusedItem: because a failed strip is never silent" \
-  'grep "^flow: " "$work/refusals.out" | grep -qF -- "$refusing"'
-check "ImportStripThatATrackerRefuses_LeavesItsState: because the strip did not land" \
-  '[ "$(frontmatter "$refusing" step)" = plan ]'
-check "ImportStripThatFailsForOneItem_StillStripsTheNext: because one refusal does not stop the run" \
-  'no_stripped_key_left "$cleanable"'
+root_user=0
+if [ "$(id -u)" -eq "$root_user" ]; then
+  echo "  skip run as root, a read-only item folder refuses no write, so no tracker refuses the strip"
+else
+  new_repo refusals
+  refusing="$("$local_adapter/create.sh" bug "Tracker refuses the strip" --size S --body x)"
+  "$local_adapter/write-state.sh" "$refusing" step=plan
+  record set "$refusing" last_event=recorded >/dev/null 2>&1
+  cleanable="$(new_task "Strips cleanly")"
+  "$local_adapter/write-state.sh" "$cleanable" step=plan
+  record set "$cleanable" last_event=recorded >/dev/null 2>&1
+  refusing_folder="$(dirname "$(item_path "$refusing")")"
+  trap 'refusal_status=$?; chmod u+w "$refusing_folder"; sandbox_close "$refusal_status"' EXIT
+  chmod a-w "$refusing_folder"
+  record import --strip > "$work/refusals.out" 2>&1; code=$?
+  chmod u+w "$refusing_folder"
+  trap 'sandbox_close $?' EXIT
+  check "ImportStripThatATrackerRefuses_ExitsOne: because part of the run failed" \
+    '[ "$code" -eq "$import_partly_failed" ]'
+  check "ImportStripThatATrackerRefuses_NamesTheRefusedItem: because a failed strip is never silent" \
+    'grep "^flow: " "$work/refusals.out" | grep -qF -- "$refusing"'
+  check "ImportStripThatATrackerRefuses_LeavesItsState: because the strip did not land" \
+    '[ "$(frontmatter "$refusing" step)" = plan ]'
+  check "ImportStripThatFailsForOneItem_StillStripsTheNext: because one refusal does not stop the run" \
+    'no_stripped_key_left "$cleanable"'
+fi
 
 echo "the mirror: tracker_state switches the tracker write"
 mirrored="$(new_task "Mirror")"
