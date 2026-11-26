@@ -296,7 +296,7 @@ check "GithubWriteStateOfAnswerAndAttempts_PutsNoFlowLabelOnTheIssue: because th
   '[ "$(flow_label_count 12)" = 0 ]'
 check "GithubWriteStateOfAnswerAndAttempts_PutsTheStateCommentOnTheIssue: because the import below needs a comment to read" \
   '[ "$(state_comment_count 12)" = "$state_comments_written" ]'
-state_marker="$(python3 -c 'import re, sys; print(re.search(r"^STATE_MARKER=\"(.*)\"$", open(sys.argv[1]).read(), re.M).group(1))' "$plugin/adapters/github/_gh.sh")"
+state_marker="$(github_state_marker)" || exit 1
 gh_user="$(gh api user -q .login)"
 forger=mallory
 forged_only=15

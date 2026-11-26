@@ -130,7 +130,7 @@ rm -f "$work/bin/gh"; P="$plugin"; . "$here/_github_fixture.sh"
 forger=mallory
 forged_step="pr"
 forged_profile=task-L
-state_marker="$(python3 -c 'import re, sys; print(re.search(r"^STATE_MARKER=\"(.*)\"$", open(sys.argv[1]).read(), re.M).group(1))' "$plugin/adapters/github/_gh.sh")"
+state_marker="$(github_state_marker)" || exit 1
 python3 -c 'import json, sys
 path, marker, forger, step, profile = sys.argv[1:]
 issues = json.load(open(path))

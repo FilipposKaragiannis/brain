@@ -26,7 +26,6 @@ resize_step=implement
 resized_to=S
 resized_profile=task-S
 pull_request_url="https://gh/pull/90"
-github_state_marker="$(sed -n 's/^STATE_MARKER="\(.*\)"$/\1/p' "$plugin/adapters/github/_gh.sh")"
 
 stub_result() {
   case "$1" in
@@ -111,15 +110,16 @@ issue = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if "gh#%d
 print(json.dumps({"labels": issue["labels"], "fields": issue.get("fields")}, sort_keys=True))' "$FAKE_GH_DIR/issues.json" "$1"; }
 github_has_no_state_comment() { python3 -c 'import json, sys
 issue = next(issue for issue in json.load(open(sys.argv[1]))["issues"] if "gh#%d" % issue["number"] == sys.argv[2])
-sys.exit(1 if any(sys.argv[3] in comment["body"] for comment in issue.get("comments", [])) else 0)' "$FAKE_GH_DIR/issues.json" "$1" "$github_state_marker"; }
+sys.exit(1 if any(sys.argv[3] in comment["body"] for comment in issue.get("comments", [])) else 0)' "$FAKE_GH_DIR/issues.json" "$1" "$state_marker"; }
 github_untouched() {
-  [ -n "$github_state_marker" ] && [ -n "$github_owned_made" ] && [ "$(github_owned "$1")" = "$github_owned_made" ] &&
+  [ -n "$github_owned_made" ] && [ "$(github_owned "$1")" = "$github_owned_made" ] &&
     github_has_no_state_comment "$1"
 }
 
 echo "github: an item run through every step"
 new_repo github
 P="$plugin"; . "$here/_github_fixture.sh"
+state_marker="$(github_state_marker)" || exit 1
 github_item="$(new_item)"
 github_owned_made="$(github_owned "$github_item")"
 check "GitHubItemMade_CarriesItsSizeLabel: because the size check compares against a store that holds the size" \

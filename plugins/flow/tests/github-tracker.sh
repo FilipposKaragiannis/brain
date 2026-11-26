@@ -429,7 +429,7 @@ cp "$work/config.reviews" .flow/config.yaml
 
 echo "github state comment authors (fake gh)"
 cp "$FAKE_GH_DIR/issues.json" "$work/issues.authors"; cp .flow/config.yaml "$work/config.authors"
-state_marker="$(python3 -c 'import re, sys; print(re.search(r"^STATE_MARKER=\"(.*)\"$", open(sys.argv[1]).read(), re.M).group(1))' "$P/adapters/github/_gh.sh")"
+state_marker="$(github_state_marker)" || exit 1
 gh_user="$(gh api user -q .login)"
 forger=mallory; teammate=teammate
 python3 - "$FAKE_GH_DIR/issues.json" "$state_marker" "$gh_user" "$forger" "$teammate" <<'PY'
