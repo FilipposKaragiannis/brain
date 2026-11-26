@@ -5,9 +5,13 @@
 # verifier wrote for it and whichever commit its proofs file was written for. A named file that is
 # missing, empty, a link out of evidence/ or a path through `..` fails verify: the check
 # `plan proofs` fails naming the file, and the line is graded error; so does a named line with no
-# line in proofs.json, naming the plan and the line. Each run's gate writes the evidence, as a
-# capture does, and the suite writes plan.md and proofs.json alone, never a report. On the local
-# adapter in throwaway repos.
+# line in proofs.json, naming the plan and the line. A malformed `Proof:` line in the section (no
+# path, no capture, before any numbered line, a second for one line, a path that is absolute, goes
+# through `..` or is outside evidence/) fails verify naming its line in plan.md. No plan, no
+# section, a section with no `Proof:` and a `Proof:` outside the section give the report of a run
+# with no plan, and an unnamed live proof whose file is empty still passes. Each run's gate writes
+# the evidence, as a capture does, and the suite writes plan.md and proofs.json alone, never a
+# report. On the local adapter in throwaway repos.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -26,15 +30,30 @@ named_text="the score shows after a goal"
 named_evidence=evidence/score-after-goal.png
 named_capture="the replay test ScoreBoard_AfterAGoal_ShowsTheScore"
 verifier_evidence=evidence/never-captured.png
+empty_evidence=evidence/client-builds.png
+first_section_plan_line=5
+proof_plan_line=6
+second_proof_plan_line=7
+unnamed_entry=0
+plan_header="# the score shows
+Goal: the player sees the score.
+"
 blocked_reason="the staging server is down"
 capture_gate() { printf "  capture: 'sh %s/capture-%s.sh'\n" "$work" "$1"; }
 write_capture() { printf '%s\n' "$2" > "$work/capture-$1.sh"; }
 capture_named_file() { write_capture "$1" "mkdir -p '$reports/evidence' && echo png > '$reports/$named_evidence'"; }
 write_proofs() { printf '{"head": "%s", "proofs": %s}\n' "$(git -C "$worktree" rev-parse HEAD)" "$1" > "$reports/proofs.json"; }
-write_plan() {
-  printf '# %s: the score shows\nGoal: the player sees the score.\n\n## Acceptance\n%s. %s\n   Proof: %s by %s\n\n## Phase 1: The score\n- [ ] Draw the score.\n' \
-    "$item" "$named_line" "$named_text" "$1" "$named_capture" > "$reports/plan.md"
+write_plan_text() { printf '%s\n' "$1" > "$reports/plan.md"; }
+write_acceptance() {
+  write_plan_text "$plan_header
+## Acceptance
+$1
+
+## Phase 1: The score
+- [ ] Draw the score."
 }
+write_plan() { write_acceptance "$named_line. $named_text
+   Proof: $1 by $named_capture"; }
 report_value() { json_value "$1" < "$reports/verify.json"; }
 json_proof_grades() { python3 -c 'import json,sys; print(" ".join("%s:%s" % (proof["line"], proof["grade"]) for proof in json.load(open(sys.argv[1]))["proofs"]))' "$reports/verify.json"; }
 check_status() { python3 -c 'import json,sys; print("".join(check["status"] for check in json.load(open(sys.argv[1]))["checks"] if check["name"]==sys.argv[2]))' "$reports/verify.json" "$1"; }
@@ -54,6 +73,32 @@ named_file_fails() {
     'check_summary "plan proofs" | grep -qF -- "$named_file_fails_path"'
   check "${1}_MarkdownNamesTheFile: the PR body names the file that does not hold" \
     'grep -qF -- "$named_file_fails_path" "$reports/verify.md"'
+}
+malformed_proof_fails() {
+  malformed_proof_fails_line="plan.md line $2"
+  check "${1}_ReportSaysFail: a malformed proof fails verify" \
+    '[ "$(report_status)" = fail ]'
+  check "${1}_PlanProofsCheckFails: the report names the plan proofs check as the one that failed" \
+    '[ "$(check_status "plan proofs")" = fail ]'
+  check "${1}_CheckSummaryNamesThePlanLine: the summary tells the planner which line of plan.md to fix" \
+    'check_summary "plan proofs" | grep -qF -- "$malformed_proof_fails_line:"'
+  check "${1}_MarkdownNamesThePlanLine: the PR body names the line of plan.md to fix" \
+    'grep -qF -- "$malformed_proof_fails_line:" "$reports/verify.md"'
+}
+malformed_proof_case() { new_item "$1" "$(capture_gate "$1")"; capture_named_file "$1"; write_acceptance "$2"; write_blocked_proofs; verify >/dev/null 2>&1; }
+json_without_timings() { python3 -c 'import json,sys
+report=json.load(open(sys.argv[1])); report.pop("seconds",None)
+for check in report["checks"]: check.pop("seconds",None)
+print(json.dumps(report,sort_keys=True))' "$reports/verify.json"; }
+markdown_without_timings() { python3 -c 'import re,sys
+print(re.sub(r"^The run took .*$|(?<=\| )\d+(?:s|m \d+s|h \d+m)(?= \|)","",open(sys.argv[1]).read(),flags=re.M))' "$reports/verify.md"; }
+verifies_as_with_no_plan() {
+  check "${1}_JsonEqualsARunWithNoPlan: a plan that names no proof leaves verify.json as it is today" \
+    'json_without_timings | diff -- "$work/no-plan.json" -'
+  check "${1}_MarkdownEqualsARunWithNoPlan: a plan that names no proof leaves verify.md as it is today" \
+    'markdown_without_timings | diff -- "$work/no-plan.md" -'
+  check "${1}_ReportHasNoPlanProofsCheck: a plan that names no proof adds no check" \
+    '[ -z "$(check_status "plan proofs")" ]'
 }
 json_not_checked_grades() { python3 -c 'import json,sys; print(" ".join("%s:%s" % (entry["line"], entry["grade"]) for entry in json.load(open(sys.argv[1]))["not_checked"]))' "$reports/verify.json"; }
 
@@ -172,5 +217,82 @@ check "NamedLineWithNoProofsFile_JsonNotCheckedNamesThePlan: the not checked ent
   '[ "$(report_value not_checked.$first_not_checked_entry.text)" = plan.md ]'
 check "NamedLineWithNoProofsFile_JsonAcceptanceLinesCountsTheProofsFile: the plan adds no acceptance line of its own" \
   '[ "$(report_value acceptance_lines)" = "$no_acceptance_lines" ]'
+
+echo "a proof with no path"
+malformed_proof_case nopath "$named_line. $named_text
+   Proof: by $named_capture"
+malformed_proof_fails ProofWithNoPath "$proof_plan_line"
+
+echo "a proof with no capture"
+malformed_proof_case nocapture "$named_line. $named_text
+   Proof: $named_evidence"
+malformed_proof_fails ProofWithNoCapture "$proof_plan_line"
+
+echo "a proof before any numbered line"
+malformed_proof_case leading "   Proof: $named_evidence by $named_capture
+$named_line. $named_text"
+malformed_proof_fails ProofBeforeAnyNumberedLine "$first_section_plan_line"
+
+echo "a second proof for the same line"
+malformed_proof_case second "$named_line. $named_text
+   Proof: $named_evidence by $named_capture
+   Proof: $named_evidence by $named_capture"
+malformed_proof_fails SecondProofForTheSameLine "$second_proof_plan_line"
+
+echo "a proof with an absolute path"
+new_item absolute "$(capture_gate absolute)"
+capture_named_file absolute
+write_acceptance "$named_line. $named_text
+   Proof: $reports/$named_evidence by $named_capture"
+write_blocked_proofs
+verify >/dev/null 2>&1
+malformed_proof_fails ProofWithAnAbsolutePath "$proof_plan_line"
+
+echo "a proof whose path goes through .."
+malformed_proof_case throughparent "$named_line. $named_text
+   Proof: evidence/../$named_evidence by $named_capture"
+malformed_proof_fails ProofPathThroughParent "$proof_plan_line"
+
+echo "a proof whose path is outside evidence/"
+malformed_proof_case outside "$named_line. $named_text
+   Proof: shots/score-after-goal.png by $named_capture"
+malformed_proof_fails ProofPathOutsideEvidence "$proof_plan_line"
+
+echo "no plan, and an unnamed live proof whose file is empty"
+new_item unnamed "$(capture_gate unnamed)"
+write_capture unnamed "mkdir -p '$reports/evidence' && : > '$reports/$empty_evidence'"
+write_proofs "[{\"line\": $other_line, \"text\": \"the client builds\", \"grade\": \"live\", \"evidence\": \"$empty_evidence\"},
+  {\"line\": $named_line, \"text\": \"$named_text\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"}]"
+verify >/dev/null 2>&1
+check "NoPlan_ReportHasNoPlanProofsCheck: with no plan.md verify adds no check" \
+  '[ -z "$(check_status "plan proofs")" ]'
+check "UnnamedLiveProofWithAnEmptyFile_ReportSaysPass: an empty file fails only a proof the plan names" \
+  '[ "$(report_status)" = pass ]'
+check "UnnamedLiveProofWithAnEmptyFile_JsonGradesItLive: a captured file the plan does not name holds when empty, as today" \
+  '[ "$(report_value proofs.$unnamed_entry.grade)" = live ]'
+json_without_timings > "$work/no-plan.json"
+markdown_without_timings > "$work/no-plan.md"
+
+echo "a plan with no Acceptance section"
+write_plan_text "$plan_header
+## Phase 1: The score
+- [ ] Draw the score."
+verify >/dev/null 2>&1
+verifies_as_with_no_plan PlanWithNoAcceptanceSection
+
+echo "an Acceptance section with numbered lines and no proof"
+write_acceptance "$other_line. the client builds
+$named_line. $named_text"
+verify >/dev/null 2>&1
+verifies_as_with_no_plan AcceptanceSectionWithNoProof
+
+echo "a plan whose only proof sits outside the Acceptance section"
+write_acceptance "$other_line. the client builds
+$named_line. $named_text
+
+## Notes
+   Proof: $verifier_evidence by $named_capture"
+verify >/dev/null 2>&1
+verifies_as_with_no_plan ProofOutsideTheAcceptanceSection
 
 if [ "$fails" -eq 0 ]; then echo "verify-plan-proofs: ok"; else echo "verify-plan-proofs: $fails failed"; exit 1; fi

@@ -27,8 +27,9 @@
 # .flow/config.yaml, shaped like a gate, runs as the check `evidence <name>` with
 # FLOW_EVIDENCE_FOLDER set to <reports>/evidence, where it writes its files; no gate sees that
 # variable, and a failed capture fails verify. Then the check `plan proofs` fails when a file the
-# plan names as a proof does not hold (scripts/_verify_plan_proofs.py); a plan that names none
-# adds no check. feel_test is true when a changed file matches feel_test_paths in the flow config.
+# plan names as a proof does not hold or a `Proof:` line of the plan is malformed
+# (scripts/_verify_plan_proofs.py); a plan that names none adds no check. feel_test is true when
+# a changed file matches feel_test_paths in the flow config.
 # Never edits anything. The report is built from data by
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
