@@ -4,9 +4,6 @@
 # unopened (changes and no PR) or unanswered (changes, and gh could not say whether a PR exists).
 # Sourced after lib/flow.sh by scripts/advance.sh, scripts/epic-pr.sh and scripts/steward.sh.
 
-# link_and_record_pull_request <item> <url> <host>: the tracker is told of the PR (adapter link-pr),
-# a refusal only warned, then the record takes pr and pr_host. The host is kept only when it is
-# claude or codex. Exit record_set's code.
 link_and_record_pull_request() (
   [ $# -eq 3 ] || die "usage: link_and_record_pull_request <item> <url> <host>" "$EXIT_USAGE"
   adapter link-pr "$1" "$2" </dev/null >/dev/null || echo "flow: the tracker of $1 did not take $2" >&2

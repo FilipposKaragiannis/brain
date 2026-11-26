@@ -559,8 +559,8 @@ profile_select() {
   esac
 }
 
-# profile_refusal <profile> <step>: why next.sh --profile may not run an item at the step (empty for
-# an item no step started) under the profile, or nothing when it may.
+# profile_refusal <profile> <step>: the refusal next.sh --profile prints, or nothing; the step is
+# empty for an item no step started.
 profile_refusal() {
   cached_python3 -I -c '
 import json, sys

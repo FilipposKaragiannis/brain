@@ -1,21 +1,12 @@
 #!/bin/sh
 # Carries the flow state an older flow left on the trackers into the flow records, and takes it
 # off them. Sourced by scripts/state.sh only, after lib/flow.sh; defines functions and runs nothing.
-# Neither function changes a variable of its caller or reads its stdin.
+# No function here changes a variable of its caller or reads its stdin.
 #   state_import <plan|write> <strip|keep>
-#                               lists every configured tracker (adapters_configured) and says one
-#                               line per row scripts/_state_import.py gives: each open item whose
-#                               tracker state carries flow state and that has no record is
-#                               imported (its record seeded as the lazy seed does) or skipped when
-#                               its worktree is not claimed on this machine. Under write a held
-#                               import is assigned and its status pushed (tracker_take new); with
-#                               strip, adapter strip-state then cleans each item recorded here that
-#                               still carries flow state or labels, and without it each is named.
-#                               plan says what write would do, with "would", and changes nothing.
-#                               strip is refused, exit 2, under tracker_state labels, whose mirror
-#                               would write the state back. Exit 0 done; 1 a tracker's list, a
-#                               record write or a strip failed, after the rest ran (the same call
-#                               again is safe); 2 usage or config
+#     plan says what write would do and changes nothing.
+#     strip is refused, exit 2, under tracker_state labels: its mirror would write the state back.
+#     Exit 0 done; 1 a tracker's list, a record write or a strip failed, after the rest ran (the
+#     same call again is safe); 2 usage or config.
 
 state_import() (
   [ $# -eq 2 ] || die "usage: state_import <plan|write> <strip|keep>" "$EXIT_USAGE"
