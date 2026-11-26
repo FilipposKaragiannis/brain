@@ -138,7 +138,7 @@ echo "contract: $name"
 echo " the folder"
 prefix="$(head -n 1 "$A/prefix" 2>/dev/null)"
 check "the prefix file holds one non-empty line" '[ -n "$prefix" ] && [ "$(wc -l < "$A/prefix" | tr -d " ")" = 1 ]'
-for op in list list-ready read in-scope create close comment link-pr write-state me set-status assign; do
+for op in list list-ready read in-scope create close comment link-pr write-state strip-state me set-status assign; do
   check "$op.sh is there and executable" '[ -x "$A/$op.sh" ]'
 done
 for op in vocabulary answers; do
@@ -151,7 +151,7 @@ check "no other adapter's prefix starts this one or is started by it" '! for f i
 done | grep -q clash'
 
 echo " usage"
-for op in read create close comment link-pr write-state set-status assign; do
+for op in read create close comment link-pr write-state strip-state set-status assign; do
   check "$op with no arguments exits 2" '[ "$(code_of "$A/$op.sh")" = 2 ]'
 done
 check "list with an unknown option exits 2" '[ "$(code_of "$A/list.sh" --no-such-option)" = 2 ]'
@@ -592,6 +592,41 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
 else
   skip "no set_$name or scope_config_$name in this suite to scope a list"
 fi
+
+# strip-state (adapters/README.md, Operations): per backend, full_state_gone_<name> <id> exits 0
+# once the backend's store, read whole, holds none of the state write-state keeps beside its labels.
+full_state_gone_local() {
+  python3 -B -c 'import sys
+sys.path.insert(0, sys.argv[1]); import _item
+meta, _ = _item.parse(sys.argv[2]); sys.exit(1 if set(meta) & _item.STRIPPED_KEYS else 0)' "$A" "$FLOW_HOME/items/${1#local:}.md"
+}
+full_state_gone_github() {
+  python3 -c 'import json,sys
+issue = [i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2])][0]
+sys.exit(1 if [c for c in issue.get("comments", []) if "<!-- flow:state -->" in c["body"]] else 0)' "$FAKE_GH_DIR/issues.json" "${1#gh#}"
+}
+full_state_gone_jira() {
+  python3 -c 'import json,sys; sys.exit(1 if "flow-state" in json.load(open(sys.argv[1]))["issues"][sys.argv[2]]["properties"] else 0)' \
+    "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
+}
+no_flow_label() {
+  field "$1" labels | python3 -c 'import json,sys; sys.exit(1 if [l for l in json.load(sys.stdin) if l.startswith(("step:", "gate:", "wt:", "flow:"))] else 0)'
+}
+echo " strip-state"
+stripped="$("$A/create.sh" task "Strip: state an older flow wrote" --size S)"
+"$A/write-state.sh" "$stripped" step=implement gate=plan-approval worktree=wt-3 profile=task-S size=M >/dev/null 2>&1
+"$A/comment.sh" "$stripped" --body "a comment strip-state keeps" >/dev/null 2>&1
+check "StripStateForeignId_ExitsTwo: strip-state of an id another adapter owns exits 2, because the adapter strips only its own items" '[ "$(code_of "$A/strip-state.sh" "nobody:1")" = 2 ]'
+check "StripStateMissingItem_ExitsOne: strip-state of an id that names no item exits 1, because the tracker has nothing to strip" '[ "$(code_of "$A/strip-state.sh" "$missing")" = 1 ]'
+"$A/strip-state.sh" "$stripped" > "$work/strip-state.out" 2>/dev/null
+check "StripStateOfAnItemWithState_PrintsItsId: strip-state prints the id of an item it took state off, because import says each item it stripped" '[ "$(cat "$work/strip-state.out")" = "$stripped" ]'
+check "StripState_LeavesNoFlowLabel: no step:, gate:, wt: or flow: label is left, because the tracker no longer mirrors the flow" 'no_flow_label "$stripped"'
+check "StripState_LeavesNoFullState: the store no longer holds the state write-state kept, because a frozen state would be read for an item with no record" '"full_state_gone_$name" "$stripped"'
+check "StripState_ClearsTheStep: the step reads back empty, because neither the label nor the full state is left to read it from" '[ -z "$(field "$stripped" state.step)" ]'
+check "StripState_KeepsTheSize: the size write-state wrote still reads back, because the size is the item's own" '[ "$(field "$stripped" size)" = M ]'
+check "StripState_KeepsOtherComments: a comment that holds no state is still on the item, because strip-state takes only the flow's own" '"comments_$name" "$stripped" | grep -q "a comment strip-state keeps"'
+check "StripStateOfACleanItem_PrintsNothing: a second strip-state prints nothing, because nothing was left to take" '[ -z "$("$A/strip-state.sh" "$stripped" 2>/dev/null)" ]'
+check "StripStateOfACleanItem_ExitsZero: a second strip-state exits 0, because a clean item is no failure" '[ "$(code_of "$A/strip-state.sh" "$stripped")" = 0 ]'
 
 echo "contract $name: $checks checks, $fails failed"
 [ "$fails" -eq 0 ]

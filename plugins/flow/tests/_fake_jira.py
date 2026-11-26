@@ -213,6 +213,11 @@ if m:
         status = 200 if m.group(1) in issue["properties"] else 201
         issue["properties"][m.group(1)] = body
         answer(status)
+    if m and method == "DELETE":
+        if m.group(1) not in issue["properties"]:
+            refuse(404, "The property with key %s does not exist." % m.group(1))
+        del issue["properties"][m.group(1)]
+        answer(204)
     if rest == "/comment" and method == "POST":
         issue["comments"].append({"id": str(len(issue["comments"]) + 1), "body": body["body"], "author": user_of(login)})
         answer(201, issue["comments"][-1])

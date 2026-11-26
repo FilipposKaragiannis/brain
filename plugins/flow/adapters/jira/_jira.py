@@ -6,6 +6,7 @@
   _jira.py create <kind> <title> [--size S] [--priority NAME] [--area NAME] [--type NAME]
                   [--blocked-by id,id] [--parent id] [--body TEXT]
   _jira.py write-state <id> key=value...
+  _jira.py strip-state <id>
   _jira.py comment <id> <text>
   _jira.py close <id> [<text>]
   _jira.py remote-link <id> <url>
@@ -21,6 +22,8 @@ JIRA_API_TOKEN. Items are issues of one project; ids are jira:<KEY>-<n>. The flo
 state is mirrored as labels the way the GitHub adapter does it (step:*, gate:*, wt:*, flow:*, and
 size:* unless jira.fields.size names a field) and kept whole in the issue property flow-state.
 The profile is read from the property alone: the flow:* label is written for an older flow only.
+strip-state, for state.sh import --strip and temporary like write-state, takes the step:, gate:,
+wt: and flow: labels and the property off an issue and prints its id when it took anything.
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
 answers prints one JSON line {"id", "text"} per given item the owner answered with an /answer
@@ -55,6 +58,7 @@ STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_e
               "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from",
               "base", "branch"]
 LABEL_PREFIXES = {"step": "step:", "gate": "gate:", "worktree": "wt:", "profile": "flow:", "size": "size:"}
+STRIPPED_LABEL_PREFIXES = ("step:", "gate:", "wt:", "flow:")
 FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks", "assignee"]
 STATUS_CATEGORY_KEYS = {"new": "todo", "indeterminate": "in-progress", "done": "done"}
 FOREIGN_BLOCKERS = re.compile(r"(?m)^Blocked by: (.+)$")
@@ -412,6 +416,33 @@ def cmd_write_state(args):
     expect(status, answer, "write the state of %s%s" % (PREFIX, key))
 
 
+def cmd_strip_state(args: list) -> str:
+    if len(args) != 1:
+        fail("usage: strip-state <id>", EXIT_USAGE)
+    key = key_of(args[0])
+    removed_labels = strip_flow_labels(key)
+    deleted_property = delete_state_property(key)
+    return PREFIX + key if removed_labels or deleted_property else ""
+
+
+def strip_flow_labels(key: str) -> list:
+    labels = issue_fields(key, ["labels"]).get("labels") or []
+    flow_labels = [label for label in labels if label.startswith(STRIPPED_LABEL_PREFIXES)]
+    if flow_labels:
+        status, answer = call("PUT", "/rest/api/3/issue/" + key, {"update": {"labels": [{"remove": label} for label in flow_labels]}})
+        expect(status, answer, "take the flow labels off %s%s" % (PREFIX, key))
+    return flow_labels
+
+
+def delete_state_property(key: str) -> bool:
+    """A property Jira does not hold answers 404, so a delete a retry already landed is clean too."""
+    status, answer = call("DELETE", "/rest/api/3/issue/%s/properties/%s" % (key, STATE_PROPERTY))
+    if status == NOT_FOUND:
+        return False
+    expect(status, answer, "delete the state of %s%s" % (PREFIX, key))
+    return True
+
+
 def comment(key, text):
     status, answer = call("POST", "/rest/api/3/issue/%s/comment" % key, {"body": to_document(text)}, once=True)
     expect(status, answer, "comment on %s%s" % (PREFIX, key))
@@ -717,7 +748,7 @@ def main():
         fail(__doc__.strip().splitlines()[0], 2)
     command, args = sys.argv[1], sys.argv[2:]
     commands = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "create": cmd_create, "write-state": cmd_write_state,
-                "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
+                "strip-state": cmd_strip_state, "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
                 "answers": cmd_answers, "me": cmd_me, "vocabulary": cmd_vocabulary,
                 "set-status": cmd_set_status, "assign": cmd_assign}
     if command not in commands:

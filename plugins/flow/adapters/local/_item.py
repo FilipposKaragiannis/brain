@@ -8,6 +8,7 @@ Usage (always from the shell scripts):
   _item.py read <home> <id>
   _item.py in-scope <home> <id>
   _item.py write-state <home> <id> key=value...
+  _item.py strip-state <home> <id>
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
@@ -20,6 +21,9 @@ user's email or name), status, labels and kind, each compared without case. loca
 (scope_filter in lib/flow.sh) is matched the same way, on every list beside the filter, and
 in-scope exits 0 when the item matches it, 1 when not. me prints those names of the git user, one
 per line, and nothing when git has neither.
+
+strip-state, for state.sh import --strip and temporary like write-state, drops every state key of
+the frontmatter but size, the item's own size, and prints "<id>" when it dropped one.
 
 set-status writes the frontmatter workflow and assign adds or removes the first name of me in the
 frontmatter assignee. Each prints "<id> <value>" when it changed the file and nothing when the file
@@ -43,6 +47,7 @@ from datetime import datetime, timezone
 STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "pr_host", "touches",
               "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from",
               "base", "branch"]
+STRIPPED_KEYS = frozenset(STATE_KEYS) - {"size"}
 LIST_KEYS = {"blocked_by", "labels", "touches", "changes"}
 INT_KEYS = {"attempts"}
 # The rank of an item with no priority: after every ranked one.
@@ -352,6 +357,19 @@ def cmd_write_state(home, args):
     dump(path, meta, body)
 
 
+def cmd_strip_state(home: str, args: list) -> str:
+    if len(args) != 1:
+        usage("usage: strip-state <id>")
+    item_id = args[0]
+    path = existing_item_path(home, item_id)
+    meta, body = parse(path)
+    kept = {key: value for key, value in meta.items() if key not in STRIPPED_KEYS}
+    if len(kept) == len(meta):
+        return ""
+    write_item(path, kept, body)
+    return item_id
+
+
 def cmd_set_status(home: str, args: list) -> str:
     if len(args) != 2:
         usage("usage: set-status <id> <%s>" % "|".join(WORKFLOW_CATEGORIES))
@@ -492,7 +510,7 @@ def main():
     cmd, home, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     printed = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "write-state": cmd_write_state,
                "comment": cmd_comment, "close": cmd_close, "create": cmd_create, "me": cmd_me,
-               "set-status": cmd_set_status, "assign": cmd_assign}[cmd](home, args)
+               "set-status": cmd_set_status, "assign": cmd_assign, "strip-state": cmd_strip_state}[cmd](home, args)
     if printed:
         print(printed)
 

@@ -232,6 +232,17 @@ elif args[0] == "api":
     if m:
         data.setdefault("reactions", []).append({"comment": int(m.group(1)), "content": [a for a in args if a.startswith("content=")][0][8:]})
         save(); print("{}"); sys.exit()
+    m = re.match(r"repos/[^/]+/[^/]+/issues/comments/(\d+)$", path)
+    if m and "-X" in args and args[args.index("-X") + 1] == "DELETE":
+        comment_id = int(m.group(1))
+        holder = next((i for i in data["issues"] if any(c["id"] == comment_id for c in i.get("comments", []))), None)
+        if holder is None:
+            print('{"message": "Not Found"}')
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
+        holder["comments"] = [c for c in holder["comments"] if c["id"] != comment_id]
+        save()
+        sys.exit()
     m = re.match(r"repos/[^/]+/[^/]+/issues/comments/(\d+)", path)
     if m:
         for i in data["issues"]:
