@@ -358,15 +358,16 @@ printf '{"item":"local:task/1","step":"pr","reports":"%s/.flow/reports/local-tas
 printf '{"status":"done"}\n' > .flow/reports/local-task-1/pr.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q 'No verify report' && pass "pr without a verify report blocks" || fail "pr without verify not blocked: $out"
 head_commit="$(git rev-parse HEAD)"
+unknown_commit="$(printf '0%.0s' $(seq 40))"
 printf '{"status":"fail","attempts":1,"head":"%s","checks":[{"name":"build","status":"pass","summary":"ok"},{"name":"tests","status":"fail","summary":"2 failed"}]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q 'tests: 2 failed' && pass "pr with a failing verify blocks with the failing check" || fail "pr with failing verify: $out"
 printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
-out="$(gate '{}')"; [ -z "$out" ] && pass "ThirdAttemptAtTheHead_EscalatesWithoutBlock" || fail "third attempt blocked: $out"
+out="$(gate '{}')"; [ -z "$out" ] && pass "ThirdAttemptAtTheHead_EscalatesWithoutBlock: no block, because the third failed attempt hands off to a person" || fail "third attempt blocked: $out"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
-out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtTheHeadBeforeAPr_Passes: no block" || fail "passing verify blocked: $out"
-printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(printf '0%.0s' $(seq 40))" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtTheHeadBeforeAPr_Passes: no block, because the PR ships exactly the commit the report checked" || fail "passing verify blocked: $out"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$unknown_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q "$head_commit" && pass "StalePassBeforeAPr_Blocks: a pass made on another commit is refused against the worktree HEAD, because the PR would ship code the report never checked" || fail "stale report not blocked: $out"
-printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$(printf '0%.0s' $(seq 40))" > .flow/reports/local-task-1/verify.json
+printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$unknown_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q "$head_commit" && pass "StaleReportAfterThirdAttempt_Blocks: the report is refused against the worktree HEAD, because escalation does not skip the commit check" || fail "stale third-attempt report not blocked: $out"
 printf '{"status":"pass","attempts":1,"checks":[]}\n' > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q "$head_commit" && pass "ReportWithoutACommit_Blocks: the report is refused against the worktree HEAD, because nothing shows which commit it checked" || fail "report without a commit not blocked: $out"
