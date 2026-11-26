@@ -102,7 +102,7 @@ plugins/flow/tests/lost-result.sh	SC2034	2
 plugins/flow/tests/lost-result.sh	SC2154	4
 plugins/flow/tests/main-worktree-once.sh	SC2034	2
 plugins/flow/tests/main-worktree-once.sh	SC2154	4
-plugins/flow/tests/migrate.sh	SC2034	13
+plugins/flow/tests/migrate.sh	SC2034	14
 plugins/flow/tests/migrate.sh	SC2154	6
 plugins/flow/tests/pick.sh	SC1010	1
 plugins/flow/tests/pick.sh	SC2034	12
