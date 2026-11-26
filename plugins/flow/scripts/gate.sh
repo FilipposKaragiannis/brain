@@ -55,8 +55,9 @@
 #                                           error or an unknown model stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age, the questions, the
-#                                           options, who raised it, who answers it, its condition
-#                                           and its footer
+#                                           options, who raised it, who answers it, its condition,
+#                                           its footer and from_step, the step whose work it judges
+#                                           (the step that failed, on an escalation)
 #   gate.sh drop <item> <why>               the item closed under the gate (steward.sh sweep): the
 #                                           gate, its record and its gate: label go, no answer
 #                                           recorded; an ambiguity or escalation question nobody
@@ -175,7 +176,7 @@ $footer" >/dev/null || echo "flow: the $gate gate on $item is recorded, but its 
     rm -f "$home/runs/$(item_slug "$item").json"
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
-      "answered_by=$answered_by" "$condition_field" "footer=$footer" \
+      "answered_by=$answered_by" "$condition_field" "footer=$footer" "from_step=$from" \
       || echo "flow: the $gate gate on $item is recorded, but notify.sh failed" >&2 ;;
   clear)
     [ $# -ge 2 ] || die "$CLEAR_USAGE" 2
