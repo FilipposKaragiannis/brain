@@ -330,9 +330,18 @@ async function readVerifyReport(roots: string[], item: string): Promise<GateRepo
   return null;
 }
 
-/** Whether the gate's card shows the item's verify report. */
+/** The gate kinds whose card always shows the item's verify report. */
+const VERIFY_REPORT_GATES = ['merge', 'feel-test'];
+const ESCALATION_GATE = 'escalation';
+const VERIFY_STEP = 'verify';
+
+/**
+ * Whether the gate's card shows the item's verify report. An escalation shows it only when verify
+ * failed; one with no `fromStep`, from an older plugin, cannot be told from another escalation.
+ */
 function showsVerifyReport(gate: GateRecord): boolean {
-  return gate.gate === 'merge';
+  if (VERIFY_REPORT_GATES.includes(gate.gate)) return true;
+  return gate.gate === ESCALATION_GATE && gate.fromStep === VERIFY_STEP;
 }
 
 async function readClaims(paths: string[]): Promise<ClaimRecord[]> {
