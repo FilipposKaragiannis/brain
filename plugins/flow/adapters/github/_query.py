@@ -1,8 +1,8 @@
 """Issues as raw adapter input, through GraphQL. See list.sh and read.sh.
 
-  _query.py list <repo> <marker> <open|all> <limit> <logins>   (narrowed by FLOW_SCOPE_* and FLOW_PICK_*, see matches)
-  _query.py read <repo> <marker> <number> <logins>
-  _query.py in-scope <repo> <marker> <number> <limit> (exit 0 inside FLOW_SCOPE_*, 1 outside, 3 when the search fails)
+  _query.py list <repository> <marker> <open|all> <limit> <logins>   (narrowed by FLOW_SCOPE_* and FLOW_PICK_*, see matches)
+  _query.py read <repository> <marker> <number> <logins>
+  _query.py in-scope <repository> <marker> <number> <limit> (exit 0 inside FLOW_SCOPE_*, 1 outside, 3 when the search fails)
 
 One paged query returns each issue with its labels, type, native parent, blockers, open sub-issue
 count, issue field
@@ -99,7 +99,9 @@ LIST_COMMENTS = EVERY_ISSUE if os.environ.get("FLOW_LIST_EVERY_STATE") else LABE
 FLOW_LABEL_KEYS = ("step", "gate", "wt", "flow")
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
 REST_PAGE_SIZE = 100
+MODE_ARGUMENT, REPOSITORY_ARGUMENT, MARKER_ARGUMENT = 1, 2, 3
 READ_LOGINS_ARGUMENT, LIST_LOGINS_ARGUMENT = 5, 6
+OWNER_SEPARATOR, OWNER_SPLIT_LIMIT = "/", 1
 
 
 def kind_of(node):
@@ -266,8 +268,8 @@ def raw(repository: str, node: dict, rule: _state_comment.StateCommentRule, read
 
 
 def main():
-    mode, repo, marker = sys.argv[1], sys.argv[2], sys.argv[3]
-    owner, name = repo.split("/", 1)
+    mode, repository, marker = sys.argv[MODE_ARGUMENT], sys.argv[REPOSITORY_ARGUMENT], sys.argv[MARKER_ARGUMENT]
+    owner, name = repository.split(OWNER_SEPARATOR, OWNER_SPLIT_LIMIT)
     if mode == "in-scope":
         sys.exit(in_scope(owner, name, int(sys.argv[4]), int(sys.argv[5])))
     if mode == "read":
@@ -275,7 +277,7 @@ def main():
         node = data and data["data"]["repository"]["issue"]
         if not node:
             sys.exit(1)
-        print(json.dumps(raw(repo, node, _state_comment.rule_of(marker, sys.argv[READ_LOGINS_ARGUMENT]), SINGLE_READ)))
+        print(json.dumps(raw(repository, node, _state_comment.rule_of(marker, sys.argv[READ_LOGINS_ARGUMENT]), SINGLE_READ)))
         return
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"
@@ -287,7 +289,7 @@ def main():
             sys.exit(1)
         kept = [node for node in issues["nodes"] if matches(node, SCOPE_RULES) and matches(node, PICK_RULES)]
         for node in kept[:limit - seen]:
-            issue = raw(repo, node, rule, LIST_COMMENTS)
+            issue = raw(repository, node, rule, LIST_COMMENTS)
             if issue is not None:
                 print(json.dumps(issue))
         seen += len(kept)
