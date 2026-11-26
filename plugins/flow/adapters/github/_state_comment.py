@@ -13,6 +13,8 @@ import sys
 
 FENCED_STATE = re.compile(r"```json\n(.*?)\n```", re.S)
 USAGE_REFUSED = 2
+ARGUMENT_COUNT = 4
+MODE_ARGUMENT, MARKER_ARGUMENT, LOGINS_ARGUMENT = 1, 2, 3
 
 
 @dataclasses.dataclass(frozen=True)
@@ -45,11 +47,11 @@ def state_comments(rule: StateCommentRule, pages: list) -> list:
 
 
 def main() -> None:
-    if len(sys.argv) != 4 or sys.argv[1] not in ("first", "ids"):
+    if len(sys.argv) != ARGUMENT_COUNT or sys.argv[MODE_ARGUMENT] not in ("first", "ids"):
         sys.stderr.write("usage: _state_comment.py <first|ids> <marker> <logins>\n")
         sys.exit(USAGE_REFUSED)
-    found = state_comments(rule_of(sys.argv[2], sys.argv[3]), json.load(sys.stdin))
-    if sys.argv[1] == "ids":
+    found = state_comments(rule_of(sys.argv[MARKER_ARGUMENT], sys.argv[LOGINS_ARGUMENT]), json.load(sys.stdin))
+    if sys.argv[MODE_ARGUMENT] == "ids":
         print("\n".join(str(comment["id"]) for comment in found))
         return
     first = found[0] if found else None

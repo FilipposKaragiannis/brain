@@ -16,7 +16,6 @@ profile_refused_status=2
 single_comment=1
 next_json() { "$plugin/scripts/next.sh" "$@" --json 2>/dev/null; }
 refused_start() { "$plugin/scripts/next.sh" "$@" >/dev/null 2>&1; }
-# A checksum per file tells a file a refused start left alone.
 fingerprint() { cksum "$@"; }
 resize_comments() { grep -c 'Re-sized ' "$(item_file "$1")"; }
 

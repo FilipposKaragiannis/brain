@@ -24,10 +24,10 @@ while [ $# -gt 0 ]; do
     *) die "unknown option $1" 2 ;;
   esac
 done
-repo="$(gh_repo)"
+repository="$(gh_repo)"
 # No logins leave out only the issues whose state comment the list reads (_query.py), and say so.
 state_authors="$(trusted_logins)" || state_authors=""
-raw="$(cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" list "$repo" "$STATE_MARKER" "$state" "$limit" "$state_authors")" || die "cannot list issues"
+raw="$(cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" list "$repository" "$STATE_MARKER" "$state" "$limit" "$state_authors")" || die "cannot list issues"
 printf '%s\n' "$raw" | while read -r line; do [ -n "$line" ] && printf '%s\n' "$line" | issue_to_item; done | cached_python3 -I -c '
 import json, sys
 kind = sys.argv[1]

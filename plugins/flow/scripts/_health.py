@@ -730,51 +730,51 @@ def labelled(items: dict) -> int:
 
 
 def main():
-    command, args = sys.argv[1], sys.argv[2:]
+    command, arguments = sys.argv[1], sys.argv[2:]
     if command == "procs":
         procs()
     elif command == "alive":
-        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "",
-                    idle_after=int(args[4]) if len(args) > 4 else None))
+        print(alive(snapshot(arguments[0]), arguments[1], arguments[2], arguments[3] if len(arguments) > 3 else "",
+                    idle_after=int(arguments[4]) if len(arguments) > 4 else None))
     elif command == "present":
-        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "", skip_self=False))
+        print(alive(snapshot(arguments[0]), arguments[1], arguments[2], arguments[3] if len(arguments) > 3 else "", skip_self=False))
     elif command == "session":
-        print(session_line(snapshot(args[0]), args[1]))
+        print(session_line(snapshot(arguments[0]), arguments[1]))
     elif command == "sessions":
-        sessions(snapshot(args[0]), int(args[1]), args[2:])
+        sessions(snapshot(arguments[0]), int(arguments[1]), arguments[2:])
     elif command == "owner":
         print(owner())
     elif command == "activity":
-        print(activity(*args))
+        print(activity(*arguments))
     elif command == "runs":
-        runs(sys.stdin if args[0] == "-" else open(args[0]), args[1], int(args[2]))
+        runs(sys.stdin if arguments[0] == "-" else open(arguments[0]), arguments[1], int(arguments[2]))
     elif command == "last-next":
-        last_next(args[0])
+        last_next(arguments[0])
     elif command == "next-streaks":
-        next_streaks(args[0])
+        next_streaks(arguments[0])
     elif command == "works-in":
-        sys.exit(0 if works_in(args[0], args[1]) else 1)
+        sys.exit(0 if works_in(arguments[0], arguments[1]) else 1)
     elif command == "epoch":
-        print(epoch(args[0]))
+        print(epoch(arguments[0]))
     elif command == "seconds":
-        print(seconds(*args))
+        print(seconds(*arguments))
     elif command == "ago":
-        print(ago(int(args[0])))
+        print(ago(int(arguments[0])))
     elif command == "review":
-        rows = [json.loads(line) for line in open(args[1]) if line.strip()]
-        review(json.loads(args[0]), rows, args[2] if len(args) > 2 else None)
+        rows = [json.loads(line) for line in open(arguments[1]) if line.strip()]
+        review(json.loads(arguments[0]), rows, arguments[2] if len(arguments) > 2 else None)
     elif command == "holders":
-        holders(args[0])
+        holders(arguments[0])
     elif command == "holds":
-        holds(args[0], args[1], args[2], args[3], args[4], int(args[5]))
+        holds(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], int(arguments[5]))
     elif command == "labelled":
-        print(labelled(open_items(args[0])))
+        print(labelled(open_items(arguments[0])))
     elif command == "died":
-        died(*args[:5])
+        died(*arguments[:5])
     elif command == "spawn":
-        spawn(args[0], args[1:])
+        spawn(arguments[0], arguments[1:])
     elif command == "bounded":
-        sys.exit(bounded(int(args[0]), int(args[1]), args[2:], time.monotonic))
+        sys.exit(bounded(int(arguments[0]), int(arguments[1]), arguments[2:], time.monotonic))
     else:
         sys.exit("flow: unknown command %s" % command)
 

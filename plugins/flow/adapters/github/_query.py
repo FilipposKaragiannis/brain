@@ -99,6 +99,7 @@ LIST_COMMENTS = EVERY_ISSUE if os.environ.get("FLOW_LIST_EVERY_STATE") else LABE
 FLOW_LABEL_KEYS = ("step", "gate", "wt", "flow")
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
 REST_PAGE_SIZE = 100
+READ_LOGINS_ARGUMENT, LIST_LOGINS_ARGUMENT = 5, 6
 
 
 def kind_of(node):
@@ -216,7 +217,7 @@ def carries_flow_label(issue):
     return any(label["name"].split(":")[0] in FLOW_LABEL_KEYS for label in issue["labels"])
 
 
-def unread_state(number: int, reading: str, why: str) -> None:
+def unread_state(reading: str, why: str) -> None:
     """Without the comment the item would read as unstarted, with no attempts, no PR and no
     touches: a wrong answer, so no answer. A read ends; a list leaves the issue out, so it is not
     picked, shown or synced this round, and goes on."""
@@ -231,11 +232,11 @@ def state_comment(repository: str, issue: dict, rule: _state_comment.StateCommen
         return {}
     number = issue["number"]
     if not rule.logins:
-        return unread_state(number, reading, "cannot tell whose state comments count on gh#%d (set github.answer_from, "
+        return unread_state(reading, "cannot tell whose state comments count on gh#%d (set github.answer_from, "
                                              "or log in with gh auth login)" % number)
     pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=%d" % (repository, number, REST_PAGE_SIZE))
     if pages is None:
-        return unread_state(number, reading, "cannot read the comments of gh#%d" % number)
+        return unread_state(reading, "cannot read the comments of gh#%d" % number)
     found = _state_comment.state_comments(rule, pages)
     return _state_comment.state_of(found[0]) if found else {}
 
@@ -274,12 +275,12 @@ def main():
         node = data and data["data"]["repository"]["issue"]
         if not node:
             sys.exit(1)
-        print(json.dumps(raw(repo, node, _state_comment.rule_of(marker, sys.argv[5]), SINGLE_READ)))
+        print(json.dumps(raw(repo, node, _state_comment.rule_of(marker, sys.argv[READ_LOGINS_ARGUMENT]), SINGLE_READ)))
         return
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"
     limit, after, seen = int(sys.argv[5]), None, 0
-    rule = _state_comment.rule_of(marker, sys.argv[6])
+    rule = _state_comment.rule_of(marker, sys.argv[LIST_LOGINS_ARGUMENT])
     while True:
         issues = issue_page(owner, name, states, PAGE_SIZE, after)
         if not issues:
