@@ -358,7 +358,7 @@ printf '{"item":"local:task/1","step":"pr","reports":"%s/.flow/reports/local-tas
 printf '{"status":"done"}\n' > .flow/reports/local-task-1/pr.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q 'No verify report' && pass "pr without a verify report blocks" || fail "pr without verify not blocked: $out"
 head_commit="$(git rev-parse HEAD)"
-unknown_commit="$(printf '0%.0s' $(seq 40))"
+unknown_commit="$(printf '%s' "$head_commit" | tr '0-9a-f' '0')"
 printf '{"status":"fail","attempts":1,"head":"%s","checks":[{"name":"build","status":"pass","summary":"ok"},{"name":"tests","status":"fail","summary":"2 failed"}]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q 'tests: 2 failed' && pass "pr with a failing verify blocks with the failing check" || fail "pr with failing verify: $out"
 printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
@@ -396,7 +396,7 @@ git push -q origin HEAD || fail "task branch push failed"
 printf 'more\n' > more.txt && git add more.txt && git commit -qm "unpushed task commit"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$task_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; [ -z "$out" ] && pass "PushedTaskBranchTrackingTheBase_ReportAtThePushedCopyPasses: the PR head is the task branch's own pushed copy, because the tracked upstream is only the base" || fail "report at the pushed task branch blocked while it tracks the base: $out"
-git switch -q main; git branch -q -D task-branch; git remote remove origin
+git switch -q main && git branch -q -D task-branch && git remote remove origin || fail "gate cleanup failed"
 rm -rf .flow
 
 echo "json fallback without jq"
