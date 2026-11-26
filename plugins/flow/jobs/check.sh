@@ -54,7 +54,8 @@ check_command="$(cfg "jobs.checks.$check_name.command")"
 checkout="$(check_checkout "$check_name")"
 output="$(check_output "$check_name")"
 state_file="$(job_log_dir)/$job.state"
-check_end() { rm -rf "$checkout"; job_end "$1"; }
+state_temporary_file=""
+check_end() { rm -rf "$checkout"; rm -f "$state_temporary_file"; job_end "$1"; }
 trap 'check_end $?' EXIT
 
 # fetch_base_branch: fetches the base from origin into origin/<base>, and says so when it cannot.
@@ -112,6 +113,12 @@ file_bug() {
   printf '%s' "${bug_said:-new.sh exited $bug_exit and printed no id}" | cut -c "1-$check_said_length"
   return 1
 }
+# state_write <state>: replaces the state file through a temporary file beside it, so a run stopped
+# while writing leaves the state it had.
+state_write() {
+  state_temporary_file="$(mktemp "$state_file.XXXXXX")" || return 1
+  printf '%s\n' "$1" > "$state_temporary_file" && mv "$state_temporary_file" "$state_file"
+}
 
 rm -rf "$checkout"
 fetch_base_branch
@@ -123,19 +130,19 @@ job_say "running at $short_commit_identifier in $checkout"
 (cd "$checkout" && exec sh -c "$check_command") < /dev/null > "$output" 2>&1
 check_exit=$?
 cat "$output" >> "$(job_log_dir)/$job.log"
-[ "$check_exit" -ne 0 ] || { printf 'passed\n' > "$state_file"; job_say "done: passed at $short_commit_identifier"; exit 0; }
+[ "$check_exit" -ne 0 ] || { state_write passed; job_say "done: passed at $short_commit_identifier"; exit 0; }
 failure_line="failed: exited $check_exit at $short_commit_identifier: $(tail -n 1 "$output" | cut -c "1-$check_said_length")"
 previous_state="$(sed -n 1p "$state_file" 2>/dev/null)"
 case "$previous_state" in
   passed)
     if filing_result="$(file_bug "$check_exit")"; then
-      printf 'failed %s\n' "$filing_result" > "$state_file"; failure_line="$failure_line; filed bug $filing_result"
+      state_write "failed $filing_result"; failure_line="$failure_line; filed bug $filing_result"
     else
       failure_line="$failure_line; the bug could not be filed: $filing_result"
     fi ;;
   "failed "?*) failure_line="$failure_line; still failing, bug ${previous_state#failed }" ;;
   failed) failure_line="$failure_line; still failing" ;;
-  *) printf 'failed\n' > "$state_file" ;;
+  *) state_write failed ;;
 esac
 job_say "$failure_line"
 exit 1
