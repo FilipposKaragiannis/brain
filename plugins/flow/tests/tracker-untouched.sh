@@ -47,7 +47,6 @@ check_untouched() {
     '"$driven_store_untouched" "$driven_item"'
 }
 
-# Leaves next.sh's output in $driven_started and its exit in $driven_next_status.
 start_driven_step() { driven_started="$("$plugin/scripts/next.sh" "$driven_item" --json 2>>"$work/flow.err")"; driven_next_status=$?; }
 run_started_step() {
   driven_step="$(printf '%s' "$driven_started" | json_value step)"; driven_moves="$driven_moves $driven_step"
