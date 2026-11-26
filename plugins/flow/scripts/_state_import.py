@@ -14,6 +14,8 @@ A candidate is open, has an id of slug shape, and has a tracker state in which a
 size holds a value; gate none, attempts 0, empty text and empty lists hold none. A skipped item
 gets no strip row, so no tracker loses state that no record here holds. rows_after_writes turns
 the import row of an item whose record could not be written into a skip row and drops its strip.
+row_text puts a stand-in for each tab, newline or other unprintable character of a field, so tracker
+text never splits into a row of its own.
 """
 import json
 from collections import namedtuple
@@ -37,6 +39,7 @@ NOT_LISTS = "import takes one JSON array of adapter items per line on stdin"
 NO_STATE = MappingProxyType({})
 NO_ROW = None
 CLAIM_ITEM_FIELD = "item"
+UNPRINTABLE_STAND_IN = "?"
 
 ListedItem = namedtuple("ListedItem", ("id", "open", "state", "labels"))
 Listing = namedtuple("Listing", ("items", "problem"))
@@ -118,5 +121,9 @@ def rows_after_writes(rows: tuple, unwritten: frozenset) -> tuple:
                  for row in rows if not (row.kind == STRIP_ROW and row.item in unwritten))
 
 
+def printable(field: str) -> str:
+    return "".join(character if character.isprintable() else UNPRINTABLE_STAND_IN for character in field)
+
+
 def row_text(row: Row) -> str:
-    return "\t".join(field for field in row if field)
+    return "\t".join(printable(field) for field in row if field)

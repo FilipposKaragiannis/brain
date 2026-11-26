@@ -62,6 +62,9 @@ migrate_rows_done() (
   flow_migrate_strip_failed=0
   flow_migrate_tab="$(printf '\t')"
   while IFS="$flow_migrate_tab" read -r flow_migrate_kind flow_migrate_item flow_migrate_detail; do
+    [ -n "$flow_migrate_kind" ] || continue
+    migrate_row_shaped "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail" || {
+      echo "flow: import: a row that is no import, skip or strip of an item id is ignored" >&2; continue; }
     case "$flow_migrate_kind" in
       import)
         flow_migrate_held=""; [ "$flow_migrate_detail" != held ] || flow_migrate_held=", held by this machine"
@@ -85,3 +88,7 @@ $3
 ROWS
   exit "$flow_migrate_strip_failed"
 )
+
+migrate_row_shaped() {
+  case "$1:$3" in import:held|import:unheld|skip:?*|strip:) item_id_shaped "$2" ;; *) return 1 ;; esac
+}

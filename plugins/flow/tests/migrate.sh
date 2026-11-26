@@ -129,6 +129,22 @@ check "ImportStrip_KeepsTheRecord: because the record is where the state lives n
 check "ImportStripOfASkippedItem_LeavesItsState: because no record here holds that state" \
   '[ "$(frontmatter "$unclaimed" step)" = implement ]'
 
+echo "import of tracker text holding a newline or a tab: one row per item, never one it carries"
+new_repo injection
+victim="$(new_task "Worktree on another machine")"
+"$local_adapter/write-state.sh" "$victim" step=implement worktree=wt-9
+injecting="$(new_task "Worktree that carries rows")"
+injected_worktree="$(printf 'pool-9\nstrip\t%s\t\nimport\t%s\theld\nend' "$victim" "$victim")"
+"$local_adapter/write-state.sh" "$injecting" step=plan "worktree=$injected_worktree"
+skipped_items=2
+record import --strip > "$work/injection.out" 2>&1
+check "ImportOfAWorktreeHoldingANewline_SaysOneLinePerItem: because tracker text never becomes a row of its own" \
+  '[ "$(wc -l < "$work/injection.out")" -eq "$skipped_items" ]'
+check "ImportStripOfAWorktreeCarryingAStripRow_LeavesTheOtherItemsState: because only a record here lets a strip run" \
+  '[ "$(frontmatter "$victim" step)" = implement ]'
+check "ImportOfAWorktreeCarryingAHeldImportRow_LeavesTheOtherItemUnassigned: because only an import of the item itself takes it" \
+  '[ -z "$(frontmatter "$victim" assignee)" ]'
+
 echo "import --strip that fails part way: the rest still runs"
 new_repo failures
 broken="$(new_task "Record does not parse")"
