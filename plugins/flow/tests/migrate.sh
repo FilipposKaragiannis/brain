@@ -145,26 +145,42 @@ check "ImportStripOfAWorktreeCarryingAStripRow_LeavesTheOtherItemsState: because
 check "ImportOfAWorktreeCarryingAHeldImportRow_LeavesTheOtherItemUnassigned: because only an import of the item itself takes it" \
   '[ -z "$(frontmatter "$victim" assignee)" ]'
 
-echo "import --strip that fails part way: the rest still runs"
-new_repo failures
+echo "import --strip with a record that does not parse: that item is skipped, the rest still runs"
+new_repo unreadable
 broken="$(new_task "Record does not parse")"
 "$local_adapter/write-state.sh" "$broken" step=plan
 mkdir -p .flow/state && printf 'not json\n' > "$(record path "$broken")"
-refusing="$(new_task "Tracker refuses the strip")"
+cleanable="$(new_task "Strips cleanly")"
+"$local_adapter/write-state.sh" "$cleanable" step=plan
+record set "$cleanable" last_event=recorded >/dev/null 2>&1
+record import --strip > "$work/unreadable.out" 2>&1; code=$?
+check "ImportStripWithARecordThatDoesNotParse_ExitsOne: because part of the run failed" \
+  '[ "$code" -eq "$import_partly_failed" ]'
+check "ImportOfAnItemWhoseRecordDoesNotParse_SaysWhy: because a skipped item is never silent" \
+  'grep -qF -- "$broken: $unreadable_why" "$work/unreadable.out"'
+check "ImportStripOfAnItemWhoseRecordDoesNotParse_LeavesItsState: because the tracker holds its only readable state" \
+  '[ "$(frontmatter "$broken" step)" = plan ]'
+check "ImportStripWithARecordThatDoesNotParse_StillStripsTheNext: because one unreadable record does not stop the run" \
+  'no_stripped_key_left "$cleanable"'
+
+echo "import --strip that a tracker refuses for one item: the rest still runs"
+new_repo refusals
+refusing="$("$local_adapter/create.sh" bug "Tracker refuses the strip" --size S --body x)"
 "$local_adapter/write-state.sh" "$refusing" step=plan
 record set "$refusing" last_event=recorded >/dev/null 2>&1
 cleanable="$(new_task "Strips cleanly")"
 "$local_adapter/write-state.sh" "$cleanable" step=plan
 record set "$cleanable" last_event=recorded >/dev/null 2>&1
-chmod a-w "$(item_path "$refusing")"
-record import --strip > "$work/failures.out" 2>&1; code=$?
-chmod u+w "$(item_path "$refusing")"
-check "ImportStripWithARecordThatDoesNotParseOrAStripRefused_ExitsOne: because part of the run failed" \
+refusing_folder="$(dirname "$(item_path "$refusing")")"
+chmod a-w "$refusing_folder"
+record import --strip > "$work/refusals.out" 2>&1; code=$?
+chmod u+w "$refusing_folder"
+check "ImportStripThatATrackerRefuses_ExitsOne: because part of the run failed" \
   '[ "$code" -eq "$import_partly_failed" ]'
-check "ImportOfAnItemWhoseRecordDoesNotParse_SaysWhy: because a skipped item is never silent" \
-  'grep -qF -- "$broken: $unreadable_why" "$work/failures.out"'
-check "ImportStripOfAnItemWhoseRecordDoesNotParse_LeavesItsState: because the tracker holds its only readable state" \
-  '[ "$(frontmatter "$broken" step)" = plan ]'
+check "ImportStripThatATrackerRefuses_NamesTheRefusedItem: because a failed strip is never silent" \
+  'grep "^flow: " "$work/refusals.out" | grep -qF -- "$refusing"'
+check "ImportStripThatATrackerRefuses_LeavesItsState: because the strip did not land" \
+  '[ "$(frontmatter "$refusing" step)" = plan ]'
 check "ImportStripThatFailsForOneItem_StillStripsTheNext: because one refusal does not stop the run" \
   'no_stripped_key_left "$cleanable"'
 
