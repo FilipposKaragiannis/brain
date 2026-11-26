@@ -1,6 +1,8 @@
 # ADR 0005: tracker state is the mirror only
 
 Date: 2026-11-26. Status: accepted.
+Amends ADR 0004: the default `tracker_state` is `none`, no longer `labels`, and a worker no
+longer calls `link-pr`, which only orchestrator scripts call.
 
 ## Context
 1b made the tracker read of an item with no flow record follow `tracker_state`: under `labels` it
