@@ -44,18 +44,16 @@ write_blocked_proofs() {
   write_proofs "[{\"line\": $other_line, \"text\": \"the client builds\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"},
   {\"line\": $named_line, \"text\": \"$named_text\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"}]"
 }
-# named_file_fails <scenario> <the file the plan names>: the checks every named file that does not
-# hold must pass, after its run.
 named_file_fails() {
-  failing_file="$2"
+  named_file_fails_path="$2"
   check "${1}_ReportSaysFail: a named file that does not hold fails verify" \
     '[ "$(report_status)" = fail ]'
   check "${1}_PlanProofsCheckFails: the report names the plan proofs check as the one that failed" \
     '[ "$(check_status "plan proofs")" = fail ]'
   check "${1}_CheckSummaryNamesTheFile: the summary tells the verifier which file no capture wrote" \
-    'check_summary "plan proofs" | grep -qF -- "$failing_file"'
+    'check_summary "plan proofs" | grep -qF -- "$named_file_fails_path"'
   check "${1}_MarkdownNamesTheFile: the PR body names the file that does not hold" \
-    'grep -qF -- "$failing_file" "$reports/verify.md"'
+    'grep -qF -- "$named_file_fails_path" "$reports/verify.md"'
 }
 json_not_checked_grades() { python3 -c 'import json,sys; print(" ".join("%s:%s" % (entry["line"], entry["grade"]) for entry in json.load(open(sys.argv[1]))["not_checked"]))' "$reports/verify.json"; }
 
