@@ -16,7 +16,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    `verify.limit`).
 2. **Spawn `verifier`** with the step brief. Before the run the verifier writes
    `<reports>/proofs.json`, one grade per acceptance line (live, test, build-only or blocked)
-   with its evidence file, test name or reason, for the commit it checks. The brief names
+   with its evidence file, test name (and, with several test commands, the `tests <name>` check
+   that runs it) or reason, for the commit it checks. The brief names
    `"$P/scripts/verify.sh" <item>`, which runs every check once and writes
    `<reports>/verify.json` and `verify.md`, each check with its seconds, and grades the proofs
    file into both: a proof that does not hold becomes an error, and every line graded

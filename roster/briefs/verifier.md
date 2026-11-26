@@ -18,14 +18,16 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
    full commit `git rev-parse HEAD` prints.
    ```json
    {"head": "<full commit>", "proofs": [
-     {"line": 1, "text": "<line 1>", "grade": "test", "test": "<test name>"},
+     {"line": 1, "text": "<line 1>", "grade": "test", "test": "<test name>", "check": "tests <name>"},
      {"line": 2, "text": "<line 2>", "grade": "live", "evidence": "evidence/<file>"},
      {"line": 3, "text": "<line 3>", "grade": "build-only", "reason": "<why>"},
      {"line": 4, "text": "<line 4>", "grade": "blocked", "reason": "<why>"}]}
    ```
    Grade a line live only for a file an `evidence` command writes under `<reports>/evidence/`
    in the run, named by its path from `<reports>`; with no such command, no line is live. Grade
-   it test only with the test's name; it holds only when a `tests` check passes in the run.
+   it test only with the test's name and, when `.standards/config.json` lists several test
+   commands, `check`: the `tests <name>` check that runs it. It holds only when that check passes
+   in the run; with one tests check, `check` may be left out.
    Otherwise grade it build-only or blocked with the reason. Write the file again on every
    attempt: the run grades it against the commit it checks, and a file written for another
    commit makes every line an error.

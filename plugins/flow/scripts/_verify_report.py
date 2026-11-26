@@ -15,16 +15,17 @@ stays; one cut short with no terminator goes to the end), cut to 400 characters.
 full commit the run checked.
 
 The verifier writes proofs.json in the reports folder before the run: {"head": <the commit it
-graded>, "proofs": [{"line", "text", "grade", and `evidence` for live, `test` for test or `reason`
-for build-only and blocked}]}, one entry per acceptance line. The builder grades it here. A proof
-that does not hold becomes {"line", "text", "grade": "error", "claimed", "reason"}: a grade that is
-not live, test, build-only or blocked; a line that is not a whole number from 1 to M (M being the
-entries in the file) or that two entries share; live whose `evidence`, links followed, is no
-regular file under `evidence/` in the reports folder; test with no name, or with no check `tests`
-or `tests <name>` passing in this run, reused passes included; build-only or blocked with no
-reason; any entry of a file written for another head. No proofs file is no proofs; a file that is
-no JSON object with a `proofs` list is one Not checked entry with line 0 and the file's name. A
-proof never changes the status.
+graded>, "proofs": [{"line", "text", "grade", and `evidence` for live, `test` and `check` for test
+or `reason` for build-only and blocked}]}, one entry per acceptance line. The builder grades it
+here. A proof that does not hold becomes {"line", "text", "grade": "error", "claimed", "reason"}:
+a grade that is not live, test, build-only or blocked; a line that is not a whole number from 1
+to M (M being the entries in the file) or that two entries share; live whose `evidence`, links
+followed, is no regular file under `evidence/` in the reports folder; test with no name, or whose
+check did not pass in this run, reused passes included: `check` names a tests check (`tests` or
+`tests <name>`), and may be left out only when the run has exactly one; build-only or blocked with
+no reason; any entry of a file written for another head. No proofs file is no proofs; a file that
+is no JSON object with a `proofs` list is one Not checked entry with line 0 and the file's name. A proof never
+changes the status.
 
 verify.json holds `proven` (the lines graded live or test that hold), `acceptance_lines` (M),
 `proofs` and `not_checked` ({"line", "text", "grade", "reason"} for each line graded build-only,
@@ -64,6 +65,7 @@ GRADE_ERROR = "error"
 PROVEN_GRADES = frozenset((GRADE_LIVE, GRADE_TEST))
 FIRST_LINE = 1
 ONCE = 1
+SINGLE_TESTS_CHECK = 1
 FILE_LINE = 0
 UNKNOWN_LINE = "?"
 NO_HEAD = "no commit"
@@ -140,6 +142,7 @@ class Proof:
     grade: str
     evidence: str
     test: str
+    check: str
     reason: str
 
 
@@ -147,7 +150,8 @@ class Proof:
 class GradingContext:
     reports: str
     evidence_folder: str
-    test_check_passed: bool
+    test_checks: Tuple[str, ...]
+    passed_test_checks: FrozenSet[str]
     acceptance_lines: int
     repeated_lines: FrozenSet[int]
     head_problem: str
@@ -186,7 +190,8 @@ def parsed_proof(entry: object) -> Proof:
     whole = isinstance(line, int) and not isinstance(line, bool)
     return Proof(line=line if whole else None, given_line=given_text(line), text=one_line(string_field(fields, "text")),
                  grade=given_text(fields.get("grade")), evidence=string_field(fields, "evidence"),
-                 test=string_field(fields, "test"), reason=one_line(string_field(fields, "reason")))
+                 test=string_field(fields, "test"), check=one_line(string_field(fields, "check")),
+                 reason=one_line(string_field(fields, "reason")))
 
 
 def captured_file(evidence: str, context: GradingContext) -> bool:
@@ -206,7 +211,21 @@ def live_problem(proof: Proof, context: GradingContext) -> str:
 def test_problem(proof: Proof, context: GradingContext) -> str:
     if not proof.test.strip():
         return "graded test, but it names no test"
-    return "" if context.test_check_passed else "graded test, but no tests check passed in this run"
+    return check_problem(owning_check(proof, context), context)
+
+
+def owning_check(proof: Proof, context: GradingContext) -> str:
+    if proof.check or len(context.test_checks) != SINGLE_TESTS_CHECK:
+        return proof.check
+    return context.test_checks[0]
+
+
+def check_problem(check: str, context: GradingContext) -> str:
+    if not check:
+        return "graded test, but it names no check, and this run has %d tests checks" % len(context.test_checks)
+    if check not in context.test_checks:
+        return "graded test, but %s is no tests check of this run" % given_text(check)
+    return "" if check in context.passed_test_checks else "graded test, but %s did not pass in this run" % check
 
 
 def reason_problem(proof: Proof, context: GradingContext) -> str:
@@ -244,7 +263,8 @@ def graded_entry(proof: Proof, context: GradingContext) -> dict:
     problem = proof_problem(proof, context)
     if problem:
         return {"line": line, "text": proof.text, "grade": GRADE_ERROR, "claimed": proof.grade, "reason": problem}
-    grade_details = {GRADE_LIVE: {"evidence": proof.evidence}, GRADE_TEST: {"test": proof.test}}
+    grade_details = {GRADE_LIVE: {"evidence": proof.evidence},
+                     GRADE_TEST: {"test": proof.test, "check": owning_check(proof, context)}}
     return {"line": line, "text": proof.text, "grade": proof.grade, **grade_details.get(proof.grade, {"reason": proof.reason})}
 
 
@@ -252,9 +272,8 @@ def head_problem(written_for: str, head: str) -> str:
     return "" if written_for == head else "written for %s, not the commit this run checked" % (given_text(written_for) or NO_HEAD)
 
 
-def test_check_passed(report_checks: List[dict]) -> bool:
-    return any(check["status"] == PASSED and (check["name"] == TEST_CHECK or check["name"].startswith(TEST_CHECK + " "))
-               for check in report_checks)
+def is_test_check(check: dict) -> bool:
+    return check["name"] == TEST_CHECK or check["name"].startswith(TEST_CHECK + " ")
 
 
 def unreadable_proofs(reason: str) -> dict:
@@ -268,8 +287,12 @@ def graded(reports: str, head: str, report_checks: List[dict]) -> dict:
         return unreadable_proofs(proofs_file.problem)
     proofs = [parsed_proof(entry) for entry in proofs_file.entries]
     line_counts = Counter(proof.line for proof in proofs if proof.line is not None)
+    test_checks = [check for check in report_checks if is_test_check(check)]
     context = GradingContext(reports=reports, evidence_folder=os.path.join(os.path.realpath(reports), EVIDENCE_FOLDER),
-                             test_check_passed=test_check_passed(report_checks), acceptance_lines=len(proofs),
+                             test_checks=tuple(check["name"] for check in test_checks),
+                             passed_test_checks=frozenset(check["name"] for check in test_checks
+                                                          if check["status"] == PASSED),
+                             acceptance_lines=len(proofs),
                              repeated_lines=frozenset(line for line, count in line_counts.items() if count > ONCE),
                              head_problem=head_problem(proofs_file.written_for, head))
     entries = [graded_entry(proof, context) for proof in proofs]

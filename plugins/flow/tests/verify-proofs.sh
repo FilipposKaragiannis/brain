@@ -3,10 +3,10 @@
 # reports: the count of acceptance lines proven live or by test on the Markdown's second line and
 # in the JSON, one graded proof per line in the JSON and in a Proofs table, and the lines graded
 # build-only, blocked or error in the Not checked list. A live proof needs a file under evidence/,
-# a test proof a test name and a passing tests check, a line number outside the file or used twice
-# is an error, a file written for another commit grades no line, a capture an earlier run left is
-# none (a link at evidence/ goes as a link), and a proofs file that is no JSON object never stops
-# the report. Each run's gate writes its evidence, as a capture does, and the
+# a test proof a test name and the passing tests check that ran it, a line number outside the
+# file or used twice is an error, a file written for another commit grades no line, a capture an
+# earlier run left is none (a link at evidence/ goes as a link), and a proofs file that is no JSON
+# object never stops the report. Each run's gate writes its evidence, as a capture does, and the
 # suite writes proofs.json alone, never a report. On the local adapter in throwaway repos.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
@@ -26,6 +26,10 @@ write_capture() { printf '%s\n' "$2" > "$work/capture-$1.sh"; }
 commit_test_command() {
   mkdir -p "$worktree/.standards" && printf '{"test": "%s"}\n' "$1" > "$worktree/.standards/config.json"
   git -C "$worktree" add .standards/config.json && git -C "$worktree" commit -qm "test command"
+}
+commit_test_command_list() {
+  mkdir -p "$worktree/.standards" && printf '{"test": %s}\n' "$1" > "$worktree/.standards/config.json"
+  git -C "$worktree" add .standards/config.json && git -C "$worktree" commit -qm "test commands"
 }
 # write_proofs <proofs list>: proofs.json for the worktree's head, as the verifier writes it.
 write_proofs() { printf '{"head": "%s", "proofs": %s}\n' "$(git -C "$worktree" rev-parse HEAD)" "$1" > "$reports/proofs.json"; }
@@ -160,6 +164,25 @@ check "TestProofWithTheTestsCheckFailed_IsAnError: test means a test passed in t
   '[ "$(report_value proofs.0.grade)" = error ]'
 check "TestProofWithTheTestsCheckFailed_ClaimedIsTest: the reviewer sees which grade the verifier wrote" \
   '[ "$(report_value proofs.0.claimed)" = test ]'
+
+echo "test proofs in a run with two tests checks"
+new_item split-tests ""
+commit_test_command_list '[{"name": "flow", "command": "false"}, {"name": "standards", "command": "true"}]'
+write_proofs "[{\"line\": 1, \"text\": \"a\", \"grade\": \"test\", \"test\": \"$test_name\", \"check\": \"tests flow\"},
+  {\"line\": 2, \"text\": \"b\", \"grade\": \"test\", \"test\": \"$test_name\", \"check\": \"tests standards\"},
+  {\"line\": 3, \"text\": \"c\", \"grade\": \"test\", \"test\": \"$test_name\"},
+  {\"line\": 4, \"text\": \"d\", \"grade\": \"test\", \"test\": \"$test_name\", \"check\": \"tests console\"}]"
+verify >/dev/null 2>&1
+check "TestProofNamingTheFailedTestsCheck_IsAnError: another suite passing never proves a test of the suite that failed" \
+  '[ "$(report_value proofs.0.grade)" = error ]'
+check "TestProofNamingTheFailedTestsCheck_ReasonNamesTheCheck: the verifier learns which check did not pass" \
+  'report_value proofs.0.reason | grep -qF "tests flow"'
+check "TestProofNamingThePassingTestsCheck_IsProven: a test of the suite that passed holds" \
+  '[ "$(report_value proofs.1.grade)" = test ]'
+check "TestProofNamingNoCheckAmongSeveralTestsChecks_IsAnError: with several suites a test proof names the one that ran it" \
+  '[ "$(report_value proofs.2.grade)" = error ]'
+check "TestProofNamingACheckTheRunDoesNotHave_IsAnError: only a tests check of this run proves a line" \
+  '[ "$(report_value proofs.3.grade)" = error ]'
 
 echo "a proofs file that is not JSON"
 new_item not-json "  ok: 'true'"
