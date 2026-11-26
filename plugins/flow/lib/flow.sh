@@ -602,6 +602,12 @@ yaml_keys() {
     }' "$1"
 }
 
+# yaml_checks <file> <dotted.path>: each entry of a map of checks, a command or a map {command,
+# paths}, as `<name> U+001F <command> U+001F <paths, one per line>` ending in U+001E, in file order.
+yaml_checks() {
+  python3 -I "$FLOW_PLUGIN/scripts/_yaml_checks.py" "$1" "$2"
+}
+
 # yaml_nested <file> <dotted.path>: 0 when lines sit under the key: indented deeper than it, or a
 # block list at its own indentation.
 yaml_nested() {

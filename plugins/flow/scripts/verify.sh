@@ -7,7 +7,8 @@
 # twin verify.md for the PR body. head is the full commit the run checked; verdict is the first
 # line of verify.md, `Verdict: pass at <head>` or `Verdict: fail at <head>`, on every report verify
 # writes, the minimal fail report too, and verify.md ends with a `## Not checked` section that says
-# none when empty. Evidence files live under <reports>/evidence/.
+# none when empty. Evidence files live under <reports>/evidence/, which every run removes first and
+# the evidence list fills.
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
@@ -19,7 +20,10 @@
 # mutation is the off switch (a skipped check); a mutation command with {files} runs on the changed
 # source files only, like a format command, and is skipped when none changed. A project gate is
 # `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
-# matches a glob; otherwise a skipped check). feel_test is true when a changed file matches
+# matches a glob; otherwise a skipped check). After the gates, each entry of the `evidence` list in
+# .flow/config.yaml, shaped like a gate, runs as the check `evidence <name>` with
+# FLOW_EVIDENCE_FOLDER set to <reports>/evidence, where it writes its files; no gate sees that
+# variable, and a failed capture fails verify. feel_test is true when a changed file matches
 # feel_test_paths in the flow config. Never edits anything. The report is built from data by
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
@@ -39,8 +43,8 @@
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
 # short. Returns at once, exit 0. It records the run in <reports>/verify.run (lib/verify.sh) and
-# first removes the earlier verify.json and verify.md, so no report of an earlier run reads as this
-# one's. A run of the item still going is not started again: --start says so and exits 0. The run
+# first removes the earlier verify.json, verify.md and evidence/, so no report or evidence of an
+# earlier run reads as this one's. A run of the item still going is not started again: --start says so and exits 0. The run
 # lasts at most verify.limit from the flow config (s, m, h or d; default 2h): past it, its whole
 # process group is stopped and the report is a fail naming the check that was running, the limit
 # and any check that failed before it. A run stopped by a signal, or ended with no report, also
@@ -142,10 +146,12 @@ say_live_run() {
   live_started="$(verify_run_field "$reports" started)"
   echo "verify: a run of $item is already going (pid $live_run_pid, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
 }
-# make_run_files: removes the earlier run's record, reports, log and output, and makes the log and
-# the output new, never written through a link someone left at a name.
+# make_run_files: removes the earlier run's record, reports, evidence, log and output, and makes the
+# log and the output new, never written through a link someone left at a name: the evidence folder
+# is named without a trailing slash, so a link there goes and the folder it points at stays.
 make_run_files() {
   rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out" "$failed_file"
+  rm -rf "$reports/evidence" || return 1
   (set -C; : > "$log" && : > "$run_out")
 }
 # may_start: takes the item's verify lock, so two starts never run the checks twice. False, saying
@@ -158,7 +164,7 @@ may_start() {
 start_run() {
   may_start || exit 0
   limit="$(limit_seconds)" || exit 2
-  make_run_files || die "could not create the log of the verify run of $item"
+  make_run_files || die "could not remove the earlier evidence or create the log of the verify run of $item"
   pid="$(verify_run_start "$reports" "$run_out" "$limit" "$item" "$given_base" "$fresh")" || exit 1
   echo "verify: started the run of $item (pid $pid, limit $(duration "$limit")); wait for it with verify.sh $item --wait"
   exit 0
@@ -227,9 +233,9 @@ case "$mode" in
   detached) run_detached ;;
 esac
 
-name_separator="$(printf '\037')"
+name_separator="$(printf '\037')"; entry_separator="$(printf '\036')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
-rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
+rm -f "$log" "$failed_file"; rm -rf "$reports/evidence" || die "could not remove the earlier evidence $reports/evidence"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
@@ -357,6 +363,17 @@ scoped_check() {
   else check_drop "$inputs_key"; fi
 }
 
+evidence_checks() {
+  IFS="$entry_separator"; set -f; set -- $1; set +f; unset IFS
+  for evidence_entry do
+    evidence_name="${evidence_entry%%"$name_separator"*}"; evidence_fields="${evidence_entry#*"$name_separator"}"
+    evidence_command="${evidence_fields%%"$name_separator"*}"; evidence_paths="${evidence_fields#*"$name_separator"}"
+    [ -n "$evidence_command" ] || continue
+    if [ -n "$evidence_paths" ] && ! in_scope "$evidence_paths"; then skipped "evidence $evidence_name" "no changed file under its paths"; continue; fi
+    run_check "evidence $evidence_name" "$evidence_command" gate
+  done
+}
+
 planned_checks() {
   # planned_checks <build|test> <name of the check when the config has none>: each command the
   # plan holds for the kind, as a scoped check.
@@ -412,6 +429,12 @@ for name in $(yaml_keys "$(config_file)" gates); do
   summary_pattern_set "gate $name" "$gate_summary_pattern"
   run_check "gate $name" "$command" gate
 done
+evidence_entries="$(yaml_checks "$(config_file)" evidence)"
+if [ -n "$evidence_entries" ] && ! mkdir -p "$reports/evidence"; then
+  record evidence fail "" "the evidence folder $reports/evidence cannot be made" 0 ""; failed evidence; evidence_entries=""
+fi
+[ -z "$evidence_entries" ] || export FLOW_EVIDENCE_FOLDER="$reports/evidence"
+evidence_checks "$evidence_entries"
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
 elif changed_matches "$feel_test_paths"; then feel=true; fi
