@@ -88,8 +88,9 @@ SCOPE_RULES = filter_rules("FLOW_SCOPE_", scope_assignee())
 SCOPE_QUERY = os.environ.get("FLOW_SCOPE_QUERY", "").strip()
 ISSUE_STATES = {"open", "closed"}
 PAGE_SIZE = int(os.environ.get("FLOW_GH_PAGE", "50"))
-READ_EVERY_STATE = bool(os.environ.get("FLOW_LIST_EVERY_STATE"))
-FLOW_LABEL_PREFIXES = ("step", "gate", "wt", "flow")
+SINGLE_READ, EVERY_ISSUE, LABELLED_ISSUES = "single read", "every issue", "labelled issues"
+LIST_COMMENTS = EVERY_ISSUE if os.environ.get("FLOW_LIST_EVERY_STATE") else LABELLED_ISSUES
+FLOW_LABEL_KEYS = ("step", "gate", "wt", "flow")
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
 
 
@@ -205,18 +206,18 @@ def graphql(query, **variables):
 
 
 def carries_flow_label(issue):
-    return any(label["name"].split(":")[0] in FLOW_LABEL_PREFIXES for label in issue["labels"])
+    return any(label["name"].split(":")[0] in FLOW_LABEL_KEYS for label in issue["labels"])
 
 
-def state_comment(repo, issue, marker, read_every, single_read):
-    if not (read_every or carries_flow_label(issue)):
+def state_comment(repo, issue, marker, reading):
+    if reading == LABELLED_ISSUES and not carries_flow_label(issue):
         return {}
     pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
     if pages is None:
         # Without the comment the item would read as unstarted, with no attempts, no PR and no
         # touches: a wrong answer, so no answer. A read ends; a list leaves the issue out, so it
         # is not picked, shown or synced this round, and goes on.
-        if single_read:
+        if reading == SINGLE_READ:
             sys.exit("flow: cannot read the comments of gh#%d" % issue["number"])
         sys.stderr.write("flow: cannot read the comments of gh#%d, so the list leaves it out\n" % issue["number"])
         return None
@@ -230,7 +231,7 @@ def state_comment(repo, issue, marker, read_every, single_read):
     return {}
 
 
-def raw(repo, node, marker, read_every, single_read):
+def raw(repo, node, marker, reading):
     fields = {}
     for v in (node.get("issueFieldValues") or {}).get("nodes", []):
         name = (v.get("field") or {}).get("name")
@@ -250,7 +251,7 @@ def raw(repo, node, marker, read_every, single_read):
                            "status": (p.get("fieldValueByName") or {}).get("name", "")}
                           for p in (node.get("projectItems") or {}).get("nodes", [])],
     }
-    issue["state_comment"] = state_comment(repo, issue, marker, read_every, single_read)
+    issue["state_comment"] = state_comment(repo, issue, marker, reading)
     return None if issue["state_comment"] is None else issue
 
 
@@ -264,7 +265,7 @@ def main():
         node = data and data["data"]["repository"]["issue"]
         if not node:
             sys.exit(1)
-        print(json.dumps(raw(repo, node, marker, read_every=True, single_read=True)))
+        print(json.dumps(raw(repo, node, marker, SINGLE_READ)))
         return
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"
@@ -275,7 +276,7 @@ def main():
             sys.exit(1)
         kept = [node for node in issues["nodes"] if matches(node, SCOPE_RULES) and matches(node, PICK_RULES)]
         for node in kept[:limit - seen]:
-            issue = raw(repo, node, marker, read_every=READ_EVERY_STATE, single_read=False)
+            issue = raw(repo, node, marker, LIST_COMMENTS)
             if issue is not None:
                 print(json.dumps(issue))
         seen += len(kept)
