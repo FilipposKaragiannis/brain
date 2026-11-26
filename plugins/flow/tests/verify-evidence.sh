@@ -127,4 +127,21 @@ check "LinkAtTheEvidenceFolder_IsRemoved: a run never writes its evidence throug
 check "LinkAtTheEvidenceFolder_LeavesItsTargetFilesAlone: clearing the evidence never reaches outside the reports" \
   '[ -f "$work/outside/kept.png" ]'
 
+echo "earlier evidence that cannot be removed"
+if [ "$(id -u)" -eq 0 ]; then
+  echo "skipped: root removes a file in a read-only folder, so the earlier evidence cannot be made to stay"
+else
+  new_item stuck "  ok: 'true'"
+  mkdir -p "$reports/evidence/locked" && printf 'png\n' > "$reports/evidence/locked/old.png" && chmod a-w "$reports/evidence/locked"
+  verify >/dev/null 2>&1; stuck_code=$?
+  check "PlainRunWithUndeletableEarlierEvidence_ExitsOne: a run must not pass while an earlier run's file could read as its proof" \
+    '[ "$stuck_code" -eq 1 ]'
+  check "PlainRunWithUndeletableEarlierEvidence_WritesNoReport: the run stops before any check, so no report can pass" \
+    '[ ! -f "$reports/verify.json" ]'
+  verify --start >/dev/null 2>&1; stuck_start_code=$?
+  check "StartWithUndeletableEarlierEvidence_ExitsOne: a started run stops at the same cleanup a plain run does" \
+    '[ "$stuck_start_code" -eq 1 ]'
+  chmod u+w "$reports/evidence/locked"
+fi
+
 if [ "$fails" -eq 0 ]; then echo "verify-evidence: ok"; else echo "verify-evidence: $fails failed"; exit 1; fi

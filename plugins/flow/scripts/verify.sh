@@ -147,7 +147,7 @@ say_live_run() {
 # is named without a trailing slash, so a link there goes and the folder it points at stays.
 make_run_files() {
   rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out" "$failed_file"
-  rm -rf "$reports/evidence"
+  rm -rf "$reports/evidence" || return 1
   (set -C; : > "$log" && : > "$run_out")
 }
 # may_start: takes the item's verify lock, so two starts never run the checks twice. False, saying
@@ -160,7 +160,7 @@ may_start() {
 start_run() {
   may_start || exit 0
   limit="$(limit_seconds)" || exit 2
-  make_run_files || die "could not create the log of the verify run of $item"
+  make_run_files || die "could not remove the earlier evidence or create the log of the verify run of $item"
   pid="$(verify_run_start "$reports" "$run_out" "$limit" "$item" "$given_base" "$fresh")" || exit 1
   echo "verify: started the run of $item (pid $pid, limit $(duration "$limit")); wait for it with verify.sh $item --wait"
   exit 0
@@ -231,7 +231,7 @@ esac
 
 name_separator="$(printf '\037')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
-rm -f "$log" "$failed_file"; rm -rf "$reports/evidence"; (set -C; : > "$log") || die "could not create the verify log $log"
+rm -f "$log" "$failed_file"; rm -rf "$reports/evidence" || die "could not remove the earlier evidence $reports/evidence"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
