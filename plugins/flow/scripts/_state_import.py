@@ -95,16 +95,27 @@ def is_held(state: Mapping) -> bool:
     return bool(state.get(views.STEP_KEY) or state.get(views.WORKTREE_KEY))
 
 
-def record_row(item: ListedItem, recorded: frozenset, unreadable: frozenset, claimed: frozenset) -> Optional[Row]:
-    slug = schema.item_slug(item.id)
-    if slug in unreadable:
-        return Row(SKIP_ROW, item.id, UNREADABLE_WHY) if carries_flow_state(item) else NO_ROW
-    if slug in recorded or not holds_flow_state(item.state):
-        return NO_ROW
+def unreadable_row(item: ListedItem) -> Optional[Row]:
+    return Row(SKIP_ROW, item.id, UNREADABLE_WHY) if carries_flow_state(item) else NO_ROW
+
+
+def claim_row(item: ListedItem, claimed: frozenset) -> Row:
     worktree = views.state_text(item.state.get(views.WORKTREE_KEY))
     if worktree and item.id not in claimed:
         return Row(SKIP_ROW, item.id, UNCLAIMED_WHY % worktree)
     return Row(IMPORT_ROW, item.id, HELD if is_held(item.state) else UNHELD)
+
+
+def unrecorded_row(item: ListedItem, recorded: frozenset, claimed: frozenset) -> Optional[Row]:
+    if schema.item_slug(item.id) in recorded or not holds_flow_state(item.state):
+        return NO_ROW
+    return claim_row(item, claimed)
+
+
+def record_row(item: ListedItem, recorded: frozenset, unreadable: frozenset, claimed: frozenset) -> Optional[Row]:
+    if schema.item_slug(item.id) in unreadable:
+        return unreadable_row(item)
+    return unrecorded_row(item, recorded, claimed)
 
 
 def import_rows(listed: tuple, recorded: frozenset, unreadable: frozenset, claimed: frozenset) -> tuple:

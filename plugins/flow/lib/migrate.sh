@@ -49,37 +49,52 @@ TRACKERS
 )
 
 migrate_rows_done() (
-  flow_migrate_would=""; [ "$1" = write ] || flow_migrate_would="would "
   flow_migrate_strip_failed=0
   flow_migrate_tab="$(printf '\t')"
   while IFS="$flow_migrate_tab" read -r flow_migrate_kind flow_migrate_item flow_migrate_detail; do
-    [ -n "$flow_migrate_kind" ] || continue
-    migrate_row_shaped "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail" || {
-      echo "flow: import: a row that is no import, skip or strip of an item id is ignored" >&2; continue; }
     case "$flow_migrate_kind" in
-      import)
-        flow_migrate_held=""; [ "$flow_migrate_detail" != held ] || flow_migrate_held=", held by this machine"
-        echo "${flow_migrate_would}import $flow_migrate_item$flow_migrate_held"
-        [ "$1:$flow_migrate_detail" != write:held ] || ( tracker_take "$flow_migrate_item" new ) </dev/null ;;
-      skip) echo "${flow_migrate_would}skip $flow_migrate_item: $flow_migrate_detail" ;;
-      strip)
-        if [ "$2" = keep ]; then
-          echo "$flow_migrate_item keeps its flow state on its tracker; state.sh import --strip takes it off"
-        elif [ "$1" = plan ]; then
-          echo "would strip $flow_migrate_item"
-        elif ( adapter strip-state "$flow_migrate_item" ) </dev/null >/dev/null; then
-          echo "strip $flow_migrate_item"
-        else
-          echo "flow: import: $flow_migrate_item: strip-state failed, so its tracker keeps its flow state" >&2
-          flow_migrate_strip_failed=1
-        fi ;;
+      import) migrate_import_row "$1" "$flow_migrate_item" "$flow_migrate_detail" ;;
+      skip) migrate_report "$1" "skip $flow_migrate_item: $flow_migrate_detail" ;;
+      strip) migrate_strip_row "$1" "$2" "$flow_migrate_item" || flow_migrate_strip_failed=1 ;;
     esac
   done <<ROWS
-$3
+$(migrate_shaped_rows "$3")
 ROWS
   exit "$flow_migrate_strip_failed"
 )
 
+migrate_shaped_rows() (
+  flow_migrate_tab="$(printf '\t')"
+  while IFS="$flow_migrate_tab" read -r flow_migrate_kind flow_migrate_item flow_migrate_detail; do
+    if migrate_row_shaped "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail"; then
+      printf '%s\t%s\t%s\n' "$flow_migrate_kind" "$flow_migrate_item" "$flow_migrate_detail"
+    elif [ -n "$flow_migrate_kind" ]; then
+      echo "flow: import: a row that is no import, skip or strip of an item id is ignored" >&2
+    fi
+  done <<ROWS
+$1
+ROWS
+)
+
 migrate_row_shaped() {
   case "$1:$3" in import:held|import:unheld|skip:?*|strip:) item_id_shaped "$2" ;; *) return 1 ;; esac
+}
+
+migrate_import_row() (
+  flow_migrate_held=""; [ "$3" != held ] || flow_migrate_held=", held by this machine"
+  migrate_report "$1" "import $2$flow_migrate_held"
+  [ "$1:$3" != write:held ] || ( tracker_take "$2" new ) </dev/null
+)
+
+migrate_strip_row() (
+  [ "$2" != keep ] || { echo "$3 keeps its flow state on its tracker; state.sh import --strip takes it off"; exit 0; }
+  [ "$1" != plan ] || { echo "would strip $3"; exit 0; }
+  ( adapter strip-state "$3" ) </dev/null >/dev/null \
+    || { echo "flow: import: $3: strip-state failed, so its tracker keeps its flow state" >&2; exit 1; }
+  echo "strip $3"
+)
+
+migrate_report() {
+  [ "$1" = write ] || printf 'would '
+  printf '%s\n' "$2"
 }

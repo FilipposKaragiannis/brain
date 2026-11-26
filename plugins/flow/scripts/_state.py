@@ -47,6 +47,7 @@ import _state_views as views  # noqa: E402
 NO_RECORD = join.NO_RECORD
 NO_OBJECT = MappingProxyType({})
 StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
+RecordedSlugs = namedtuple("RecordedSlugs", ("recorded", "unreadable"))
 NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 NEW_FILE_MODE = 0o666
 TEMPORARY_NAME_RANDOM_BYTES = 8
@@ -275,21 +276,26 @@ def seed_imports(options: command_line.Options, rows: tuple, listed: tuple,
     return frozenset(unseeded)
 
 
+def recorded_slugs_warning_unreadable(options: command_line.Options, listed: tuple) -> RecordedSlugs:
+    stored = stored_records(options, listed)
+    for each in stored.values():
+        if each.outcome.code:
+            warn(each.outcome.message)
+    return RecordedSlugs(
+        frozenset(schema.item_slug(item) for item, each in stored.items() if each.record is not NO_RECORD),
+        frozenset(schema.item_slug(item) for item, each in stored.items() if each.outcome.code))
+
+
 def command_import(options: command_line.Options, random_bytes: Callable[[int], bytes]) -> schema.Outcome:
     listing = importing.parsed_lists(sys.stdin.read())
     if listing.problem:
         return schema.Outcome(schema.EXIT_USAGE, listing.problem)
-    stored = stored_records(options, listing.items)
-    for each in stored.values():
-        if each.outcome.code:
-            warn(each.outcome.message)
-    recorded = frozenset(schema.item_slug(item) for item, each in stored.items() if each.record is not NO_RECORD)
-    unreadable = frozenset(schema.item_slug(item) for item, each in stored.items() if each.outcome.code)
-    rows = importing.import_rows(listing.items, recorded, unreadable, claimed_items(options))
+    slugs = recorded_slugs_warning_unreadable(options, listing.items)
+    rows = importing.import_rows(listing.items, slugs.recorded, slugs.unreadable, claimed_items(options))
     unseeded = seed_imports(options, rows, listing.items, random_bytes)
     for row in importing.rows_after_writes(rows, unseeded):
         print(importing.row_text(row))
-    return schema.Outcome(schema.EXIT_UNREADABLE, "") if unreadable or unseeded else schema.DONE
+    return schema.Outcome(schema.EXIT_UNREADABLE, "") if slugs.unreadable or unseeded else schema.DONE
 
 
 def warn(message):
