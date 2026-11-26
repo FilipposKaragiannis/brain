@@ -287,12 +287,12 @@ def seed_imports(options: command_line.Options, rows: tuple, listed: tuple,
 
 def recorded_slugs_warning_unreadable(options: command_line.Options, listed: tuple) -> RecordedSlugs:
     stored = stored_records(options, listed)
-    for each in stored.values():
-        if each.outcome.code:
-            warn(each.outcome.message)
+    for stored_record in stored.values():
+        if stored_record.outcome.code:
+            warn(stored_record.outcome.message)
     return RecordedSlugs(
-        frozenset(schema.item_slug(item) for item, each in stored.items() if each.record is not NO_RECORD),
-        frozenset(schema.item_slug(item) for item, each in stored.items() if each.outcome.code))
+        frozenset(schema.item_slug(item) for item, stored_record in stored.items() if stored_record.record is not NO_RECORD),
+        frozenset(schema.item_slug(item) for item, stored_record in stored.items() if stored_record.outcome.code))
 
 
 def command_import(options: command_line.Options, random_bytes: Callable[[int], bytes]) -> Reply:

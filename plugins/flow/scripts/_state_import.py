@@ -143,11 +143,12 @@ def record_row(item: ListedItem, recorded: frozenset, unreadable: frozenset, cla
 
 def import_rows(listed: tuple, recorded: frozenset, unreadable: frozenset, claimed: frozenset) -> tuple:
     opened = [item for item in listed if item.open and schema.item_slug_shaped(item.id)]
-    first = tuple(row for row in (record_row(item, recorded, unreadable, claimed) for item in opened) if row is not NO_ROW)
-    imported = {row.item for row in first if row.kind == IMPORT_ROW}
+    rows_before_strip = tuple(row for row in (record_row(item, recorded, unreadable, claimed) for item in opened)
+                              if row is not NO_ROW)
+    imported = {row.item for row in rows_before_strip if row.kind == IMPORT_ROW}
     stripped = tuple(Row(STRIP_ROW, item.id, "") for item in opened
                      if (schema.item_slug(item.id) in recorded or item.id in imported) and carries_flow_state(item))
-    return first + stripped
+    return rows_before_strip + stripped
 
 
 def rows_after_writes(rows: tuple, unwritten: frozenset) -> tuple:
