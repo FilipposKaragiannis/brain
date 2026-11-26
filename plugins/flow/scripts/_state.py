@@ -1,5 +1,5 @@
 """The flow record of an item on disk: read, locked, written and archived here.
-lib/state.sh is its one caller; see there.
+lib/state.sh and lib/migrate.sh (import) are its callers; see there.
 
   _state.py set     --state-dir D --flow-home H --item I --now T --machine M --host N
                     --claim-file F --seed stdin|none -- <pair>...
@@ -9,6 +9,7 @@ lib/state.sh is its one caller; see there.
   _state.py status  --state-dir D --flow-home H --item I
   _state.py archive --state-dir D --flow-home H --item I --machine M
   _state.py join|list|row ...  the record laid onto items, and its run and gate rows: _state_reads.py
+  _state.py import  --state-dir D --flow-home H --now T --machine M --effect plan|write -- <pool entry>...
 
 The record is <state dir>/<slug>.json, archived to <state dir>/closed/<slug>.json; its lock is
 <flow home>/locks/<slug>.lock, and set, take and archive exit 75 when it stays busy. With no record
@@ -19,6 +20,11 @@ above this one is refused, exit 1. A refused pair writes nothing, exit 2.
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
 status prints the tracker status the record stands for (_state_schema.pushed_status), nothing with
 no record or no claim.
+import reads the trackers' lists on stdin, one JSON array per line, and the claim.json of each pool
+entry (a relative one under the flow home's parent), and prints the rows _state_import.py gives,
+tab separated. Under write it first seeds the record of each item it imports, under the item's
+lock, as set seeds one; an item whose record stays busy is skipped. It exits 1 when a listed
+item's record does not parse or one stays busy.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
 import fcntl
@@ -27,10 +33,12 @@ import os
 import sys
 import time
 from collections import namedtuple
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _state_arguments as command_line  # noqa: E402
+import _state_import as importing  # noqa: E402
 import _state_join as join  # noqa: E402
 import _state_reads as reads  # noqa: E402
 import _state_schema as schema  # noqa: E402
@@ -42,6 +50,7 @@ StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
 NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 NEW_FILE_MODE = 0o666
 TEMPORARY_NAME_RANDOM_BYTES = 8
+CLAIM_PATH = ".flow/claim.json"
 
 
 def read_record(path):
@@ -229,6 +238,60 @@ def command_status(options):
     return stored.outcome
 
 
+def claimed_items(options: command_line.Options) -> frozenset:
+    main_worktree = os.path.dirname(options.flow_home)
+    claims = (read_object(os.path.join(main_worktree, entry, CLAIM_PATH)) for entry in options.pool)
+    return frozenset(item for item in (importing.claimed_item(claim) for claim in claims) if item)
+
+
+def stored_records(options: command_line.Options, listed: tuple) -> dict:
+    return {item.id: read_record(schema.record_paths(options.state_dir, options.flow_home, item.id).record)
+            for item in listed if schema.item_slug_shaped(item.id)}
+
+
+def seed_imported_record(options: command_line.Options, item: importing.ListedItem,
+                         random_bytes: Callable[[int], bytes]) -> schema.Outcome:
+    item_options = options._replace(item=item.id)
+
+    def seed(record: Mapping) -> schema.Outcome:
+        if record is NO_RECORD:
+            write_record(item_paths(item_options).record, starting_record(record, item_options, item.state), random_bytes)
+        return schema.DONE
+
+    return under_lock(item_paths(item_options), seed)
+
+
+def seed_imports(options: command_line.Options, rows: tuple, listed: tuple,
+                 random_bytes: Callable[[int], bytes]) -> frozenset:
+    if options.effect != command_line.WRITE_EFFECT:
+        return frozenset()
+    importing_now = {row.item for row in rows if row.kind == importing.IMPORT_ROW}
+    unseeded = set()
+    for item in (item for item in listed if item.id in importing_now):
+        outcome = seed_imported_record(options, item, random_bytes)
+        if outcome.code:
+            warn("%s: %s" % (item.id, outcome.message))
+            unseeded.add(item.id)
+    return frozenset(unseeded)
+
+
+def command_import(options: command_line.Options, random_bytes: Callable[[int], bytes]) -> schema.Outcome:
+    listing = importing.parsed_lists(sys.stdin.read())
+    if listing.problem:
+        return schema.Outcome(schema.EXIT_USAGE, listing.problem)
+    stored = stored_records(options, listing.items)
+    for each in stored.values():
+        if each.outcome.code:
+            warn(each.outcome.message)
+    recorded = frozenset(schema.item_slug(item) for item, each in stored.items() if each.record is not NO_RECORD)
+    unreadable = frozenset(schema.item_slug(item) for item, each in stored.items() if each.outcome.code)
+    rows = importing.import_rows(listing.items, recorded, unreadable, claimed_items(options))
+    unseeded = seed_imports(options, rows, listing.items, random_bytes)
+    for row in importing.rows_after_writes(rows, unseeded):
+        print(importing.row_text(row))
+    return schema.Outcome(schema.EXIT_UNREADABLE, "") if unreadable or unseeded else schema.DONE
+
+
 def warn(message):
     sys.stderr.write("flow: %s\n" % message)
 
@@ -238,7 +301,8 @@ def commands(random_bytes):
     return MappingProxyType(dict({"set": lambda options: command_set(options, random_bytes),
                                   "take": lambda options: command_take(options, random_bytes),
                                   "get": command_get, "show": command_show, "status": command_status,
-                                  "archive": command_archive},
+                                  "archive": command_archive,
+                                  "import": lambda options: command_import(options, random_bytes)},
                                  **reads.commands(edge)))
 
 
