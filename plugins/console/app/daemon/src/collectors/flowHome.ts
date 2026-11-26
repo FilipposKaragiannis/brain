@@ -49,12 +49,14 @@ export type FlowConfig = {
  * One record in .flow/gates. `questions` is the plugin's own parse of the message, from
  * `gate.sh list --json` (flow 1.18.0 and later), so the console and Slack show the same card.
  * It is null when the plugin is older or the list failed, and the daemon parses the message.
- * `options`, `raisedBy`, `answeredBy`, `condition` and `footer` are read from the record itself,
- * so an older plugin's record needs no version check: it yields no options and nulls.
+ * `options`, `raisedBy`, `answeredBy`, `condition`, `footer` and `fromStep` are read from the record
+ * itself, so an older plugin's record needs no version check: it yields no options and nulls.
+ * `fromStep` is the step whose work the gate judges, the step that failed on an escalation.
  */
 export type GateRecord = {
   item: string; gate: string; message: string; time: string; host: string; questions: GateQuestion[] | null; plan: GatePlan | null;
   options: GateOption[]; raisedBy: string | null; answeredBy: string | null; condition: string | null; footer: string | null;
+  fromStep: string | null;
 };
 /**
  * The health job's verdict on a PR waiting at the merge gate (`.flow/reviews/<n>.review.json`,
@@ -505,7 +507,7 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const found = records.map(({ value }) => ({
     item: text(value, 'item'), gate: text(value, 'gate'), message: text(value, 'message'), time: text(value, 'time'), host: text(value, 'host'),
     options: recordOptions(value['options']), raisedBy: optionalText(value, 'raised_by'), answeredBy: optionalText(value, 'answered_by'),
-    condition: optionalText(value, 'condition'), footer: optionalText(value, 'footer'),
+    condition: optionalText(value, 'condition'), footer: optionalText(value, 'footer'), fromStep: optionalText(value, 'from_step'),
   }));
   const gateListError = await fillGateQuestions(root, pluginRoot, pluginVersion, found, runner, cache);
   const gates: GateRecord[] = found.map((gate) => {

@@ -13,16 +13,22 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 
 1. **Inputs**: the item, its claimed worktree (clean apart from `.flow/`), `.standards/config.json`
    (build, format, test, mutation), `.flow/config.yaml` (`gates`, `feel_test_paths`,
-   `verify.limit`).
+   `verify.limit`, `verify.summary`).
+   Each check shows a summary line beside its result: the last output line its `summary` pattern
+   (a Python regular expression) matches, else its last non-empty output line; a failed check
+   shows the tail of its output. A gate map takes `summary:`; build, test and mutation take
+   `verify.summary.build`, `.test` and `.mutation`, and every test command shares the test one.
+   The config reader takes a value that starts with `[` as a list and cuts it at ` #`, so start
+   a pattern otherwise (`\d+ passed`, not `[0-9]+ passed`).
 2. **Spawn `verifier`** with the step brief. Before the run the verifier writes
    `<reports>/proofs.json`, one grade per acceptance line (live, test, build-only or blocked)
    with its evidence file, test name (and, with several test commands, the `tests <name>` check
    that runs it) or reason, for the commit it checks. The brief names
    `"$P/scripts/verify.sh" <item>`, which runs every check once and writes
-   `<reports>/verify.json` and `verify.md`, each check with its seconds, and grades the proofs
-   file into both: a proof that does not hold becomes an error, and every line graded
-   build-only, blocked or error goes to the Not checked list with its reason. No proof changes
-   the status. A build or test command with `paths` in `.standards/config.json` runs only
+   `<reports>/verify.json` and `verify.md`, each check with its seconds and summary line, and
+   grades the proofs file into both: a proof that does not hold becomes an error, and every line
+   graded build-only, blocked or error goes to the Not checked list with its reason. No proof
+   changes the status. A build or test command with `paths` in `.standards/config.json` runs only
    when a changed file is under them, else it is a skipped check that says so. Use `{verify_base}`
    in a build or test command to pass it the merge-base commit. When the base cannot be resolved,
    the command receives `unavailable` and must run all checks: read any value that is not a full

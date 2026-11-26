@@ -411,6 +411,17 @@ test('GateRecordWithFooter_FooterRead', async () => {
   assert.equal(gate.footer, OPTIONED_RECORD.footer, 'because the card shows the exact command the tracker comment carries under the message');
 });
 
+/** An escalation a verify run raised after its last failed attempt. */
+const VERIFY_ESCALATION_RECORD = {
+  gate: 'escalation', item: 'gh#767', message: 'Step verify failed 3 times. Last: a test stayed red.', time: '2026-11-09T09:40:00Z', host: 'claude',
+  from_step: 'verify',
+};
+
+test('GateRecordFromAVerifyEscalation_FromStepIsVerify', async () => {
+  const gate = await gateWith(VERIFY_ESCALATION_RECORD);
+  assert.equal(gate.fromStep, 'verify', 'because the console tells a verify escalation from any other by the step the gate came from');
+});
+
 test('GateRecordOptionWithEmptyLabel_NoOptionsAtAll', async () => {
   const gate = await gateWith({ ...OPTIONED_RECORD, options: [{ label: '', text: 'Keep it.', recommended: false }, OPTIONED_RECORD.options[1]] });
   assert.deepEqual(gate.options, [], 'because dropping one malformed option would renumber the rest, and a button would send another option than it shows');
@@ -466,4 +477,9 @@ test('GateRecordFromAnOlderFlow_NoCondition', async () => {
 test('GateRecordFromAnOlderFlow_NoFooter', async () => {
   const gate = await gateWith(OLDER_RECORD);
   assert.equal(gate.footer, null, 'because an older record carries no command, and the card must not show an empty one');
+});
+
+test('GateRecordFromAnOlderFlow_NoFromStep', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.fromStep, null, 'because an older record names no step, and the card must not take it for a verify escalation');
 });
