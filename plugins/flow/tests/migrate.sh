@@ -120,6 +120,13 @@ check "ImportStripUnderTrackerStateLabels_ExitsTwo: because the mirror would wri
 check "ImportStripUnderTrackerStateLabels_LeavesTheTrackerState: because a refused strip changes nothing" \
   '[ "$(frontmatter "$claimed" step)" = implement ]'
 tracker_state_is ""
+# shellcheck disable=SC2034 # the check's condition reads it
+before_dry_run_strip="$(stores_snapshot)"
+record import --dry-run --strip > "$work/dry-run-strip.out" 2>&1
+check "ImportDryRunStrip_ChangesNoRecordAndNoItem: because a dry run only says what it would strip" \
+  '[ "$(stores_snapshot)" = "$before_dry_run_strip" ]'
+check "ImportDryRunStrip_NamesTheRecordedItemItWouldStrip: because the owner sees the strip before it runs" \
+  'said_would "$work/dry-run-strip.out" "$claimed"'
 record import --strip > "$work/strip.out" 2>&1; code=$?
 check "ImportStrip_ExitsZero: because every strip landed" '[ "$code" -eq 0 ]'
 check "ImportStrip_TakesTheStateKeysOff: because the record holds them now" 'no_stripped_key_left "$claimed"'

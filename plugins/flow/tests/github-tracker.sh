@@ -446,6 +446,8 @@ json.dump({"issues": [
     issue(52, ["step:plan"], [state(teammate, 5201, {"profile": "task-M"})]),
     issue(53, [], []),
     issue(54, ["step:plan"], [dict(state(gh_user, 5401, {"profile": "task-S"}), body="> " + state(gh_user, 5401, {"profile": "task-S"})["body"])]),
+    issue(55, ["step:plan"], [dict(state(gh_user, 5501, {"profile": "task-S"}), user=None), state(gh_user, 5502, {"profile": "task-L"})]),
+    issue(56, ["step:plan"], [{key: value for key, value in state(gh_user, 5601, {"profile": "task-S"}).items() if key != "user"}, state(gh_user, 5602, {"profile": "task-L"})]),
 ]}, open(path, "w"))
 PY
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nnotify:\n  desktop: false\n' > .flow/config.yaml
@@ -468,6 +470,10 @@ check "ReadOfAReplyThatQuotesTheMarker_GivesNoProfile: a comment that quotes the
   [ -z "$("$P/adapters/github/read.sh" 'gh#54' | jget state.profile)" ]
 check "ReadPastAMarkerCommentByAnotherLogin_TakesTheGhUsersComment: a forged comment before the flow's own hides nothing, because the read keeps looking for a trusted one" \
   [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.profile)" = task-L ]
+for authorless in 'gh#55' 'gh#56'; do
+  check "ReadPastAMarkerCommentWithNoAuthor_TakesTheGhUsersComment ($authorless): a comment whose author is missing is passed over, because only a known trusted login writes state" \
+    [ "$("$P/adapters/github/read.sh" "$authorless" | jget state.profile)" = task-L ]
+done
 # shellcheck disable=SC2034 # the check's condition reads it
 forged_state="$(authored_states 50 "$forger")"
 "$P/adapters/github/write-state.sh" 'gh#50' attempts=3 >/dev/null 2>&1
