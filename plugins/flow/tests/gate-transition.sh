@@ -103,8 +103,7 @@ advance() { "$stubbed/scripts/advance.sh" "$1" > "$work/advance.out" 2> "$work/a
 # advance_refusing <pair prefix> <item>: advance.sh on the item while the tracker refuses any write
 # with a pair that starts with the prefix.
 advance_refusing() { printf '%s' "$1" > "$REFUSED_PAIR"; advance "$2"; refused_code=$?; rm -f "$REFUSED_PAIR"; return "$refused_code"; }
-# mirrored_repo <name>: new_repo under tracker_state labels, so the flow's state writes reach the
-# tracker and its refusals reach the flow.
+# Under tracker_state labels the flow's state writes reach the tracker and its refusals reach the flow.
 mirrored_repo() { new_repo "$1" && printf 'tracker_state: labels\n' >> .flow/config.yaml; }
 
 echo "gate transition: the tracker refuses the gate write"

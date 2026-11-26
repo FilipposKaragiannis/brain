@@ -129,9 +129,8 @@ print(json.dumps({
 }))'
 }
 
-# trusted_logins: the logins, comma-separated, whose /answer and state comments the flow acts on:
-# github.answer_from, else the gh user. Exit 1 when neither names one, which a caller must treat
-# as a failed read: taken for "no comment yet", it would make write-state post a second one.
+# A caller must treat exit 1 as a failed read: taken for "no comment yet", it would make
+# write-state post a second state comment.
 trusted_logins() {
   trusted_logins_found="$(cfg github.answer_from | paste -sd, -)"
   [ -n "$trusted_logins_found" ] || trusted_logins_found="$(gh api user -q .login 2>/dev/null)" || return 1
@@ -139,10 +138,8 @@ trusted_logins() {
   printf '%s' "$trusted_logins_found"
 }
 
-# state_comment <repo> <number> <logins>: the JSON inside the first state comment one of the
-# logins (trusted_logins) wrote, or {}, with the comment's id. A failed read returns 1, and the
-# caller must stop: taken for "no comment yet", it would make write-state start a second state
-# comment from an empty state, dropping the attempts, the PR and the touches.
+# The caller must stop on a failed read: taken for "no comment yet", it would make write-state
+# start a second state comment from an empty state, dropping the attempts, the PR and the touches.
 state_comment() {
   comments="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=$GH_REST_PAGE_SIZE")" || return 1
   printf '%s' "$comments" | cached_python3 -I "$FLOW_PLUGIN/adapters/github/_state_comment.py" first "$STATE_MARKER" "$3"

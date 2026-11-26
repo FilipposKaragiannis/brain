@@ -449,7 +449,6 @@ json.dump({"issues": [
 ]}, open(path, "w"))
 PY
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nnotify:\n  desktop: false\n' > .flow/config.yaml
-# authored_states <number> <login>: the state of each marker comment login wrote on the issue, one JSON line each.
 authored_states() { python3 -c 'import json, re, sys
 issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
 for comment in issue.get("comments", []):
