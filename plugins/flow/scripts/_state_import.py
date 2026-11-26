@@ -31,7 +31,6 @@ HELD, UNHELD = "held", "unheld"
 OPEN_STATUS = "open"
 ATTEMPTS_KEY = "attempts"
 NO_ATTEMPTS = "0"
-FLOW_LABEL_PREFIXES = ("step:", "gate:", "wt:", "flow:")
 UNCLAIMED_WHY = "its worktree %s is not claimed on this machine"
 UNREADABLE_WHY = "its flow record does not parse"
 UNWRITTEN_WHY = "its flow record could not be written"
@@ -88,7 +87,7 @@ def holds_flow_state(state: Mapping) -> bool:
 
 
 def carries_flow_state(item: ListedItem) -> bool:
-    return holds_flow_state(item.state) or any(label.startswith(FLOW_LABEL_PREFIXES) for label in item.labels)
+    return holds_flow_state(item.state) or any(label.startswith(schema.FLOW_LABEL_PREFIXES) for label in item.labels)
 
 
 def is_held(state: Mapping) -> bool:

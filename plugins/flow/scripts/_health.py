@@ -96,6 +96,7 @@ import calendar, json, os, re, signal, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _process  # noqa: E402
+import _state_schema as state_schema  # noqa: E402
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
 # A host's own servers, never an agent: the subcommand, the first word after the executable that is
@@ -108,7 +109,6 @@ LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
 VERIFY_RUN = re.compile(r"verify\.sh .*--detached")
 DURATION = re.compile(r"(\d+)([smhd]?)")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
-FLOW_LABEL_PREFIXES = ("step:", "gate:", "wt:", "flow:")
 
 
 # ps prints a command unquoted. The executable runs past a space only while the part beyond it is
@@ -724,9 +724,9 @@ def holds(items_path, reads_path, claims_path, runs_path, events, old):
         print("old\t%s\t%s\t%s\t%s" % (item_id, kept[item_id], now - since if since else "-", reason))
 
 
-def labelled(items):
+def labelled(items: dict) -> int:
     return sum(1 for item in items.values()
-               if any(isinstance(label, str) and label.startswith(FLOW_LABEL_PREFIXES) for label in item.get("labels") or []))
+               if any(isinstance(label, str) and label.startswith(state_schema.FLOW_LABEL_PREFIXES) for label in item.get("labels") or []))
 
 
 def main():

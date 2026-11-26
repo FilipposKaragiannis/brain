@@ -43,6 +43,7 @@ STATUS_IN_PROGRESS, STATUS_NEEDS_YOU, STATUS_IN_REVIEW = "in-progress", "needs-y
 NO_STATUS = ""
 RECORD_ITEM_FIELD = "item"
 NOTIFY_GATE_FIELD = "gate"
+FLOW_LABEL_PREFIXES = ("step:", "gate:", "wt:", "flow:")
 ITEM_SLUG_SHAPE = re.compile(r"[A-Za-z0-9_-]+")
 WHOLE_NUMBER_SHAPE = re.compile(r"[0-9]+")
 

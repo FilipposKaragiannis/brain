@@ -202,9 +202,9 @@ P="$plugin"; . "$here/_github_fixture.sh"
 issue_has_label() { python3 -c 'import json, sys
 issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
 sys.exit(0 if sys.argv[3] in issue["labels"] else 1)' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
-flow_label_count() { python3 -B -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import _state_import
+flow_label_count() { python3 -B -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import _state_schema
 issue = [issue for issue in json.load(open(sys.argv[2]))["issues"] if issue["number"] == int(sys.argv[3])][0]
-print(sum(1 for label in issue["labels"] if label.startswith(_state_import.FLOW_LABEL_PREFIXES)))' "$plugin/scripts" "$FAKE_GH_DIR/issues.json" "$1"; }
+print(sum(1 for label in issue["labels"] if label.startswith(_state_schema.FLOW_LABEL_PREFIXES)))' "$plugin/scripts" "$FAKE_GH_DIR/issues.json" "$1"; }
 state_comment_count() { python3 -c 'import json, sys
 issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
 print(sum(1 for comment in issue.get("comments", []) if "flow:state" in comment["body"]))' "$FAKE_GH_DIR/issues.json" "$1"; }

@@ -1588,13 +1588,13 @@ health_list() {
 # Under tracker_state labels the mirror writes these labels, and while a tracker's list failed
 # the count is partial: either way the count last said stands.
 health_flow_labels() {
-  flow_labels_mode="$(tracker_state)" || return 0
-  [ "$flow_labels_mode" = labels ] && return 0
+  health_flow_labels_mode="$(tracker_state)" || return 0
+  [ "$health_flow_labels_mode" = labels ] && return 0
   [ -z "$health_list_failed" ] || return 0
-  flow_labels_count="$(hpy labelled "$health_items")"
-  if [ "$flow_labels_count" -eq 0 ]; then health_cleared flow-labels; return 0; fi
-  health_changed flow-labels "$flow_labels_count" || return 0
-  health_say pool "$flow_labels_count open item(s) still carry flow labels (step:, gate:, wt: or flow:), which the flow no longer writes; state.sh import --strip records their state and takes the labels off"
+  health_flow_labels_count="$(hpy labelled "$health_items")"
+  if [ "$health_flow_labels_count" -eq 0 ]; then health_cleared flow-labels; return 0; fi
+  health_changed flow-labels "$health_flow_labels_count" || return 0
+  health_say pool "$health_flow_labels_count open item(s) still carry flow labels (step:, gate:, wt: or flow:), which the flow no longer writes; state.sh import --strip records their state and takes the labels off"
 }
 
 # health_holds: a planned hold (state.held_by and held_reason) that is stale or wrong is cleared,
