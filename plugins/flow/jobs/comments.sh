@@ -4,7 +4,10 @@
 # Finds every open item with a linked PR across the adapters, drops the merged and closed
 # ones, and runs the flow `comments` skill once per PR in a fresh host session started in the
 # item's worktree, or the main worktree when it holds none (the skill spawns the
-# comment-addresser in the task's worktree). Before that, with no
+# comment-addresser in the task's worktree). An epic that holds none gets one on its epic branch
+# for the pass (lib/epic_pass_worktree.sh), let go of when the pass ends unless it holds work the
+# remote lacks; with none to be had the epic gets an escalation gate, and the pass counts as none
+# toward the two-pass skip below (the result line: waits on you). Before that, with no
 # model: a reviewer of the PR's author host silent past reviews.chase_after is asked again
 # (comments.sh chase), a PR that conflicts with its base is named in the brief so the skill
 # merges the base in first, and the checks failing on the PR's head are named so it fixes them.
@@ -57,7 +60,9 @@ set -u
 job=comments
 job_lock_kind=run
 . "$(dirname "$0")/_job.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/branch.sh"
+. "$FLOW_PLUGIN/lib/epic_pass_worktree.sh"
 . "$FLOW_PLUGIN/lib/slots.sh"
 host="${1:-}"; [ $# -eq 0 ] || shift
 one=""; workers=""
@@ -248,6 +253,8 @@ take_answer() {
 # claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this
 # item's. A released item's reports can sit in a pool worktree another item now holds.
 claimed_by() { [ "$(json_get "$(cat "$1/.flow/claim.json" 2>/dev/null)" item)" = "$2" ]; }
+# A worktree the pass made holds no claim of the item, yet its changes are the item's.
+holds_item_work() { [ "$1" = "$3" ] || claimed_by "$1" "$2"; }
 # dirty_tree <worktree>: uncommitted changes outside .flow, untracked files counted even when the
 # person's git config hides them (status.showUntrackedFiles=no).
 dirty_tree() { [ -n "$(git -C "$1" status --porcelain --untracked-files=normal -- . ':!.flow' 2>/dev/null)" ]; }
@@ -320,10 +327,10 @@ pass_host_run() {
   cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" bounded "$pass_limit_seconds" "$PASS_STOP_GRACE" \
     sh -c 'printf "%s\n" "$$" > "$1"; shift; . "$FLOW_PLUGIN/lib/host.sh"; host_run "$@"' host_run "$3" "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is
 }
-# pass_session <target> <notes>: the pass's host session on <target>, the brief's <notes> added,
-# in a pass slot it waits for. The output goes to the log as it comes, so a pass killed half way
-# keeps what it said, and to $out. Returns the host's exit code; starts nothing, with
-# $in_use_why set, when the worktree came into use while it waited.
+# pass_session <target> <notes> <folder>: the pass's host session on <target> in <folder>, the
+# brief's <notes> added, in a pass slot it waits for. The output goes to the log as it comes, so a
+# pass killed half way keeps what it said, and to $out. Returns the host's exit code; starts
+# nothing, with $in_use_why set, when the worktree came into use while it waited.
 pass_session() {
   pass_slot="$(slot_try "$slot_pool" "$workers" $$)" || {
     # A run that names its PR says the wait where its caller reads it, with the runs that hold
@@ -336,7 +343,7 @@ pass_session() {
     [ -z "$in_use_why" ] || { slot_give "$pass_slot"; return 0; }
   }
   job_say "addressing $1"; rm -f "$(in_use_marker "$1" "$pull")"
-  { pass_host_run "$(pass_dir "$1")" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" "$pass_slot.group" 2>&1
+  { pass_host_run "$3" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" "$pass_slot.group" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   slot_give "$pass_slot"
   session_code="$(cat "$out.code" 2>/dev/null)"
@@ -355,6 +362,27 @@ skip_in_use() {
   job_say "$1: $in_use_why, skipped" >/dev/null; tell_in_use "$1"
   if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
 }
+steward_said() { sed 's/^flow: //' "$1" 2>/dev/null | awk '!said_before[$0]++' | tr '\n' ' ' | sed 's/ *$//'; }
+# The job has no session to ask, so a gate asks the owner and keeps the next runs off the PR. Nothing
+# of the pass is saved, so it counts toward no two-pass skip.
+gate_no_worktree() {
+  no_worktree_branch="$(epic_branch "$2")"; no_worktree_why="$(steward_said "$3")"
+  job_say "$1: no worktree on $no_worktree_branch for the pass ($no_worktree_why), so the owner is asked" >/dev/null
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$2" escalation "**The comments pass on $pull has no worktree on $no_worktree_branch**: ${no_worktree_why:-the steward gave no reason}. Free a pool worktree or fix what stops it, then clear the gate; the next pass addresses the PR." \
+    --raised-by "comments job" >/dev/null 2>&1 || job_say "$1: the gate could not be raised; the next run tries the pass again" >/dev/null
+  outcome waits "no worktree on $no_worktree_branch"
+}
+# A worktree with work the remote lacks stays recorded, so the next pass continues from it.
+let_go_of_pass_worktree() {
+  if epic_pass_end_worktree "$2" "$3" 2>"$out.why"; then rm -f "$4"; job_say "$1: let go of $3 after the pass" >/dev/null; return 0; fi
+  job_say "$1: $3 stays for the next pass, which continues from it: $(steward_said "$out.why")" >/dev/null
+}
+# A worktree the last pass kept because the remote could not be read when it ended has no later
+# pass to let go of it while the PR stays unchanged.
+let_go_of_kept_worktree() {
+  let_go_of_kept_worktree_path="$(epic_pass_kept_worktree "$2" "$3")" || return 0
+  let_go_of_pass_worktree "$1" "$2" "$let_go_of_kept_worktree_path" "$3"
+}
 # pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
@@ -370,31 +398,46 @@ pass() {
     once "$f.told-fails" "$fails" && tell "$t: the comments pass failed $fails times in a row on $pull, so the job stops trying it. Read $(job_log_dir)/$job.log, then run it by hand: jobs/comments.sh <host> $t. A pass that completes lets the job try it again."
     outcome waits "$fails passes in a row failed"; return 0
   fi
+  forced=""
   if [ -z "$one" ] && [ -z "$answer" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$f" 2>/dev/null)" ]; then
     if [ -z "$awaiting" ]; then
+      let_go_of_kept_worktree "$t" "$2" "$f.worktree"
       job_say "$t: nothing new since the last pass, skipped" >/dev/null; outcome unchanged; return 0
     fi
     if [ "$(cat "$f.forced" 2>/dev/null)" = "$awaiting" ]; then
+      let_go_of_kept_worktree "$t" "$2" "$f.worktree"
       job_say "$t: open thread(s) $awaiting still wait on a reply after a pass, skipped" >/dev/null
       once "$f.told" "$awaiting" && tell "$t: review thread(s) on $pull still wait on a reply after two passes (last comments $awaiting). Answer them, or run the pass by hand: jobs/comments.sh <host> $t."
       outcome waits "thread(s) $awaiting unanswered after two passes"; return 0
     fi
-    printf '%s\n' "$awaiting" > "$f.forced"
-    job_say "$t: open thread(s) $awaiting still wait on a reply, one more pass" >/dev/null
+    forced="$awaiting"
+  fi
+  pass_folder="$(pass_dir "$t")"
+  made_worktree="$(epic_pass_worktree "$2" "$f.worktree" "$pass_folder" "$main" 2>"$out.why")" || { gate_no_worktree "$t" "$2" "$out.why"; return 0; }
+  worktree_note=""
+  if [ -n "$made_worktree" ]; then
+    pass_folder="$made_worktree"; worktree_note="$(epic_pass_note "$2" "$made_worktree")"
+    printf '%s\n' "$made_worktree" > "$f.worktree.$$" && mv "$f.worktree.$$" "$f.worktree"
+    job_say "$t: the pass works in $made_worktree" >/dev/null
+  fi
+  if [ -n "$forced" ]; then
+    printf '%s\n' "$forced" > "$f.forced.$$" && mv "$f.forced.$$" "$f.forced"
+    job_say "$t: open thread(s) $forced still wait on a reply, one more pass" >/dev/null
   fi
   rn_item=""; resume=""; rnote=""; resume_note "$t" > "$out" && resume="$(cat "$out")"
+  resume_worktree="${made_worktree:-${resume%/.flow/reports/*}}"
   # Uncommitted changes in the claimed worktree with no note: a run before this one was cut off
   # (before flow 1.19.0 no note was left). Say so, so the pass continues from them.
   if [ -n "$resume" ] && [ ! -s "$resume" ]; then
-    rwt="${resume%/.flow/reports/*}"
-    if [ -d "$rwt" ] && claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; then
+    if [ -d "$resume_worktree" ] && holds_item_work "$resume_worktree" "$rn_item" "$made_worktree" && dirty_tree "$resume_worktree"; then
       printf 'An earlier run on PR #%s left uncommitted changes in %s (found by the comments job at %s). Read git status and git diff, continue from there, build and run only the tests the change touches before you commit, discard nothing without saying so in the reply.\n' \
-        "${pull##*/}" "$rwt" "$(now_iso)" > "$resume"
-      job_say "$t: $rwt holds uncommitted changes from an earlier run; the pass continues from them" >/dev/null
+        "${pull##*/}" "$resume_worktree" "$(now_iso)" > "$resume"
+      job_say "$t: $resume_worktree holds uncommitted changes from an earlier run; the pass continues from them" >/dev/null
     fi
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
-  pass_session "$t" "$note$answer$rnote"; code=$?
+  pass_session "$t" "$note$answer$rnote$worktree_note" "$pass_folder"; code=$?
+  [ -z "$made_worktree" ] || let_go_of_pass_worktree "$t" "$2" "$made_worktree" "$f.worktree"
   # The saved activity goes, as for a stopped host, so the pass this run did not start still runs.
   if [ -n "$in_use_why" ]; then rm -f "$f"; skip_in_use "$t"; return 0; fi
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
@@ -410,8 +453,7 @@ pass() {
     # The note goes once the work it names is gone from the tree: an addresser that stopped
     # cleanly on a failing build leaves the changes, and the note stays for the next pass.
     if [ -n "$resume" ]; then
-      rwt="${resume%/.flow/reports/*}"
-      { claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; } || rm -f "$resume"
+      { holds_item_work "$resume_worktree" "$rn_item" "$made_worktree" && dirty_tree "$resume_worktree"; } || rm -f "$resume"
     fi
     # The pass confirmed the owner's answer: carried out, or raised again as a gate when no step
     # of it could (the comments skill's Answer step). A failed pass leaves it waiting for the next.
@@ -423,9 +465,8 @@ pass() {
     if [ "$((fails + 1))" -ge "$max_fails" ]; then job_say "$t: pass failed, $why; $((fails + 1)) in a row, so the job stops trying it until a pass run by hand completes"
     else job_say "$t: pass failed, $why; the next run tries it again"; fi
     if [ -n "$resume" ]; then
-      rwt="${resume%/.flow/reports/*}"
       printf 'The previous comments pass on PR #%s was cut short at %s (%s). %s may hold its uncommitted work. Read git status and git diff, continue from there, build and run only the tests the change touches before you commit, discard nothing without saying so in the reply.\n' \
-        "${pull##*/}" "$(now_iso)" "$why" "$rwt" > "$resume"
+        "${pull##*/}" "$(now_iso)" "$why" "$resume_worktree" > "$resume"
     fi
     outcome failed
   fi

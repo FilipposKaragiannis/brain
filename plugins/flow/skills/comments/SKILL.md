@@ -12,6 +12,11 @@ GitHub only (`"$P/scripts/comments.sh"`).
 path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 `local:<kind>/<n>`. Never build the path by hand.
 
+The claimed worktree below is the folder the brief names ("This pass works in <path>", the
+session's start folder, a claim or a throwaway on an epic's branch): claim no other. With none
+named, it is `"$P/scripts/steward.sh" find <item>`, claimed when released. On a detached HEAD
+there, every push is `git push origin "HEAD:<headRefName>"`; tell each addresser so.
+
 1. **Resolve the PR**: from the argument, or the item's state `pr`. `comments.sh state <pr>`:
    merged or closed → release is the steward's job; report and stop.
    The item is the one whose claim holds the PR's branch (`steward.sh owner <branch>`); for a
@@ -45,7 +50,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    done, clear the marker yourself, `"$P/adapters/<github|jira|local>/write-state.sh" <item>
    answer_pending=`.
 2. **Conflicts**: `state` says `mergeable: CONFLICTING` → in the claimed worktree
-   (`"$P/scripts/steward.sh" find <item>`, claim when released), with a clean tree, spawn the
+   (above), with a clean tree, spawn the
    `implementer` with this brief: `git fetch origin`, `git merge "origin/<baseRefName>"` into the
    task branch (never rebase, never force), resolve each conflict so both sides keep their intent,
    build and run the tests the conflicted files touch, commit the merge as `chore: merge <base>
@@ -90,7 +95,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    - `wrong`: the comment misreads the code, the rule or the spec; or it asks for scope creep.
    Write the grades with one line of reason to `<reports>/comments.json`.
 6. **Spawn `comment-addresser`** once per thread, in order of file, in the claimed worktree
-   (`"$P/scripts/steward.sh" find <item>`, claim when released). A sandboxed Claude session
+   (above). A sandboxed Claude session
    commits only in the worktree it started in (the comments job starts it there): started
    anywhere else, a commit there fails on `index.lock`, so name that in the report and stop
    rather than look for a way around it. One at a time: each commits

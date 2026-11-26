@@ -6,8 +6,12 @@
 # one that holds commits the remote lacks, or that another worktree has checked out, is refused
 # with why, exit 4, before any worktree is taken. An item that holds a claim on the branch keeps
 # its worktree, moved up to the tip the same way; one on another branch is refused. worktree_setup runs again after the move as for any claim (worktree_setup_paths).
+# steward.sh claim takes this path for an epic's own epic branch (epic_branch_named), the branch a
+# comments pass on the epic's pull request works on. steward.sh tmp tip makes the temporary
+# worktree such a pass works in when no pool worktree can take the branch: detached at the remote
+# tip, so a branch checked out elsewhere does not stop it.
 # Sourced by scripts/steward.sh, never run.
-# shellcheck disable=SC2154 # scripts/steward.sh, which sources it, sets main and base_branch, and lib/base.sh the claim exit codes
+# shellcheck disable=SC2154 # scripts/steward.sh, which sources it, sets main, home and base_branch, and lib/base.sh the claim exit codes
 
 tip_claim_fetch_tracking_branch() {
   tip_claim_fetch_tracking_branch_name="refs/remotes/origin/$2"
@@ -69,4 +73,36 @@ cmd_claim_tip() {
     tip_claim_move_existing_to_tip "$cmd_claim_tip_item" "$cmd_claim_tip_existing" "$cmd_claim_tip_branch" "$cmd_claim_tip_tracking_branch"; return
   fi
   tip_claim_new "$cmd_claim_tip_item" "$cmd_claim_tip_branch" "$cmd_claim_tip_tracking_branch" "$cmd_claim_tip_base"
+}
+
+epic_branch_named() {
+  [ -n "$2" ] && [ "$2" = "$(epic_branch "$1")" ] || return 1
+  [ "$(json_get "$(adapter read "$1" </dev/null 2>/dev/null)" kind)" = epic ]
+}
+
+temporary_tip_worktree_refuse_foreign_path() {
+  [ ! -e "$1" ] && [ ! -L "$1" ] \
+    || die "tmp tip: $1 exists and is not a worktree of this repository" "$claim_call_refused"
+}
+
+temporary_tip_worktree_add_detached() {
+  if [ -z "$(cfg worktree_create)" ]; then
+    git -C "$main" worktree add -q --detach "$1" "$2" >&2 || die "cannot add $1"
+    return 0
+  fi
+  run_worktree_create "$1" "$2" || die "cannot add $1"
+  git -C "$1" switch -q --detach "$2" >&2 \
+    || die "cannot put $1 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
+}
+
+temporary_tip_worktree() {
+  temporary_tip_worktree_path="$home/tmp/$(item_slug "$1")-tip"
+  if is_worktree_of_this_repository "$temporary_tip_worktree_path"; then printf '%s\n' "$temporary_tip_worktree_path"; return 0; fi
+  temporary_tip_worktree_refuse_foreign_path "$temporary_tip_worktree_path"
+  tip_claim_refuse_branch_name "$1" "$2" "$base_branch"
+  temporary_tip_worktree_tracking_branch="$(tip_claim_fetch_tracking_branch "$1" "$2")" || exit $?
+  mkdir -p "$home/tmp"
+  temporary_tip_worktree_add_detached "$temporary_tip_worktree_path" "$temporary_tip_worktree_tracking_branch"
+  run_setup "$temporary_tip_worktree_path" >&2
+  printf '%s\n' "$temporary_tip_worktree_path"
 }
