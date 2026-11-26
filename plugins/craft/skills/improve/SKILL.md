@@ -38,22 +38,27 @@ Write one self-contained file to `${TMPDIR:-/tmp}/improve-<timestamp>.html`: res
 first (`echo "${TMPDIR:-/tmp}/improve-$(date +%Y%m%d-%H%M%S).html"`), then create the file with
 your file-writing tool (Write in Claude Code), never a shell heredoc or redirect, which mangles
 the report's quotes and backticks. Open it (`open` on macOS, `xdg-open` on Linux) and print the
-absolute path. Scaffold, diagram patterns and styling: [HTML-REPORT.md](HTML-REPORT.md). Mermaid for graph-shaped relationships, hand-built
-divs or SVG for the editorial visuals. Each candidate is a card:
+absolute path. Scaffold, sketch rules and styling: [HTML-REPORT.md](HTML-REPORT.md).
 
+The report opens with the candidates ranked, one line each, before any sketch, and the
+**Top recommendation** under the list: the first candidate to take and why. Then each candidate
+is a card with these fields and no others:
+
+- **Verdict**: one line with the `Strong`, `Worth exploring` or `Speculative` badge, the
+  candidate's name and why it is worth doing.
+- **Sketch**: one before and after, side by side, in the simplest form that makes the point:
+  a Mermaid flowchart unless a sequence of round trips is the point.
+- **Problem**: the friction, in one sentence, in the glossary's words.
+- **Solution**: what changes, in one plain sentence, no interface proposal yet.
+- **Gain**: locality and leverage, and how the tests improve, in one line.
+- **Rules**: the standards ids this deepening serves (D-01, D-02, D-04, S-01, S-02, T-12 are
+  the usual ones), and any it strains.
 - **Files**: the modules involved.
-- **Problem**: the friction, in the glossary's words.
-- **Solution**: what changes, in plain English, no interface proposal yet.
-- **Benefits**: locality and leverage, and how the tests improve.
-- **Rules served**: the standards ids this deepening satisfies (D-01, D-02, D-04, S-01, S-02,
-  T-12 are the usual ones), and any it strains.
-- **Before and after**: side by side, drawn, showing the shallowness and the deepening.
-- **Dependencies**: the category of each dependency per
-  [DEEPENING.md](../codebase-design/DEEPENING.md), which decides how the deep module is tested.
-- **Strength**: `Strong`, `Worth exploring` or `Speculative`, as a badge.
+- **ADR conflict**: only when the friction is real enough to reopen an ADR, a warning callout
+  naming it.
 
-An ADR conflict is shown only when the friction is real enough to reopen the ADR, with a warning
-callout naming it. End with **Top recommendation**: the first candidate to take and why.
+A sketch labels each box with what the reader knows it as, never a variable, field or function
+name; keeps to about 20 arrows; and says in one line what it leaves out.
 
 In the chat, list the candidates in one line each (name, strength, the rules served), then one
 line that starts `**Top recommendation:**` and names the candidate and why it goes first, then
@@ -64,8 +69,8 @@ implementation steps. Those come in step 3, after the owner picks.
 ## 3. Specify the chosen candidate
 
 Walk the design tree with the owner one question at a time, as the flow's interviewer does:
-constraints, the dependency categories, the shape of the deepened module, what sits behind the
-seam, which tests survive. Facts you look up; decisions are the owner's. Record a new term in the
+constraints, the dependency categories ([DEEPENING.md](../codebase-design/DEEPENING.md)), the
+shape of the deepened module, what sits behind the seam, which tests survive. Facts you look up; decisions are the owner's. Record a new term in the
 `## Glossary` at once; offer an ADR only for a hard-to-reverse, surprising, real trade-off, and
 when the owner rejects a candidate for a load-bearing reason, so the next run does not
 re-suggest it. To explore alternative interfaces, run

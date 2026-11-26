@@ -39,11 +39,16 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    push nothing: stop with status `done`, no `pr` key, and a summary that says why the item needs
    no PR. The orchestrator closes the item with that summary and releases the worktree. A branch
    with changes is never `done` without a PR. Otherwise push: `git push -u origin <branch>`.
-4. Body: the repo template when one exists, else the house template: Summary with the
-   smallest view that makes the point (pseudocode, call tree, file tree, diff sketch or
-   Mermaid, one of them), Evidence before and after from the verify report, Merge danger
-   (one-way or two-way door, blast radius in one word), the `verify.md` table, and
-   `Resolves #<n>` for a GitHub item (a local item gets `Item: <id>`). Glossary words only.
+4. Body: the house template in `PR-BODY.md` when the repo has no template. Its first line is
+   the verdict, `Verdict: pass at <sha>, <n> of <m> acceptance lines proven live or by test`,
+   from the first line of `verify.md`, else built from `verify.json` (`status`, `head`). Then
+   three sections, in this order and no others: Summary (one or two sentences and one view,
+   never several: pseudocode, call tree, file tree, diff sketch or Mermaid), Verification (the
+   `verify.md` table, before and after, a Not checked list that says `- nothing` when every
+   acceptance line is proven, the declared review findings), Merge danger (one-way or two-way
+   door, blast radius in one or two words). Then `Resolves #<n>` for a GitHub item (a local
+   item gets `Item: <id>`). With a repo template, the verdict line goes above it. Glossary
+   words only.
    Open the PR with the whole body at once: `gh pr create --base <base> --head <branch> --title
    <item title> --body-file <file>`. The PR is a GitHub PR on the origin whatever tracker holds
    the item; a local or Jira item gets one too, and its tracker only records it (step 6). A
@@ -64,8 +69,8 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    the API. Never write a reviewer mention yourself.
 8. When the base is not the default branch, warn in the result that the merge will not
    auto-close the item; the closeout step closes it.
-9. Updating an existing PR (the state has `pr`): push, edit the body's verify section, add one
-   comment with what changed since the last push.
+9. Updating an existing PR (the state has `pr`): push, edit the body's verdict line and its
+   Verification section, add one comment with what changed since the last push.
 
 ## Output
 The PR, then the result file the brief names: status `done` with the URL under `pr` and in the

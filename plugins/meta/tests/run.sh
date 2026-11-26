@@ -41,29 +41,68 @@ map="$(python3 "$root/tools/lib/map.py" --root "$root")"
 check "map renders every skill" sh -c "for s in \$(ls -d '$root'/plugins/*/skills/*/ | xargs -n1 basename | sort -u); do printf '%s' \"\$0\" | grep -q \"<code>\$s</code>\" || exit 1; done" "$map"
 check "map renders every agent" sh -c "for a in \$(python3 -c \"import json; print(' '.join(json.load(open('$root/roster/agents.json'))['agents']))\"); do printf '%s' \"\$0\" | grep -q \"<code>\$a</code>\" || exit 1; done" "$map"
 check "map draws the profiles and the hooks" sh -c "printf '%s' \"\$0\" | grep -q 'task-L' && printf '%s' \"\$0\" | grep -q 'delivery gate'" "$map"
-check "playbooks name only real skills and agents" python3 -I -c "
-import sys; sys.path.insert(0, '$root/tools/lib')
-import map as m, playbooks as pb
-plugins, agents, _ = m.load('$root')
-skills = {p['name'] + ':' + s['name'] for p in plugins for s in p['skills']}
-names = {a['name'] for a in agents}
-bad = [st['cmd'][0] for b in pb.PLAYBOOKS + [{'steps': pb.EXTRAS}] for st in b['steps'] if st.get('cmd') and st['cmd'][0] not in skills]
-bad += [a for b in pb.PLAYBOOKS for st in b['steps'] for a in st.get('who', []) if a not in names]
+guide_steps="import sys; sys.path.insert(0, '$root/tools/lib')
+import map as brain_map, flow_guide as guide
+steps = guide.DRIVE + guide.EXTRAS + [step for run in guide.RUNS for step in run['steps']]"
+check "FlowsGuide_NamesOnlyRealSkills: every skill a flows guide step runs is one a plugin ships, because a reader who copies a command must find it" python3 -I -c "$guide_steps
+plugins, _, _ = brain_map.load('$root')
+shipped = {plugin['name'] + ':' + skill['name'] for plugin in plugins for skill in plugin['skills']}
+named = [step['command'].skill for step in steps if step.get('command')]
+sys.exit(1 if not named or set(named) - shipped else 0)"
+check "FlowsGuide_NamesOnlyRealAgents: every agent a flows guide step names is in the roster, because the reader looks up who runs a step" python3 -I -c "$guide_steps
+_, agents, _ = brain_map.load('$root')
+roster = {agent['name'] for agent in agents}
+named = [agent for step in steps for agent in step.get('agents', [])]
+sys.exit(1 if not named or set(named) - roster else 0)"
+check "FlowsGuide_NamesOnlyRealScripts: every script a flows guide shell step runs ships with the flow plugin, because a reader who pastes it in a terminal must find it" python3 -I -c "$guide_steps
 import os
 flow = '$root/plugins/flow'
-for b in pb.PLAYBOOKS:
-    for st in b['steps']:
-        if st.get('sh'):
-            script = st['sh'].split()[0].split('.flow/')[-1]
-            if not (os.path.exists(os.path.join(flow, script)) or os.path.exists(os.path.join(flow, 'templates', os.path.basename(script)))):
-                bad.append(st['sh'])
-sys.exit(1 if bad else 0)"
+scripts = [step['shell'].split()[0].split('.flow/')[-1] for step in steps if step.get('shell')]
+missing = [script for script in scripts if not (os.path.exists(os.path.join(flow, script)) or os.path.exists(os.path.join(flow, 'templates', os.path.basename(script))))]
+sys.exit(1 if not scripts or missing else 0)"
+flows_section="$(printf '%s' "$map" | python3 -I -c "import re, sys; found = re.search(r'<section id=\"flows\".*?</section>', sys.stdin.read(), re.S); print(found.group(0) if found else '')")"
+check "MapPage_HasAFlowsSection: the page keeps one section for the flows, because a new reader finds them there" [ -n "$flows_section" ]
+check "MapPage_HasNoPlaybooksSection: no element carries a playbooks id, because each flow is said once, in Flows" sh -c "! printf '%s' \"\$0\" | grep -qi 'id=\"[^\"]*playbook'" "$map"
+check "MapPage_EveryInPageLinkResolves: each #anchor link has its target, because no link may point at the removed section" python3 -I -c "
+import re, sys
+page = sys.argv[1]
+targets = set(re.findall(r'href=\"#([^\"]+)\"', page))
+ids = set(re.findall(r'\sid=\"([^\"]+)\"', page))
+sys.exit(1 if not targets or targets - ids else 0)" "$map"
+check "Repository_NoFileLinksToPlaybooks: no file links the map's playbooks anchor, because that section is gone" sh -c "grep -rIiqs --exclude-dir=node_modules 'map[.]html#playbook' '$root/README.md' '$root/docs' '$root/plugins' '$root/tools'; [ \$? -eq 1 ]"
+check "FlowsSection_NamesEveryGate: each gate the flow profiles define stands alone as an element's text in Flows, because the diamonds the playbooks explained now live there and a gate name like merge is also a word in prose" python3 -I -c "
+import json, sys
+gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
+sys.exit(1 if not gates or [gate for gate in gates if '>' + gate + '<' not in sys.argv[1]] else 0)" "$flows_section"
+check "FlowsSection_SaysWhatEachGateAsks: each gate's ask from the flow profiles shows in Flows, because the reader learns there how to answer a diamond" python3 -I -c "
+import html, json, sys
+gates = json.load(open('$root/plugins/flow/profiles.json'))['gates']
+section = html.unescape(sys.argv[1])
+sys.exit(1 if not gates or [name for name, gate in gates.items() if gate['asks'] not in section] else 0)" "$flows_section"
+check "FlowsSection_NamesEveryAgentAStepRuns: each roster agent a flow step names is named in Flows, because the playbooks named who runs each station and Flows now says it" python3 -I -c "
+import json, re, sys
+steps = json.load(open('$root/plugins/flow/profiles.json'))['steps'].values()
+roster = json.load(open('$root/roster/agents.json'))['agents']
+said = ' '.join(step['agent'] + ' ' + step['summary'] for step in steps)
+def mentions(text, agent):
+    return re.search(r'(?<![\w-])' + re.escape(agent) + r'(?![\w-])', text)
+named = [agent for agent in roster if mentions(said, agent)]
+missing = [agent for agent in named if not mentions(sys.argv[1], agent)]
+sys.exit(1 if not named or missing else 0)" "$flows_section"
+check "FlowsSection_ShowsTheGateCommand: Flows shows the flow:gate command, because it is how the reader answers a diamond" sh -c "printf '%s' \"\$0\" | grep -q '/flow:gate'" "$flows_section"
+check "CommittedPage_HasNoDrift: the renderer tools/generate.sh uses for the map gives the committed page byte for byte, because the committed map must match what its sources render" python3 -I -c "
+import sys; sys.path.insert(0, '$root/tools/lib')
+from map import render_map
+committed = open('$root/docs/map.html', encoding='utf-8').read()
+sys.exit(1 if not committed or render_map('$root') != committed else 0)"
 printf '{"agents":{"physics-reviewer":{"tier":"read-only","model":"opus","effort":"high","description":"Reviews physics. Use when src/Physics changes."}}}\n' > "$work/project-roster.json"
 check "map with a project roster lists it beside the plugin agents" sh -c "python3 '$root/tools/lib/map.py' --root '$root' --roster '$work/project-roster.json' | grep -q 'This project (1)' && ! printf '%s' \"\$0\" | grep -q 'This project'" "$map"
 check "the plugin ships the page, same as docs/map.html" cmp -s "$root/plugins/meta/skills/map/assets/map.html" "$root/docs/map.html"
 mkdir -p "$work/elsewhere"
 check "the plugin's script fills the roster from outside the marketplace" sh -c "cd '$work/elsewhere' && python3 -I '$root/plugins/meta/skills/map/scripts/project_map.py' --roster '$work/project-roster.json' --out page.html >/dev/null && grep -q 'This project (1)' page.html && grep -q '<code>physics-reviewer</code>' page.html && grep -q 'agents (+1 yours)' page.html && grep -q 'dashed: this project' page.html"
 check "the script and the marketplace render the same page" sh -c "python3 '$root/tools/lib/map.py' --root '$root' --roster '$work/project-roster.json' | cmp -s - '$work/elsewhere/page.html'"
-check "map shows the six playbooks" sh -c "printf '%s' \"\$0\" | grep -c 'class=\"pb\"' | grep -qx 6" "$map"
+"$root/tools/map.sh" --roster "$work/project-roster.json" --out "$work/roster-map.html" >/dev/null 2>&1; code=$?
+check "MapScript_WithRosterExitsZero: tools/map.sh --roster succeeds, because a reader renders a project's map with it" [ "$code" -eq 0 ]
+check "MapScript_WithRosterListsTheProjectAgents: the written page lists the project roster, because --roster shows a project's agents beside the plugin ones" grep -q '<code>physics-reviewer</code>' "$work/roster-map.html"
 [ "$fails" -eq 0 ] && { echo "meta: ok"; exit 0; }
 echo "meta: $fails failed"; exit 1

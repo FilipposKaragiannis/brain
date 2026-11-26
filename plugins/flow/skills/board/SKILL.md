@@ -1,6 +1,6 @@
 ---
 name: board
-description: Show the flow board. Every adapter, every claim. The worktree pool with item, step and last event, every open item with its state and blockers, the gates waiting on the owner, and overlapping claims. Use when the user asks what is running, what is ready, what is blocked, or wants the dependency graph of an epic or the priorities graph of the board.
+description: Show the flow board. Every adapter, every claim. The gates waiting on the owner first, then what went stale, overlapping claims, every open item with its state and blockers, and the worktree pool with item, step and last event. Use when the user asks what is running, what is ready, what is blocked, or wants the dependency graph of an epic or the priorities graph of the board.
 disable-model-invocation: true
 ---
 
