@@ -13,6 +13,8 @@
 # shellcheck disable=SC2154 # init, which sources it, sets check, scratch and version
 config_migration_date_format='+%Y-%m-%d'
 config_migration_first_extra_backup=2
+config_migration_label_lines=1
+config_migration_first_change_line=$((config_migration_label_lines + 1))
 
 config_migrate() {
   config_migrate_plugin="$1"; config_migrate_helper="$2"; config_migrate_steps="$3"; config_migrate_config="$4"
@@ -43,7 +45,7 @@ config_migration_report_pending() {
   while IFS= read -r config_migration_report_pending_change; do
     drifted "$3: pending migration: $config_migration_report_pending_change"
   done <<EOF_PENDING_MIGRATION
-$(printf '%s\n' "$config_migration_report_pending_lines" | tail -n +2)
+$(printf '%s\n' "$config_migration_report_pending_lines" | tail -n "+$config_migration_first_change_line")
 EOF_PENDING_MIGRATION
 }
 
@@ -61,27 +63,34 @@ config_migration_append() {
   { [ -f "$1" ] && cat "$1"; cat "$2"; } > "$3" && mv "$3" "$1"
 }
 
+config_migration_saved_backup() {
+  config_migration_saved_backup_folder="$(dirname "$1")/migrations"
+  mkdir -p "$config_migration_saved_backup_folder" || return 1
+  [ -f "$config_migration_saved_backup_folder/.gitignore" ] || printf '*\n' > "$config_migration_saved_backup_folder/.gitignore"
+  config_migration_saved_backup_name="$(config_migration_backup_name "$config_migration_saved_backup_folder/$(basename "$1").$2.bak" "$1")"
+  [ -f "$config_migration_saved_backup_name" ] || cp "$1" "$config_migration_saved_backup_name" || return 1
+  printf '%s' "$config_migration_saved_backup_name"
+}
+
+config_migration_append_report() {
+  config_migration_append "$1/report.txt" "$2" "$scratch/config-migration.report" &&
+    config_migration_append "$1/report.unseen" "$2" "$scratch/config-migration.unseen"
+}
+
 config_migration_record() {
   config_migration_record_config="$2"; config_migration_record_lines="$4"
   config_migration_record_folder="$(dirname "$config_migration_record_config")/migrations"
-  config_migration_record_label="$(head -n 1 "$config_migration_record_lines")"
-  mkdir -p "$config_migration_record_folder" || { echo "init: note: cannot create $config_migration_record_folder; $config_migration_record_config is not migrated"; return 0; }
-  [ -f "$config_migration_record_folder/.gitignore" ] || printf '*\n' > "$config_migration_record_folder/.gitignore"
-  config_migration_record_backup="$(config_migration_backup_name "$config_migration_record_folder/$(basename "$config_migration_record_config").$config_migration_record_label.bak" "$config_migration_record_config")"
-  if ! { [ -f "$config_migration_record_backup" ] || cp "$config_migration_record_config" "$config_migration_record_backup"; }; then
-    echo "init: note: cannot save $config_migration_record_config to $config_migration_record_backup; it is not migrated"
-    return 0
-  fi
+  config_migration_record_label="$(head -n "$config_migration_label_lines" "$config_migration_record_lines")"
+  config_migration_record_backup="$(config_migration_saved_backup "$config_migration_record_config" "$config_migration_record_label")" ||
+    { echo "init: note: cannot save $config_migration_record_config in $config_migration_record_folder; it is not migrated"; return 0; }
   mv "$3" "$config_migration_record_config" || { echo "init: note: cannot replace $config_migration_record_config; it is not migrated"; return 0; }
   config_migration_record_section="$scratch/config-migration.section"
   {
     echo "$1 $version migrated $config_migration_record_config on $(date -u "$config_migration_date_format") (it was at $config_migration_record_label; before: $config_migration_record_backup)"
-    tail -n +2 "$config_migration_record_lines"
+    tail -n "+$config_migration_first_change_line" "$config_migration_record_lines"
     echo
   } > "$config_migration_record_section"
-  if ! config_migration_append "$config_migration_record_folder/report.txt" "$config_migration_record_section" "$scratch/config-migration.report" ||
-    ! config_migration_append "$config_migration_record_folder/report.unseen" "$config_migration_record_section" "$scratch/config-migration.unseen"; then
+  config_migration_append_report "$config_migration_record_folder" "$config_migration_record_section" ||
     echo "init: note: cannot write the migration report in $config_migration_record_folder"
-  fi
-  note "$config_migration_record_config: migrated ($(($(wc -l < "$config_migration_record_lines") - 1)) changes); before: $config_migration_record_backup; the changes: $config_migration_record_folder/report.txt"
+  note "$config_migration_record_config: migrated ($(($(wc -l < "$config_migration_record_lines") - config_migration_label_lines)) changes); before: $config_migration_record_backup; the changes: $config_migration_record_folder/report.txt"
 }

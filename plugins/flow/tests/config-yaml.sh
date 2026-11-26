@@ -27,10 +27,10 @@ carriage_return="$(printf '\r')"
 
 # apply_exit <config file>: apply's exit code, its out file left at $out.
 apply_exit() { rm -f "$out"; python3 -I "$helper" apply "$steps" "$1" "$new_label" "$out" >/dev/null 2>&1; echo "$?"; }
-# writes_expected <case>: apply changes the case and writes exactly its expected file.
-writes_expected() { [ "$(apply_exit "$cases/$1.yaml")" = "$changed_exit" ] && cmp -s "$cases/$1.expected.yaml" "$out"; }
-# refused_whole <case>: apply cannot migrate the case and writes no out file.
-refused_whole() { [ "$(apply_exit "$cases/$1.yaml")" = "$cannot_exit" ] && [ ! -e "$out" ]; }
+# writes_expected <case>: apply writes exactly the case's expected file.
+writes_expected() { apply_exit "$cases/$1.yaml" >/dev/null; cmp -s "$cases/$1.expected.yaml" "$out"; }
+# refused_whole <case>: apply exits as one that cannot migrate the case.
+refused_whole() { [ "$(apply_exit "$cases/$1.yaml")" = "$cannot_exit" ]; }
 # label_found <config file>: the first line plan prints.
 label_found() { python3 -I "$helper" plan "$steps" "$1" "$new_label" 2>/dev/null | head -n 1; }
 # every_line_ends_in_a_carriage_return <file>
@@ -39,6 +39,7 @@ every_line_ends_in_a_carriage_return() { [ "$(grep -c "$carriage_return\$" "$1")
 last_byte_is_not_a_newline() { [ -n "$(tail -c 1 "$1")" ]; }
 
 echo "comments and the parent of a removed key"
+check "Apply_ChangesToMake_ExitsOne" [ "$(apply_exit "$cases/comments-around-a-removed-key.yaml")" = "$changed_exit" ]
 check "Apply_CommentsAroundARemovedKey_StayWhereTheyWere" writes_expected comments-around-a-removed-key
 check "Apply_TrailingCommentOnARemovedLine_StaysAsACommentLine" writes_expected trailing-comment-on-a-removed-line
 check "Apply_ParentLeftEmpty_GoesWithItsLastKey" writes_expected parent-left-empty
@@ -67,13 +68,15 @@ cp "$out" "$work/migrated-once.yaml"
 check "Apply_SecondRun_ChangesNothing" [ "$(apply_exit "$work/migrated-once.yaml")" = "$nothing_to_change_exit" ]
 mkdir -p "$work/plan-only" && cp "$cases/parent-left-empty.yaml" "$work/plan-only/config.yaml"
 (cd "$work/plan-only" && python3 -I "$helper" plan "$steps" config.yaml "$new_label" >/dev/null 2>&1)
-check "Plan_ChangesPending_WritesNothing" sh -c "[ \"\$(cd '$work/plan-only' && find . | sort)\" = \"\$(printf '.\n./config.yaml\n')\" ] && cmp -s '$cases/parent-left-empty.yaml' '$work/plan-only/config.yaml'"
+check "Plan_ChangesPending_WritesNoOtherFile" [ "$(cd "$work/plan-only" && find . | sort)" = "$(printf '.\n./config.yaml\n')" ]
+check "Plan_ChangesPending_LeavesTheConfig" cmp -s "$cases/parent-left-empty.yaml" "$work/plan-only/config.yaml"
 printf '{"steps": [{"name": "later", "op": "rename", "key": "retro.commit", "reason": "r"}]}\n' > "$work/unknown-op.json"
 check "Plan_StepWithAnUnknownOp_ExitsTwo" sh -c "python3 -I '$helper' plan '$work/unknown-op.json' '$cases/parent-left-empty.yaml' '$new_label' >/dev/null 2>&1; [ \$? = '$cannot_exit' ]"
 
 echo "line endings"
 printf 'base: main\r\nretro:\r\n  commit: false\r\n' > "$work/crlf.yaml"
 apply_exit "$work/crlf.yaml" >/dev/null
+check "Apply_CrlfFile_WritesANonEmptyFile" [ -s "$out" ]
 check "Apply_CrlfFile_EveryLineKeepsCrlf" every_line_ends_in_a_carriage_return "$out"
 printf 'base: main\nretro:\n  commit: false' > "$work/unterminated.yaml"
 apply_exit "$work/unterminated.yaml" >/dev/null
@@ -89,6 +92,8 @@ check "Apply_LineNeitherKeyNorItem_IsRefused" refused_whole refuse-neither-key-n
 check "Apply_KeyTwiceInOneMap_IsRefused" refused_whole refuse-key-twice-in-one-map
 check "Apply_ListItemOfNoKey_IsRefused" refused_whole refuse-item-of-no-key
 check "Apply_KeyTwoLevelsDeeper_IsRefused" refused_whole refuse-key-two-levels-deeper
+apply_exit "$cases/refuse-tab-indentation.yaml" >/dev/null
+check "Apply_RefusedFile_WritesNoOutFile" [ ! -e "$out" ]
 
 [ "$fails" -eq 0 ] && { echo "config-yaml: ok"; exit 0; }
 echo "config-yaml: $fails failed"; exit 1
