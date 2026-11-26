@@ -602,6 +602,50 @@ yaml_keys() {
     }' "$1"
 }
 
+# yaml_checks <file> <dotted.path>: each entry of a map of checks, a command or a map {command,
+# paths}, as `<name> U+001F <command> U+001F <paths, one per line>` ending in U+001E, in file order.
+yaml_checks() {
+  [ -f "$1" ] || return 0
+  awk -v want="$2" '
+    function strip(s) {
+      sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
+      if (s ~ /^".*"$/ || s ~ /^'\''.*'\''$/) s = substr(s, 2, length(s) - 2)
+      return s
+    }
+    function inline_lines(s,   count, parts, i, part, lines) {
+      sub(/^\[/, "", s); sub(/\]$/, "", s)
+      count = split(s, parts, ","); lines = ""
+      for (i = 1; i <= count; i++) { part = strip(parts[i]); if (part != "") lines = lines part "\n" }
+      return lines
+    }
+    function entry_end() { if (name != "") printf "%s\037%s\037%s\036", name, command, paths; name = "" }
+    BEGIN { n = split(want, keys, "."); depth = 0; found = 0; name = "" }
+    /^[ \t]*(#|$)/ { next }
+    {
+      match($0, /^ */); indent = RLENGTH / 2
+      body = substr($0, RLENGTH + 1); sub(/[ \t]+#.*$/, "", body)
+      key = body; sub(/:.*$/, "", key); key = strip(key)
+      value = ""; if (index(body, ":")) value = strip(substr(body, index(body, ":") + 1))
+      if (found) {
+        if (indent < depth) exit
+        if (body ~ /^- /) { if (field == "paths" && indent > depth) paths = paths strip(substr(body, 3)) "\n"; next }
+        if (!index(body, ":")) next
+        if (indent == depth) { entry_end(); name = key; command = value; paths = ""; field = ""; next }
+        if (indent != depth + 1) next
+        field = key
+        if (key == "command") command = value
+        if (key == "paths") paths = (value ~ /^\[/) ? inline_lines(value) : (value == "" ? "" : value "\n")
+        next
+      }
+      if (body ~ /^- /) next
+      if (indent != depth) { if (indent < depth) exit; next }
+      if (key != keys[depth + 1]) next
+      depth = indent + 1
+      if (depth == n) found = 1
+    }
+    END { entry_end() }' "$1"
+}
+
 # yaml_nested <file> <dotted.path>: 0 when lines sit under the key: indented deeper than it, or a
 # block list at its own indentation.
 yaml_nested() {

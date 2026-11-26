@@ -229,7 +229,7 @@ case "$mode" in
   detached) run_detached ;;
 esac
 
-name_separator="$(printf '\037')"
+name_separator="$(printf '\037')"; entry_separator="$(printf '\036')"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; rm -rf "$reports/evidence" || die "could not remove the earlier evidence $reports/evidence"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
@@ -352,6 +352,17 @@ scoped_check() {
   else check_drop "$inputs_key"; fi
 }
 
+evidence_checks() {
+  IFS="$entry_separator"; set -f; set -- $1; set +f; unset IFS
+  for evidence_entry do
+    evidence_name="${evidence_entry%%"$name_separator"*}"; evidence_fields="${evidence_entry#*"$name_separator"}"
+    evidence_command="${evidence_fields%%"$name_separator"*}"; evidence_paths="${evidence_fields#*"$name_separator"}"
+    [ -n "$evidence_command" ] || continue
+    if [ -n "$evidence_paths" ] && ! in_scope "$evidence_paths"; then skipped "evidence $evidence_name" "no changed file under its paths"; continue; fi
+    run_check "evidence $evidence_name" "$evidence_command" gate
+  done
+}
+
 planned_checks() {
   # planned_checks <build|test> <name of the check when the config has none>: each command the
   # plan holds for the kind, as a scoped check.
@@ -404,18 +415,12 @@ for name in $(yaml_keys "$(config_file)" gates); do
   if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
 done
-evidence_names="$(yaml_keys "$(config_file)" evidence)"
-if [ -n "$evidence_names" ] && ! mkdir -p "$reports/evidence"; then
-  record evidence fail "" "the evidence folder $reports/evidence cannot be made" 0 ""; failed evidence; evidence_names=""
+evidence_entries="$(yaml_checks "$(config_file)" evidence)"
+if [ -n "$evidence_entries" ] && ! mkdir -p "$reports/evidence"; then
+  record evidence fail "" "the evidence folder $reports/evidence cannot be made" 0 ""; failed evidence; evidence_entries=""
 fi
-[ -z "$evidence_names" ] || export FLOW_EVIDENCE_FOLDER="$reports/evidence"
-for evidence_name in $evidence_names; do
-  evidence_command="$(cfg "evidence.$evidence_name")"; evidence_paths=""
-  if [ -z "$evidence_command" ]; then evidence_command="$(cfg "evidence.$evidence_name.command")"; evidence_paths="$(cfg "evidence.$evidence_name.paths")"; fi
-  [ -n "$evidence_command" ] || continue
-  if [ -n "$evidence_paths" ] && ! in_scope "$evidence_paths"; then skipped "evidence $evidence_name" "no changed file under its paths"; continue; fi
-  run_check "evidence $evidence_name" "$evidence_command" gate
-done
+[ -z "$evidence_entries" ] || export FLOW_EVIDENCE_FOLDER="$reports/evidence"
+evidence_checks "$evidence_entries"
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
 elif changed_matches "$feel_test_paths"; then feel=true; fi

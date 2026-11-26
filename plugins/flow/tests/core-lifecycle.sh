@@ -14,6 +14,19 @@ check "yaml scalar"       [ "$(yaml_get .flow/config.yaml base)" = "main" ]
 check "yaml nested"       [ "$(yaml_get .flow/config.yaml adapters.default)" = "local" ]
 check "yaml list"         [ "$(yaml_get .flow/config.yaml pool | wc -l | tr -d ' ')" = "2" ]
 check "yaml missing"      [ -z "$(yaml_get .flow/config.yaml nothing.here)" ]
+printf '%s\n' 'evidence:' "  plain: 'sh capture.sh a: b'  # a note" '  inline:' '    command: "sh inline.sh"' '    paths: [src/**, docs/*]' \
+  '  block:' '    command: sh block.sh' '    paths:' '      - lib/**' '      - "tests/*"' '  empty:' 'gates:' '  other: sh other.sh' > "$work/checks.yaml"
+yaml_checks_entry() { yaml_checks "$work/checks.yaml" evidence | python3 -I -c 'import sys; print("".join(entry.replace("\037", "|") for entry in sys.stdin.read().split("\036") if entry.split("\037")[0] == sys.argv[1]), end="")' "$1"; }
+check "YamlChecksStringEntry_KeepsTheWholeUnquotedCommand: a colon inside the command and a trailing note change no command" \
+  [ "$(yaml_checks_entry plain)" = "plain|sh capture.sh a: b|" ]
+check "YamlChecksMapEntryWithInlinePaths_GivesOnePathPerLine: in_scope reads the globs one per line" \
+  [ "$(yaml_checks_entry inline)" = "$(printf 'inline|sh inline.sh|src/**\ndocs/*')" ]
+check "YamlChecksMapEntryWithBlockPaths_GivesOnePathPerLine: a block list reads as the inline list does" \
+  [ "$(yaml_checks_entry block)" = "$(printf 'block|sh block.sh|lib/**\ntests/*')" ]
+check "YamlChecksEntryWithNoCommand_IsListedWithAnEmptyCommand: the caller sees the key and skips it" \
+  [ "$(yaml_checks_entry empty)" = "empty||" ]
+check "YamlChecksMap_ListsItsEntriesInFileOrderAndNoOtherKey: entries run in the order the owner wrote them" \
+  [ "$(yaml_checks "$work/checks.yaml" evidence | python3 -I -c 'import sys; print(" ".join(entry.split("\037")[0] for entry in sys.stdin.read().split("\036") if entry))')" = "plain inline block empty" ]
 check_all "slug"              '[ "$(item_slug '\''gh#12'\'')" = "gh-12" ] && [ "$(item_slug local:bug/3)" = "local-bug-3" ]'
 check_all "profile select"    '[ "$(profile_select task S)" = "task-S" ] && [ "$(profile_select bug M)" = "bugfix" ] && [ "$(profile_select task XL)" = "task-L" ]'
 
