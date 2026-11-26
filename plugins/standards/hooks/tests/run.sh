@@ -375,7 +375,7 @@ git init -q --bare "$work/gate-remote.git" && git remote add origin "$work/gate-
 pushed_commit="$(git rev-parse HEAD)"
 printf 'later\n' > later.txt && git add later.txt && git commit -qm "later local commit"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$pushed_commit" > .flow/reports/local-task-1/verify.json
-out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtThePushedBranch_PassesWithUnpushedCommits: the PR head is the pushed branch, not the worktree HEAD" || fail "report at the pushed branch blocked: $out"
+out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtThePushedBranch_PassesWithUnpushedCommits: the PR head is the pushed branch, not the worktree HEAD, because a commit not yet pushed is not in the PR" || fail "report at the pushed branch blocked: $out"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(git rev-parse HEAD)" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q "$pushed_commit" && pass "ReportAtUnpushedHead_Blocks: the report is refused against the pushed commit, because the pushed branch is what the PR holds" || fail "report at unpushed head not blocked: $out"
 git remote set-url origin "$work/unreachable-remote.git"
