@@ -321,9 +321,10 @@ async function readPlan(roots: string[], item: string): Promise<GatePlan | null>
 
 const VERIFY_REPORT_FILE = 'verify.md';
 
-/** The item's verify report: the first non-blank `VERIFY_REPORT_FILE` in its reports under each root in turn, or null. */
-async function readVerifyReport(roots: string[], item: string): Promise<GateReport | null> {
+/** The item's verify report: the first non-blank `VERIFY_REPORT_FILE` in its reports under each root in turn, or null once `signal` ends the read. */
+async function readVerifyReport(roots: string[], item: string, signal: AbortSignal): Promise<GateReport | null> {
   for (const root of roots) {
+    if (signal.aborted) return null;
     const text = await readText(path.join(reportsDir(root, item), VERIFY_REPORT_FILE));
     if (text !== null && text.trim() !== '') return { file: VERIFY_REPORT_FILE, text };
   }
@@ -546,7 +547,7 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
     const claimed = claims.find((claim) => claim.item === gate.item)?.worktreePath;
     const roots = [...new Set([...(claimed === undefined ? [] : [claimed]), ...pool, root])];
     gate.plan = await readPlan(roots, gate.item);
-    if (showsVerifyReport(gate)) gate.verifyReport = await readVerifyReport(roots, gate.item);
+    if (showsVerifyReport(gate)) gate.verifyReport = await readVerifyReport(roots, gate.item, new AbortController().signal);
   }
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
