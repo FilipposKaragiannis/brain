@@ -365,9 +365,11 @@ printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$head_commit"
 out="$(gate '{}')"; [ -z "$out" ] && pass "ThirdAttemptAtTheHead_EscalatesWithoutBlock: no block, because the third failed attempt hands off to a person" || fail "third attempt blocked: $out"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtTheHeadBeforeAPr_Passes: no block, because the PR ships exactly the commit the report checked" || fail "passing verify blocked: $out"
-printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(git rev-parse --short HEAD)" > .flow/reports/local-task-1/verify.json
+short_head_commit="$(git rev-parse --short HEAD)"
+short_unknown_commit="$(printf '%s' "$unknown_commit" | cut -c1-"${#short_head_commit}")"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$short_head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtTheShortHead_Passes: no block, because verify writes the short commit id and it names the PR head" || fail "report with the short head blocked: $out"
-printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(printf '%s' "$unknown_commit" | cut -c1-8)" > .flow/reports/local-task-1/verify.json
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$short_unknown_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q "$head_commit" && pass "StaleReportAtAShortCommit_Blocks: a short id of another commit is refused, because it names no prefix of the PR head" || fail "stale short report not blocked: $out"
 printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$unknown_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q "$head_commit" && pass "StalePassBeforeAPr_Blocks: a pass made on another commit is refused against the worktree HEAD, because the PR would ship code the report never checked" || fail "stale report not blocked: $out"
