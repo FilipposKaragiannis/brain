@@ -362,7 +362,7 @@ skip_in_use() {
   job_say "$1: $in_use_why, skipped" >/dev/null; tell_in_use "$1"
   if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
 }
-steward_said() { sed 's/^flow: //' "$1" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'; }
+steward_said() { sed 's/^flow: //' "$1" 2>/dev/null | awk '!said_before[$0]++' | tr '\n' ' ' | sed 's/ *$//'; }
 # The job has no session to ask, so a gate asks the owner and keeps the next runs off the PR. Nothing
 # of the pass is saved, so it counts toward no two-pass skip.
 gate_no_worktree() {
@@ -413,7 +413,7 @@ pass() {
     job_say "$t: the pass works in $made_worktree" >/dev/null
   fi
   if [ -n "$forced" ]; then
-    printf '%s\n' "$forced" > "$f.forced"
+    printf '%s\n' "$forced" > "$f.forced.$$" && mv "$f.forced.$$" "$f.forced"
     job_say "$t: open thread(s) $forced still wait on a reply, one more pass" >/dev/null
   fi
   rn_item=""; resume=""; rnote=""; resume_note "$t" > "$out" && resume="$(cat "$out")"

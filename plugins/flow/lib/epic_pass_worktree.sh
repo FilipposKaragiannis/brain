@@ -4,9 +4,10 @@
 # worktree on the epic branch at the tip the remote holds (steward.sh claim --branch); with the
 # pool full, or the branch checked out elsewhere, a temporary worktree detached at that tip
 # (steward.sh tmp tip). The worktree goes once the pass ends, unless it holds work the remote
-# lacks: then it stays, so the next pass continues from it. The job records the worktree a pass made
-# in a file of its own, as no claim tells a pass's claim from a closeout's, and lets go of only
-# what that file names.
+# lacks, uncommitted or unpushed: then it stays, so the next pass continues from it. A pool claim
+# released with unpushed commits would leave the local epic branch ahead of the remote, which every
+# later claim of it refuses. The job records the worktree a pass made in a file of its own, as no
+# claim tells a pass's claim from a closeout's, and lets go of only what that file names.
 # Sourced by jobs/comments.sh after lib/flow.sh and lib/base.sh, never run.
 # shellcheck disable=SC2154 # lib/base.sh, sourced first, sets the claim exit codes
 
@@ -63,7 +64,7 @@ epic_pass_pushed() {
 }
 
 epic_pass_end_worktree() {
-  if ! epic_pass_temporary "$2"; then "$FLOW_PLUGIN/scripts/steward.sh" release "$2" >/dev/null; return; fi
   epic_pass_pushed "$1" "$2" || { echo "flow: $2 holds commits origin/$(epic_branch "$1") lacks, or the remote cannot be read" >&2; return 1; }
-  "$FLOW_PLUGIN/scripts/steward.sh" tmp remove "$2" >/dev/null
+  if epic_pass_temporary "$2"; then "$FLOW_PLUGIN/scripts/steward.sh" tmp remove "$2" >/dev/null; return; fi
+  "$FLOW_PLUGIN/scripts/steward.sh" release "$2" >/dev/null
 }

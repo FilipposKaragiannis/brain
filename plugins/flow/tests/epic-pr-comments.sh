@@ -24,10 +24,12 @@ remote_epic_tip="$(git -C "$work/origin.git" rev-parse "refs/heads/$epic_branch"
 printf 'the body' | gh pr create --base main --head "$epic_branch" --title Drills --body-file - >/dev/null
 env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" "$epic" https://gh/pull/91 >/dev/null
 export HOST_LOG="$work/host.log"
+export COPIED_FILE="$copied_file" SETUP_MARK="$setup_mark"
 cat > "$work/bin/claude" <<'HOST'
 #!/bin/sh
-printf '%s\t%s\t%s\t%s\t%s\n' "$PWD" "$(git rev-parse HEAD 2>/dev/null)" "$(ls .env.local 2>/dev/null)" "$(ls .setup-ran 2>/dev/null)" "$*" >> "$HOST_LOG"
+printf '%s\t%s\t%s\t%s\t%s\n' "$PWD" "$(git rev-parse HEAD 2>/dev/null)" "$(ls "$COPIED_FILE" 2>/dev/null)" "$(ls "$SETUP_MARK" 2>/dev/null)" "$*" >> "$HOST_LOG"
 [ -z "${LEAVE_WORK:-}" ] || printf 'half done\n' > "$LEAVE_WORK"
+[ -z "${LEAVE_COMMIT:-}" ] || { printf 'committed\n' > "$LEAVE_COMMIT" && git add -- "$LEAVE_COMMIT" && git commit -qm "$LEAVE_COMMIT"; }
 HOST
 chmod +x "$work/bin/claude"
 pass_start() { grep "comments $epic" "$HOST_LOG" | tail -1 | cut -f"$1"; }
@@ -39,6 +41,7 @@ physical() { (cd "$1" 2>/dev/null && pwd -P); }
 pool_folders="$(physical "$work/wt-1") $(physical "$work/wt-2")"
 in_the_pool() { case " $pool_folders " in *" $(physical "$1") "*) return 0 ;; esac; return 1; }
 epic_gate() { "$P/adapters/github/read.sh" "$epic" | jget state.gate; }
+epic_gate_message() { jget message < ".flow/gates/$(item_slug "$epic").json"; }
 
 echo "comments job on an epic PR with a free pool"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
@@ -50,6 +53,14 @@ check_all "EpicPrWithAFreePool_PassReleasesItsPoolWorktreeWhenItEnds: the epic h
   '[ -z "$("$P/scripts/steward.sh" find "$epic")" ]'
 check_all "EpicPrWithAFreePool_SetupRunsBeforeThePassStarts: the pass builds and tests in its worktree, so worktree_setup must run there as for any claim" \
   '[ "$(pass_start_set_up)" = "$setup_mark" ]'
+
+echo "comments job on an epic PR whose pass committed and did not push"
+: > "$HOST_LOG"; LEAVE_COMMIT=unpushed.txt "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
+committed_in="$(pass_start_folder)"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
+check_all "EpicPrWhosePassLeftUnpushedCommits_NextPassStartsInTheSameWorktree: a release would leave the local epic branch ahead of the remote, which every later claim of it refuses, so the next pass must continue in that worktree" \
+  '[ -n "$committed_in" ] && [ "$(physical "$(pass_start_folder)")" = "$(physical "$committed_in")" ]'
+git -C "$committed_in" reset -q --hard "$remote_epic_tip"; "$P/jobs/comments.sh" claude "$epic" >/dev/null 2>&1
 
 echo "comments job on an epic PR with every pool worktree claimed"
 for task in $other_tasks; do "$P/scripts/steward.sh" claim "$task" >/dev/null 2>&1; done
@@ -90,6 +101,9 @@ git remote set-url origin "$work/unreachable.git"
 "$P/jobs/comments.sh" claude >/dev/null 2>&1
 check_all "EpicPrWithNoWorktreeToBeHad_RaisesAGateOnTheEpic: the job has no session to ask, so the owner must learn the pass could not work at all" \
   '[ "$(epic_gate)" = escalation ]'
+steward_reason="$("$P/scripts/steward.sh" claim "$epic" --branch "$epic_branch" 2>&1 >/dev/null | sed 's/^flow: //' | head -n 1)"
+check_all "EpicPrWithNoWorktreeToBeHad_GateNamesTheStewardsReason: the owner can only fix what stops the worktree when the gate says what it is" \
+  '[ -n "$steward_reason" ] && case "$(epic_gate_message)" in *"$steward_reason"*) true ;; *) false ;; esac'
 git remote set-url origin "$work/origin.git"
 "$P/adapters/github/write-state.sh" "$epic" gate=merge >/dev/null
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
