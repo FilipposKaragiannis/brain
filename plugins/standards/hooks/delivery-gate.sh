@@ -6,8 +6,10 @@
 #   <reports>/verify.json                  {status, checks, attempts} the verify report
 # Blocks (decision: block) while a step is in flight and its result is missing, and at the pr
 # step while the verify report is not pass (until attempts reach 3, which is an escalation and a
-# human gate). Honours stop_hook_active so one block never becomes a loop. FLOW_HOME overrides
-# the main worktree's .flow (tests).
+# human gate), and at the pr step whenever the report's head commit is not the PR head: the
+# pushed branch the worktree tracks (no network call), or the worktree HEAD before one exists.
+# Honours stop_hook_active so one block never becomes a loop. FLOW_HOME overrides the main
+# worktree's .flow (tests).
 . "$(dirname "$0")/lib.sh"
 use_working_git
 payload="$(read_payload)"
@@ -24,6 +26,7 @@ run="$(cat "$run_file")"
 step="$(json_get "$run" "step")"
 reports="$(json_get "$run" "reports")"
 [ -n "$reports" ] || reports="$root/.flow/reports/$slug"
+pr_head() { git rev-parse --verify --quiet '@{upstream}^{commit}' 2>/dev/null || git rev-parse --verify --quiet 'HEAD^{commit}'; }
 reason=""
 if [ -n "$step" ] && [ ! -f "$reports/$step.json" ]; then
   reason="Step $step of $item is in flight and has no result. Write $reports/$step.json ({\"status\": \"done|fail|gate\", \"summary\": ...}) before stopping, or report the failure so the orchestrator can run advance.sh --status fail."
@@ -35,7 +38,11 @@ elif [ "$step" = "pr" ]; then
     content="$(cat "$report")"
     status="$(json_get "$content" "status")"
     attempts="$(json_get "$content" "attempts")"
-    if [ "$status" != "pass" ] && ! [ "${attempts:-0}" -ge 3 ] 2>/dev/null; then
+    report_head="$(json_get "$content" "head")"
+    current_head="$(pr_head)"
+    if [ "$report_head" != "$current_head" ]; then
+      reason="The verify report for $item was made at ${report_head:-no commit} but the PR head is ${current_head:-unknown}. Run verify again on the PR head, whatever the attempt count."
+    elif [ "$status" != "pass" ] && ! [ "${attempts:-0}" -ge 3 ] 2>/dev/null; then
       failing="$(json_list "$content" "checks" | while read -r check; do
         [ "$(json_get "$check" "status")" = "pass" ] || printf '%s: %s. ' "$(json_get "$check" "name")" "$(json_get "$check" "summary")"
       done)"

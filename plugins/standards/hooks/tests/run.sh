@@ -357,12 +357,28 @@ out="$(gate '{}')"; [ -z "$out" ] && pass "result written: no block" || fail "re
 printf '{"item":"local:task/1","step":"pr","reports":"%s/.flow/reports/local-task-1"}\n' "$PWD" > .flow/runs/local-task-1.json
 printf '{"status":"done"}\n' > .flow/reports/local-task-1/pr.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q 'No verify report' && pass "pr without a verify report blocks" || fail "pr without verify not blocked: $out"
-printf '{"status":"fail","attempts":1,"checks":[{"name":"build","status":"pass","summary":"ok"},{"name":"tests","status":"fail","summary":"2 failed"}]}\n' > .flow/reports/local-task-1/verify.json
+head_commit="$(git rev-parse HEAD)"
+printf '{"status":"fail","attempts":1,"head":"%s","checks":[{"name":"build","status":"pass","summary":"ok"},{"name":"tests","status":"fail","summary":"2 failed"}]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; printf '%s' "$out" | grep -q 'tests: 2 failed' && pass "pr with a failing verify blocks with the failing check" || fail "pr with failing verify: $out"
-printf '{"status":"fail","attempts":3,"checks":[]}\n' > .flow/reports/local-task-1/verify.json
+printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
 out="$(gate '{}')"; [ -z "$out" ] && pass "third attempt escalates (no block)" || fail "third attempt blocked: $out"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$head_commit" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; [ -z "$out" ] && pass "passing verify at the head: no block" || fail "passing verify blocked: $out"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(printf '0%.0s' $(seq 40))" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && printf '%s' "$out" | grep -q 'PR head' && pass "StaleReportBeforeAPr_Blocks: a pass made on another commit is refused" || fail "stale report not blocked: $out"
+printf '{"status":"fail","attempts":3,"head":"%s","checks":[]}\n' "$(printf '0%.0s' $(seq 40))" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && pass "StaleReportAfterThirdAttempt_Blocks: escalation does not skip the commit check" || fail "stale third-attempt report not blocked: $out"
 printf '{"status":"pass","attempts":1,"checks":[]}\n' > .flow/reports/local-task-1/verify.json
-out="$(gate '{}')"; [ -z "$out" ] && pass "passing verify: no block" || fail "passing verify blocked: $out"
+out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && pass "ReportWithoutACommit_Blocks: nothing shows which commit it checked" || fail "report without a commit not blocked: $out"
+git init -q --bare "$work/gate-remote.git"
+git remote add origin "$work/gate-remote.git" && git push -q -u origin HEAD
+pushed_commit="$(git rev-parse HEAD)"
+printf 'later\n' > later.txt && git add later.txt && git commit -qm "later local commit"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$pushed_commit" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; [ -z "$out" ] && pass "ReportAtThePushedBranch_PassesWithUnpushedCommits: the PR head is the pushed branch, not the worktree HEAD" || fail "report at the pushed branch blocked: $out"
+printf '{"status":"pass","attempts":1,"head":"%s","checks":[]}\n' "$(git rev-parse HEAD)" > .flow/reports/local-task-1/verify.json
+out="$(gate '{}')"; printf '%s' "$out" | grep -q '"decision":"block"' && pass "ReportAtUnpushedHead_Blocks: the pushed branch is what the PR holds" || fail "report at unpushed head not blocked: $out"
+git reset -q --hard "$pushed_commit"; git remote remove origin
 rm -rf .flow
 
 echo "json fallback without jq"
