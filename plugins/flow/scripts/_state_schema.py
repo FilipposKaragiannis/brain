@@ -80,7 +80,8 @@ APPLY_ORDER = tuple(state_key.key for state_key in KEY_MAP) + RECORD_PAIR_KEYS
 
 Pair = namedtuple("Pair", ("key", "value"))
 RecordPaths = namedtuple("RecordPaths", ("record", "closed", "lock"))
-Outcome = namedtuple("Outcome", ("code", "message"))
+NO_OUTPUT = ""
+Outcome = namedtuple("Outcome", ("code", "message", "output"), defaults=(NO_OUTPUT,))
 
 
 DONE = Outcome(EXIT_DONE, "")

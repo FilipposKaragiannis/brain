@@ -157,6 +157,23 @@ record import > "$work/foreign.out" 2>&1
 check "ImportOfALocalItemWithAGithubId_RecordsNothingForThatId: because a tracker's list speaks only for its own items" \
   'has_no_record "$foreign_id"'
 
+echo "import under a locale that cannot spell a worktree: every row still comes out"
+latin_locale=en_US.ISO8859-1
+if locale -a 2>/dev/null | grep -qx "$latin_locale"; then
+  new_repo latin
+  unspelled="$(new_task "Worktree outside Latin-1")"
+  "$local_adapter/write-state.sh" "$unspelled" step=implement "worktree=wt-€"
+  spelled="$(new_task "Worktree claimed here")"
+  "$local_adapter/write-state.sh" "$spelled" step=implement worktree=wt-1
+  mkdir -p ../wt-1/.flow && printf '{"item":"%s"}\n' "$spelled" > ../wt-1/.flow/claim.json
+  LC_ALL="$latin_locale" record import > "$work/latin.out" 2>&1; code=$?
+  check "ImportUnderALatin1Locale_ExitsZero: because a worktree the locale cannot spell fails nothing" '[ "$code" -eq 0 ]'
+  check "ImportUnderALatin1Locale_AssignsTheItemItImports: because the row of a worktree the locale cannot spell never stops the rows after it" \
+    '[ "$(frontmatter "$spelled" assignee)" = "$owner_name" ]'
+else
+  echo "  skip no $latin_locale locale here, so no output can fail to spell a worktree"
+fi
+
 echo "import --strip with a record that does not parse: that item is skipped, the rest still runs"
 new_repo unreadable
 broken="$(new_task "Record does not parse")"

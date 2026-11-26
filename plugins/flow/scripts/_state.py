@@ -22,8 +22,9 @@ status prints the tracker status the record stands for (_state_schema.pushed_sta
 no record or no claim.
 import reads the trackers' lists on stdin, one line per tracker (its id prefix, a tab, a JSON array),
 and the claim.json of each pool entry (a relative one under the flow home's parent), and prints
-the rows _state_import.py gives, tab separated. Under write it first seeds the record of each item it imports, under the item's
-lock, as set seeds one; an item whose record stays busy is skipped. It exits 1 when a listed
+the rows _state_import.py gives, tab separated, with a stand-in for what the locale cannot spell.
+Under write it first seeds the record of each item it imports, under the item's lock, as set seeds
+one; an item whose record stays busy is skipped. It exits 1 when a listed
 item's record does not parse or one stays busy.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
@@ -293,9 +294,8 @@ def command_import(options: command_line.Options, random_bytes: Callable[[int], 
     slugs = recorded_slugs_warning_unreadable(options, listing.items)
     rows = importing.import_rows(listing.items, slugs.recorded, slugs.unreadable, claimed_items(options))
     unseeded = seed_imports(options, rows, listing.items, random_bytes)
-    for row in importing.rows_after_writes(rows, unseeded):
-        print(importing.row_text(row))
-    return schema.Outcome(schema.EXIT_UNREADABLE, "") if slugs.unreadable or unseeded else schema.DONE
+    output = "".join(importing.row_text(row) + "\n" for row in importing.rows_after_writes(rows, unseeded))
+    return schema.Outcome(schema.EXIT_UNREADABLE if slugs.unreadable or unseeded else schema.EXIT_DONE, "", output)
 
 
 def warn(message):
@@ -319,6 +319,11 @@ def main(arguments, random_bytes):
         outcome = commands(random_bytes)[options.command](options) if not parsed.outcome.code else parsed.outcome
     except OSError as error:
         outcome = schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error))
+    if outcome.output:
+        # The records are written by now, so tracker text the locale cannot spell gets a stand-in
+        # rather than stopping the rows the caller still acts on.
+        sys.stdout.reconfigure(errors="replace")
+        sys.stdout.write(outcome.output)
     if outcome.message:
         sys.stderr.write("flow: %s\n" % outcome.message)
     return outcome.code
