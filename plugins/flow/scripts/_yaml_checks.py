@@ -86,11 +86,12 @@ def map_lines(lines: Iterator[Line], keys: List[str]) -> Iterator[Line]:
             continue
         if line.indent < depth:
             return
-        if line.indent == depth and line.key == keys[depth]:
-            depth += 1
-            if depth == len(keys):
-                yield from under(lines, depth)
-                return
+        if line.indent != depth or line.key != keys[depth]:
+            continue
+        depth += 1
+        if depth == len(keys):
+            yield from under(lines, depth)
+            return
 
 
 def under(lines: Iterator[Line], depth: int) -> Iterator[Line]:
