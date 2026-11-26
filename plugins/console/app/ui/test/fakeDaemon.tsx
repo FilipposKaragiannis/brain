@@ -273,7 +273,7 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 }
 
 export function waitingGate(item: string, gate: string): Gate {
-  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null, session: null,
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, verifyReport: null, body: null, quiz: null, session: null,
     options: [], raisedBy: null, answeredBy: null, condition: null, footer: null, twinOf: null, twins: [] };
 }
 

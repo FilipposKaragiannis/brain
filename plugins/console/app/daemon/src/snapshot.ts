@@ -313,6 +313,8 @@ export type Gate = {
   pull: { number: number; url: string; state: PullState; unresolvedThreads: number } | null;
   /** The item's plan, `plan.md` else `epic.md` in its reports (the claimed worktree's, else the main one's), or null with none. */
   plan: GatePlan | null;
+  /** The item's `verify.md` in its reports, read for a merge, a feel-test and a verify escalation, else null. */
+  verifyReport: GateReport | null;
   /** The item's issue body as the board last read it, or null before a board read. */
   body: string | null;
   /** The quiz the explain step wrote for the item, with its last result, or null when the item has none. */
@@ -345,6 +347,8 @@ export type Gate = {
 };
 
 export type GatePlan = { file: string; text: string };
+
+export type GateReport = { file: string; text: string };
 
 /**
  * Why an open item is the owner's to close with no gate asking: it was split into tracker tasks and

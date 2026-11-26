@@ -7,7 +7,7 @@ import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
-import type { FlowEvent, GateOption, GatePlan, GateQuestion, PickFilter, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
+import type { FlowEvent, GateOption, GatePlan, GateQuestion, GateReport, PickFilter, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
 import { readQuizzes } from '../quiz.ts';
 import { readRetroFacts } from '../retro.ts';
 import type { RetroFacts } from '../retro.ts';
@@ -55,6 +55,7 @@ export type FlowConfig = {
  */
 export type GateRecord = {
   item: string; gate: string; message: string; time: string; host: string; questions: GateQuestion[] | null; plan: GatePlan | null;
+  verifyReport: GateReport | null;
   options: GateOption[]; raisedBy: string | null; answeredBy: string | null; condition: string | null; footer: string | null;
   fromStep: string | null;
 };
@@ -318,6 +319,22 @@ async function readPlan(roots: string[], item: string): Promise<GatePlan | null>
   return null;
 }
 
+const VERIFY_REPORT_FILE = 'verify.md';
+
+/** The item's verify report: the first non-blank `VERIFY_REPORT_FILE` in its reports under each root in turn, or null. */
+async function readVerifyReport(roots: string[], item: string): Promise<GateReport | null> {
+  for (const root of roots) {
+    const text = await readText(path.join(reportsDir(root, item), VERIFY_REPORT_FILE));
+    if (text !== null && text.trim() !== '') return { file: VERIFY_REPORT_FILE, text };
+  }
+  return null;
+}
+
+/** Whether the gate's card shows the item's verify report. */
+function showsVerifyReport(gate: GateRecord): boolean {
+  return gate.gate === 'merge';
+}
+
 async function readClaims(paths: string[]): Promise<ClaimRecord[]> {
   const claims: ClaimRecord[] = [];
   for (const worktreePath of paths) {
@@ -512,13 +529,15 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const gateListError = await fillGateQuestions(root, pluginRoot, pluginVersion, found, runner, cache);
   const gates: GateRecord[] = found.map((gate) => {
     const cached = cache.get(gate.item);
-    return { ...gate, questions: cached !== undefined && cached.message === gate.message ? cached.questions : null, plan: null };
+    return { ...gate, questions: cached !== undefined && cached.message === gate.message ? cached.questions : null, plan: null, verifyReport: null };
   });
   // A split releases the item's worktree but leaves its plan there, so the pool comes after the claim, as steward.sh's plan_file looks.
   const pool = poolPaths(root, config);
   for (const gate of gates) {
     const claimed = claims.find((claim) => claim.item === gate.item)?.worktreePath;
-    gate.plan = await readPlan([...new Set([...(claimed === undefined ? [] : [claimed]), ...pool, root])], gate.item);
+    const roots = [...new Set([...(claimed === undefined ? [] : [claimed]), ...pool, root])];
+    gate.plan = await readPlan(roots, gate.item);
+    if (showsVerifyReport(gate)) gate.verifyReport = await readVerifyReport(roots, gate.item);
   }
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
