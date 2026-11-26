@@ -130,6 +130,8 @@ plugins/flow/tests/state-views.sh	SC2034	2
 plugins/flow/tests/state-views.sh	SC2154	7
 plugins/flow/tests/state.sh	SC2034	7
 plugins/flow/tests/state.sh	SC2154	4
+plugins/flow/tests/tracker-untouched.sh	SC2034	3
+plugins/flow/tests/tracker-untouched.sh	SC2154	6
 plugins/flow/tests/unattended.sh	SC2034	3
 plugins/flow/tests/unattended.sh	SC2154	2
 plugins/flow/tests/verify-base-command.sh	SC2034	3

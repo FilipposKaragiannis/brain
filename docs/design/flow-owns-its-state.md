@@ -73,11 +73,11 @@ Shell API (`lib/state.sh`)
 | `record_set <item> <pair>...` | 1a | the mirror, then create or merge under the lock, then the views the pairs name; a pair outside the grammar exits 2 |
 | `take_item <item>` | 1a | this machine holds the item: `claim.machine`, `.host`, `.claimed_at` when the claim has no machine; slice 3 adds assign and push |
 | `record_archive <item>` | 1a | to `closed/` |
-| `item_read <id>`, `items_join` (stdin) | 1b | adapter item(s) with `state` joined from the record (all twenty keys, the record winning whole) and stamped `state_from`: `record`; `tracker` with no record under `labels`; `none`, an empty state, under `none` |
+| `item_read <id>`, `items_join` (stdin) | 1b | adapter item(s) with `state` joined from the record (all twenty keys, the record winning whole) and stamped `state_from`: `record`; `tracker` with no record under `labels`; `none`, an empty state, under `none`. 4a: `tracker` with no record in both modes, and `none` is no longer stamped |
 | `items_listed <adapter> [<argument>...]` | 1b | `adapter list`, joined as `items_join` does |
-| `record_list runs\|gates [<item>]` | 1b | one row per line of each run in flight or gate raised, from the records; under `labels` an item with no record lists its run or gate file |
+| `record_list runs\|gates [<item>]` | 1b | one row per line of each run in flight or gate raised, from the records; under `labels` an item with no record lists its run or gate file. 4a: in both modes |
 | `run_record <item>`, `gate_record <item>` | 1b | the item's run or gate row |
-| `record_linked_pr <item>` | 1b | the `pr` and `pr_host` `link-pr` left on the tracker, copied into the record |
+| `record_linked_pr <item>` | 1b | the `pr` and `pr_host` `link-pr` left on the tracker, copied into the record. Deleted in 4a: `link_and_record_pull_request <item> <url> <host>` (`lib/pull_request.sh`) runs `adapter link-pr`, then records `pr` and `pr_host` |
 | `state_get <item-json> <key>`, `state_list` (`lib/flow.sh`) | 1b | one state field of a joined item; refuse an item with no `state_from` (an adapter's own read) |
 | `tracker_push <item>` | 3 | `set-status` from the record |
 | `record_drop <item>` | 5 | delete, for the tidy |
@@ -260,6 +260,7 @@ Order: 1a (gh#180), 1b (gh#176), 2 (gh#181), 3 (gh#177), 4a (gh#182), 5 (gh#178)
 - Compat: lazy seed and `tracker_state: labels` for one release; adapters keep `write-state.sh`.
 - Touches: `plugins/flow/scripts/{_state.py,_state_schema.py,state.sh,next.sh,advance.sh,steward.sh}`, `plugins/flow/lib/state.sh`, `plugins/flow/adapters/*/{link-pr,strip-state}.sh`, `plugins/flow/adapters/{github/_gh.sh,jira/_jira.py,local/_item.py,README.md}`, `plugins/flow/profiles.json`, `plugins/flow/skills/{next,plan,init}/**`, `plugins/flow/agents/pr-creator.md` and its Codex twin, `plugins/flow/tests/{migrate,run,adapter-contract}.sh`.
 - Proof: new `tests/migrate.sh` (import, strip, seed, `labels` keeps the mirror); run.sh checks on labels after flow ops move to records.
+- As built: the read of an item with no record no longer follows the mode. 1b read it empty under `none`, which was right while `none` was a test lane; slices 1a to 3 ship with this default, so every item in flight is unrecorded at the upgrade, and under the 1b rule each would start again from its first step. An unrecorded item now reads the tracker's state and lists its run and gate files in both modes, and `tracker_state` switches the mirror only (ADR 0005). One seed rule serves the lazy seed and `state.sh import`: every state key the tracker holds but `size`, which stays the tracker's own until the flow re-sizes, and `claim.machine` when that state has a step or a worktree. Import skips an item whose worktree no `claim.json` on this machine names, and `--strip` cleans only the items recorded on this machine, through `strip-state.sh`, so a first machine cannot erase what another has not imported; `--strip` under `labels` exits 2. `link-pr` writes no state and has orchestrator callers only, through `link_and_record_pull_request`: the pr step (host from the run), `advance.sh`'s branch lookup, `epic-pr.sh` (its own host) and the sweep (no host). The pr-creator reports its PR in the result's `pr` and calls `link-pr.sh` no more. `tests/tracker-untouched.sh` runs an item through every step on the three fakes and finds no flow label, comment, property or frontmatter key.
 
 **5. Health drift**
 - Goal: every disagreement between tracker, record and worktree has one repair.
