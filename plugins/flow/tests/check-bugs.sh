@@ -54,15 +54,31 @@ run_broken() {
   echo "$1" > "$work/broken.mode"
   "$check_job" claude --as check-broken > "$work/broken-run.out" 2>&1
 }
+# write_config: the config from config_base and config_bug_adapter, adapters.bug left out when
+# the adapter is empty.
+write_config() {
+  {
+    printf 'adapters:\n  default: local\n'
+    if [ -n "$config_bug_adapter" ]; then printf '  bug: %s\n' "$config_bug_adapter"; fi
+    cat <<YAML
+base: $config_base
+notify:
+  desktop: false
+jobs:
+  checks:
+    smoke:
+      command: sh $work/probe.sh
+      schedule: daily 02:00
+    broken:
+      command: sh $work/broken.sh
+      schedule: every 30m
+YAML
+  } > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
+}
 # set_base <branch>: base in the config.
-set_base() {
-  sed "s|^base: .*|base: $1|" "$flow_home_folder/config.yaml" > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
-}
+set_base() { config_base="$1"; write_config; }
 # set_bug_adapter <name>: adapters.bug in the config, or none when the name is empty.
-set_bug_adapter() {
-  awk -v adapter="$1" '$0 ~ /^  bug: / { next } { print } $0 == "  default: local" && adapter != "" { print "  bug: " adapter }' \
-    "$flow_home_folder/config.yaml" > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
-}
+set_bug_adapter() { config_bug_adapter="$1"; write_config; }
 jobs_script="$plugin/scripts/jobs.sh"
 check_job="$plugin/jobs/check.sh"
 
@@ -86,21 +102,8 @@ case "\$(cat "$work/broken.mode")" in
 esac
 exit 1
 SH
-cat > "$flow_home_folder/config.yaml" <<YAML
-adapters:
-  default: local
-base: main
-notify:
-  desktop: false
-jobs:
-  checks:
-    smoke:
-      command: sh $work/probe.sh
-      schedule: daily 02:00
-    broken:
-      command: sh $work/broken.sh
-      schedule: every 30m
-YAML
+config_base=main; config_bug_adapter=""
+write_config
 
 echo "checks: a broken check files one bug"
 run_broken lines
