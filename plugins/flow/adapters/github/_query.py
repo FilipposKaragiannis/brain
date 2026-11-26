@@ -24,8 +24,10 @@ import sys
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "scripts"))
 import _call  # noqa: E402
 import _state_comment  # noqa: E402
+import _state_schema  # noqa: E402
 
 WANT_FIELDS = bool(os.environ.get("GH_SIZE_FIELD") or os.environ.get("GH_PRIORITY_FIELD") or os.environ.get("GH_AREA_FIELD"))
 WANT_PROJECT = bool(os.environ.get("GH_PROJECT"))
@@ -96,7 +98,8 @@ ISSUE_STATES = {"open", "closed"}
 PAGE_SIZE = int(os.environ.get("FLOW_GH_PAGE", "50"))
 SINGLE_READ, EVERY_ISSUE, LABELLED_ISSUES = "single read", "every issue", "labelled issues"
 LIST_COMMENTS = EVERY_ISSUE if os.environ.get("FLOW_LIST_EVERY_STATE") else LABELLED_ISSUES
-FLOW_LABEL_KEYS = ("step", "gate", "wt", "flow")
+LABEL_KEY_SEPARATOR = ":"
+FLOW_LABEL_KEYS = tuple(prefix.rstrip(LABEL_KEY_SEPARATOR) for prefix in _state_schema.FLOW_LABEL_PREFIXES)
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
 REST_PAGE_SIZE = 100
 MODE_ARGUMENT, REPOSITORY_ARGUMENT, MARKER_ARGUMENT = 1, 2, 3
