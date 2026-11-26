@@ -24,6 +24,7 @@ has_record() { record_path="$(record path "$1")" && [ -f "$record_path" ]; }
 has_no_record() { record_path="$(record path "$1")" && [ ! -f "$record_path" ]; }
 stores_snapshot() { cat .flow/state/*.json .flow/items/*/*.md 2>/dev/null | cksum; }
 said_would() { grep '^would ' "$1" | grep -qF -- " $2"; }
+said_would_strip() { grep -qxF -- "would strip $2" "$1"; }
 reports_import_of() { cut -d, -f1 "$1" | grep -qxF -- "import $2"; }
 unclaimed_why="$(scripts_constant import.UNCLAIMED_WHY | sed 's/%s/wt-9/')"
 unreadable_why="$(scripts_constant import.UNREADABLE_WHY)"
@@ -126,7 +127,7 @@ record import --dry-run --strip > "$work/dry-run-strip.out" 2>&1
 check "ImportDryRunStrip_ChangesNoRecordAndNoItem: because a dry run only says what it would strip" \
   '[ "$(stores_snapshot)" = "$before_dry_run_strip" ]'
 check "ImportDryRunStrip_NamesTheRecordedItemItWouldStrip: because the owner sees the strip before it runs" \
-  'said_would "$work/dry-run-strip.out" "$claimed"'
+  'said_would_strip "$work/dry-run-strip.out" "$claimed"'
 record import --strip > "$work/strip.out" 2>&1; code=$?
 check "ImportStrip_ExitsZero: because every strip landed" '[ "$code" -eq 0 ]'
 check "ImportStrip_TakesTheStateKeysOff: because the record holds them now" 'no_stripped_key_left "$claimed"'
