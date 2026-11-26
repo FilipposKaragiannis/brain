@@ -37,7 +37,8 @@ migrate_tracker_lists() (
   while IFS= read -r flow_migrate_tracker; do
     [ -n "$flow_migrate_tracker" ] || continue
     if flow_migrate_list="$( (FLOW_LIST_EVERY_STATE=1; export FLOW_LIST_EVERY_STATE; adapter list "$flow_migrate_tracker") </dev/null)"; then
-      printf '%s\n' "$flow_migrate_list" | tr -d '\n'; echo
+      flow_migrate_prefix=""; read -r flow_migrate_prefix < "$FLOW_PLUGIN/adapters/$flow_migrate_tracker/prefix"
+      printf '%s\t' "$flow_migrate_prefix"; printf '%s\n' "$flow_migrate_list" | tr -d '\n'; echo
     else
       echo "flow: import: the $flow_migrate_tracker list failed, so its items are not imported" >&2
       flow_migrate_list_failed=1
@@ -77,7 +78,7 @@ ROWS
 )
 
 migrate_row_shaped() {
-  case "$1:$3" in import:held|import:unheld|skip:?*|strip:) item_id_shaped "$2" ;; *) return 1 ;; esac
+  case "$1:$3" in import:held|import:unheld|skip:?*|strip:) [ -n "$2" ] ;; *) return 1 ;; esac
 }
 
 migrate_import_row() (

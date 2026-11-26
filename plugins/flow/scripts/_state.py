@@ -20,9 +20,9 @@ above this one is refused, exit 1. A refused pair writes nothing, exit 2.
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
 status prints the tracker status the record stands for (_state_schema.pushed_status), nothing with
 no record or no claim.
-import reads the trackers' lists on stdin, one JSON array per line, and the claim.json of each pool
-entry (a relative one under the flow home's parent), and prints the rows _state_import.py gives,
-tab separated. Under write it first seeds the record of each item it imports, under the item's
+import reads the trackers' lists on stdin, one line per tracker (its id prefix, a tab, a JSON array),
+and the claim.json of each pool entry (a relative one under the flow home's parent), and prints
+the rows _state_import.py gives, tab separated. Under write it first seeds the record of each item it imports, under the item's
 lock, as set seeds one; an item whose record stays busy is skipped. It exits 1 when a listed
 item's record does not parse or one stays busy.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.

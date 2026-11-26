@@ -1,6 +1,7 @@
 """Which open items state.sh import records, skips or strips. Pure: it reads only what it is given.
 
-parsed_lists reads the trackers' lists, one JSON array of adapter items per line. import_rows takes
+parsed_lists reads the trackers' lists, one line per tracker: its id prefix, a tab and a JSON array of
+its adapter items, and keeps the items whose id has that prefix and a slug shape. import_rows takes
 those items, the slugs of this machine's open records, the slugs of those that do not parse and
 the items a pool worktree's claim.json names here, and returns one row per item to record or skip,
 then one per item to strip:
@@ -34,7 +35,8 @@ NO_ATTEMPTS = "0"
 UNCLAIMED_WHY = "its worktree %s is not claimed on this machine"
 UNREADABLE_WHY = "its flow record does not parse"
 UNWRITTEN_WHY = "its flow record could not be written"
-NOT_LISTS = "import takes one JSON array of adapter items per line on stdin"
+NOT_LISTS = "import takes one line per tracker on stdin: its id prefix, a tab and a JSON array of its adapter items"
+TRACKER_PREFIX_END = "\t"
 NO_STATE = MappingProxyType({})
 NO_ROW = None
 CLAIM_ITEM_FIELD = "item"
@@ -53,19 +55,29 @@ def listed_item(entry: dict) -> ListedItem:
                       tuple(label for label in labels if isinstance(label, str)) if isinstance(labels, list) else ())
 
 
+def owned_by(item_id: str, prefix: str) -> bool:
+    return bool(prefix) and item_id.startswith(prefix) and schema.item_slug_shaped(item_id)
+
+
+def listed_line(line: str) -> Listing:
+    prefix, separator, listed = line.partition(TRACKER_PREFIX_END)
+    if not separator:
+        return Listing((), NOT_LISTS)
+    try:
+        given = json.loads(listed)
+    except ValueError:
+        return Listing((), NOT_LISTS)
+    if not (isinstance(given, list) and all(isinstance(entry, dict) for entry in given)):
+        return Listing((), NOT_LISTS)
+    return Listing(tuple(item for item in (listed_item(entry) for entry in given) if owned_by(item.id, prefix)), "")
+
+
 def parsed_lists(text: str) -> Listing:
-    items = []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        try:
-            given = json.loads(line)
-        except ValueError:
-            return Listing((), NOT_LISTS)
-        if not (isinstance(given, list) and all(isinstance(entry, dict) for entry in given)):
-            return Listing((), NOT_LISTS)
-        items.extend(listed_item(entry) for entry in given)
-    return Listing(tuple(items), "")
+    listings = [listed_line(line) for line in text.splitlines() if line.strip()]
+    problem = next((listing.problem for listing in listings if listing.problem), "")
+    if problem:
+        return Listing((), problem)
+    return Listing(tuple(item for listing in listings for item in listing.items), "")
 
 
 def claimed_item(claim: Mapping) -> str:
