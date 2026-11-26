@@ -10,8 +10,9 @@ block list."""
 
 import re
 import sys
-from dataclasses import dataclass
-from typing import Iterator, List, Optional
+from dataclasses import dataclass, replace
+from itertools import dropwhile
+from typing import Iterator, List
 
 FIELD_SEPARATOR = "\x1f"
 ENTRY_SEPARATOR = "\x1e"
@@ -99,26 +100,60 @@ def under(lines: Iterator[Line], depth: int) -> Iterator[Line]:
         yield line
 
 
+@dataclass(frozen=True)
+class Draft:
+    name: str
+    command: str
+    paths: str
+    field: str
+
+
+def is_entry_head(line: Line, depth: int) -> bool:
+    return line.indent == depth and not line.is_list_item and ":" in line.body
+
+
+def entry_blocks(lines: Iterator[Line], depth: int) -> Iterator[List[Line]]:
+    block: List[Line] = []
+    for line in dropwhile(lambda candidate: not is_entry_head(candidate, depth), lines):
+        if is_entry_head(line, depth) and block:
+            yield block
+            block = []
+        block.append(line)
+    if block:
+        yield block
+
+
+def with_list_item(draft: Draft, line: Line, depth: int) -> Draft:
+    if draft.field == "paths" and line.indent > depth:
+        return replace(draft, paths=draft.paths + unquote(line.body[2:]) + "\n")
+    return draft
+
+
+def with_field(draft: Draft, line: Line) -> Draft:
+    field = line.key
+    command = line.value if field == "command" else draft.command
+    paths = paths_of(line.value) if field == "paths" else draft.paths
+    return Draft(draft.name, command, paths, field)
+
+
+def after(draft: Draft, line: Line, depth: int) -> Draft:
+    if line.is_list_item:
+        return with_list_item(draft, line, depth)
+    if line.indent == depth + 1 and ":" in line.body:
+        return with_field(draft, line)
+    return draft
+
+
+def entry_of(block: List[Line], depth: int) -> Entry:
+    head = block[0]
+    draft = Draft(head.key, head.value, "", "")
+    for line in block[1:]:
+        draft = after(draft, line, depth)
+    return Entry(draft.name, draft.command, draft.paths)
+
+
 def entries(lines: Iterator[Line], depth: int) -> Iterator[Entry]:
-    name: Optional[str] = None
-    command, paths, field = "", "", ""
-    for line in lines:
-        if line.is_list_item:
-            if field == "paths" and line.indent > depth:
-                paths += unquote(line.body[2:]) + "\n"
-            continue
-        if ":" not in line.body:
-            continue
-        if line.indent == depth:
-            if name is not None:
-                yield Entry(name, command, paths)
-            name, command, paths, field = line.key, line.value, "", ""
-        elif line.indent == depth + 1:
-            field = line.key
-            command = line.value if field == "command" else command
-            paths = paths_of(line.value) if field == "paths" else paths
-    if name is not None:
-        yield Entry(name, command, paths)
+    return (entry_of(block, depth) for block in entry_blocks(lines, depth))
 
 
 def checks_at(text: str, dotted_path: str) -> List[Entry]:
