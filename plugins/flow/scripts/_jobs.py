@@ -85,7 +85,7 @@ def name_problem(name, jobs):
 
 
 # check_schedule_problem: why the schedule cannot run a check, or nothing.
-def check_schedule_problem(schedule):
+def check_schedule_problem(schedule: str) -> str:
     try:
         parsed = parse(schedule)
     except ValueError as error:
