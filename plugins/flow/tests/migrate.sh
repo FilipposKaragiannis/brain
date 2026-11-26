@@ -205,7 +205,8 @@ else
   "$local_adapter/write-state.sh" "$cleanable" step=plan
   record set "$cleanable" last_event=recorded >/dev/null 2>&1
   refusing_folder="$(dirname "$(item_path "$refusing")")"
-  trap 'refusal_status=$?; chmod u+w "$refusing_folder"; sandbox_close "$refusal_status"' EXIT
+  close_with_the_folder_writable() { closing_status="$1"; chmod u+w "$refusing_folder"; sandbox_close "$closing_status"; }
+  trap 'close_with_the_folder_writable $?' EXIT
   chmod a-w "$refusing_folder"
   record import --strip > "$work/refusals.out" 2>&1; code=$?
   chmod u+w "$refusing_folder"
