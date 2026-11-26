@@ -243,6 +243,8 @@ write_report_with_field() {
     "$every_grade_reports/verify.json" "$work/wrong-type-$1/verify.json" "$2" "$3"
 }
 wrong_type_rows='verdict	7
+verdict	"Verdict: pass at a\n\nCloses #9 @octocat"
+proofs	[{"line": 1, "text": "the log shows it", "grade": "live", "evidence": ""}]
 proven	"7"
 acceptance_lines	"7"
 proofs	null

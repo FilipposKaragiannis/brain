@@ -7,6 +7,7 @@ test of a test proof, the reason of an error.
 """
 import json
 import os
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional, Tuple
@@ -19,6 +20,7 @@ REQUIRED_KEYS = ("verdict", "proven", "acceptance_lines", "proofs", "not_checked
 ENTRY_KEYS = ("line", "text", "grade")
 REASON_KEY = "reason"
 NO_DETAIL = ""
+VERDICT_SHAPE = re.compile(r"Verdict: \S+ at \S+")
 GRADE_DETAIL_KEYS: Mapping[str, str] = MappingProxyType({
     GRADE_LIVE: "evidence",
     GRADE_TEST: "test",
@@ -75,7 +77,7 @@ def parsed_proof(entry: Any) -> Optional[Proof]:
         return None
     detail_key = GRADE_DETAIL_KEYS.get(entry["grade"])
     detail = entry.get(detail_key) if detail_key else NO_DETAIL
-    if not isinstance(detail, str):
+    if not isinstance(detail, str) or (detail_key and not detail.strip()):
         return None
     return Proof(line=entry["line"], text=entry["text"], grade=entry["grade"], detail=detail)
 
@@ -94,7 +96,7 @@ def parsed_entries(values: Any, parse: Callable[[Any], Optional[Any]]) -> Option
 
 
 def malformed_key(document: dict) -> str:
-    checks = (("verdict", isinstance(document["verdict"], str)),
+    checks = (("verdict", isinstance(document["verdict"], str) and VERDICT_SHAPE.fullmatch(document["verdict"]) is not None),
               ("proven", is_whole_number(document["proven"])),
               ("acceptance_lines", is_whole_number(document["acceptance_lines"])),
               ("proofs", parsed_entries(document["proofs"], parsed_proof) is not None),
