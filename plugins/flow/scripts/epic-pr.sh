@@ -4,8 +4,8 @@
 # The PR is a GitHub PR on the origin, from the epic branch (epic/<n>) into the epic's start
 # (fetch_epic_start in lib/base.sh: an epic branch above it, a base: line in its body, else the
 # config base), whatever tracker holds the epic. An open PR from that branch is taken as it is.
-# A new one is titled as the epic and its body holds the house body's Summary and Evidence: the
-# summary given and <reports>/verify.md, the closeout's report.
+# A new one is titled as the epic and its body holds the house body's Summary and Verification:
+# the summary given and <reports>/verify.md, the closeout's report.
 # Prints nothing, exit 0, when there is nothing to merge: the repository has no origin, the
 # remote answers that it has no epic branch, or the epic branch holds no commit its start lacks.
 # Exit 1, with why on stderr, when the remote cannot be asked for the epic branch or either
@@ -43,7 +43,7 @@ pull_request_body() {
   echo "Every task of $epic is closed. This brings \`$1\` into \`$2\`: the epic's whole work, verified together at closeout."
   [ -z "$summary" ] || { echo; printf '%s\n' "$summary"; }
   echo
-  echo "## Evidence"
+  echo "## Verification"
   echo
   if [ -s "$reports/verify.md" ]; then cat "$reports/verify.md"; else echo "The closeout wrote no verify report."; fi
   case "$epic" in gh#*) echo; echo "Closes #${epic#gh#}" ;; esac

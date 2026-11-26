@@ -73,9 +73,9 @@ and the merge closes the epic, or it closes the epic itself when there is nothin
 
 ## Output
 `verify.json` is the step result (status `pass` or `fail`, checks, attempts, and the graded
-proofs with their count). `verify.md` is the twin the PR body embeds. You write `proofs.json`
-before the run, and in `verify.md` only the feel-test note and the closeout table. Nothing
-else.
+proofs with their count). `verify.md` is its twin for a person; the PR body's Verification
+section is rendered from `verify.json`. You write `proofs.json` before the run, and in
+`verify.md` only the feel-test note and the closeout table. Nothing else.
 
 ## Never
 Never edit code, tests or config. Never edit `verify.json` or `verify.md` to add or change a

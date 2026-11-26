@@ -47,6 +47,10 @@ check "EpicCloseoutWithWorkOnItsBranch_AimsThePullRequestAtTheConfigBase: an epi
   '[ "$(pull_request baseRefName)" = main ]'
 check "EpicCloseoutWithWorkOnItsBranch_PutsTheCloseoutSummaryInThePullRequest: the owner reads what the closeout proved where they merge" \
   'pull_request body | grep -qF "$CLOSEOUT_SUMMARY"'
+check "EpicPullRequest_Body_HasAVerificationHeading: the closeout report sits under the heading every pull request body uses" \
+  'pull_request body | grep -qx "## Verification"'
+check "EpicPullRequest_Body_HasNoEvidenceHeading: evidence names a file a proof points to, never a body section" \
+  '[ -n "$(pull_request body)" ] && ! pull_request body | grep -qx "## Evidence"'
 check "EpicCloseoutWithWorkOnItsBranch_RecordsThePullRequestOnTheEpic: the sweep and the console find the PR from the epic" \
   '[ -n "$(pull_request url)" ] && [ "$(state "$epic" pr)" = "$(pull_request url)" ]'
 check "EpicCloseoutWithWorkOnItsBranch_WaitsAtTheMergeGate: the merge is the owner's" \
