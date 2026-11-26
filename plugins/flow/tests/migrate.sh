@@ -24,6 +24,7 @@ has_record() { record_path="$(record path "$1")" && [ -f "$record_path" ]; }
 has_no_record() { record_path="$(record path "$1")" && [ ! -f "$record_path" ]; }
 stores_snapshot() { cat .flow/state/*.json .flow/items/*/*.md 2>/dev/null | cksum; }
 said_would() { grep '^would ' "$1" | grep -qF -- " $2"; }
+reports_import_of() { cut -d, -f1 "$1" | grep -qxF -- "import $2"; }
 unclaimed_why="$(scripts_constant import.UNCLAIMED_WHY | sed 's/%s/wt-9/')"
 unreadable_why="$(scripts_constant import.UNREADABLE_WHY)"
 pushed_in_progress="$(scripts_constant schema.STATUS_IN_PROGRESS)"
@@ -155,6 +156,8 @@ path = sys.argv[1]; text = open(path).read()
 open(path, "w").write(re.sub(r"(?m)^id: .*$", "id: " + sys.argv[2], text, count=1))' "$(item_path "$foreign")" "$foreign_id"
 misshaped="$(new_task "Id of no adapter's shape")"
 "$local_adapter/write-state.sh" "$misshaped" step=review
+shaped="$(new_task "Id of the local shape")"
+"$local_adapter/write-state.sh" "$shaped" step=review
 misshaped_id="local:task#5"
 python3 -c 'import re, sys
 path = sys.argv[1]; text = open(path).read()
@@ -162,8 +165,10 @@ open(path, "w").write(re.sub(r"(?m)^id: .*$", "id: " + sys.argv[2], text, count=
 record import > "$work/foreign.out" 2>&1
 check "ImportOfALocalItemWithAGithubId_RecordsNothingForThatId: because a tracker's list speaks only for its own items" \
   'has_no_record "$foreign_id"'
+check "ImportBesideAnIdOfNoAdaptersShape_ReportsTheImportOfAnIdOfTheLocalShape: because a misshaped id drops only its own row" \
+  'reports_import_of "$work/foreign.out" "$shaped"'
 check "ImportOfAnIdOfNoAdaptersShape_ReportsNoImportOfIt: because only an id its adapter's slug.sed gives back reaches the tracker" \
-  '! grep -qxF -e "import $misshaped_id" -e "import $misshaped_id, held by this machine" "$work/foreign.out"'
+  '! reports_import_of "$work/foreign.out" "$misshaped_id"'
 
 echo "import under a locale that cannot spell a worktree: every row still comes out"
 latin_locale=en_US.ISO8859-1
