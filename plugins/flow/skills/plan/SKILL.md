@@ -60,6 +60,10 @@ Goal: <one sentence>. Non-goals: <bullets>.
 Decomposition: local phases | tracker tasks (<why>)
 Size: <S|M|L> (was <size>)
 
+## Acceptance
+2. <the item's acceptance line 2, as written>
+   Proof: evidence/<name>.png by <the test or replay that captures it>
+
 ## Phase 1: <title>   independent: no
 - [ ] <concrete item>
 Touches: src/Sim/**, tests/Sim/**
@@ -82,6 +86,18 @@ Every phase is concrete ("add retry to `PaymentClient.Charge`", not "improve pay
 has an autonomous verification with an expected result, and names its touches. A verification
 runs one test or one group, as the testing guide says how. It is never the project's whole test
 command: verify runs that once, scoped to the change.
+
+The `## Acceptance` section holds a named proof for each acceptance line that changes what the
+user sees, and for no other line; with none, leave the section out. An entry is the line as the
+item writes it, at the start of the line, after its number in the item's order of acceptance
+lines (the number the verifier gives it in `proofs.json`), and under it one indented `Proof:`
+line naming the file and its capture. The path is relative to the reports folder and stays
+under `evidence/`; a clip works the same. The capture is a test or a replay that exists or that
+a phase item adds, wired as an `evidence` entry in `.flow/config.yaml` whose `paths` cover the
+change. Verify grades a named proof live from its file whatever the verifier wrote, and its
+`plan proofs` check fails when the file is missing or empty, so a named file no capture writes
+fails verify. A malformed `Proof:` line fails it too: no path or no ` by <capture>`, before any
+numbered line, a second one for a line, or a path outside `evidence/`.
 
 ## 4. Finish
 

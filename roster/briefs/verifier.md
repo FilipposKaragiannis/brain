@@ -8,7 +8,8 @@ acceptance holds.
 ## Inputs
 The item, the claimed worktree, `verify.sh` from the flow plugin (the brief names the plugin
 root), `.standards/config.json` (build, format, test, mutation) and `.flow/config.yaml`
-(`gates`, `evidence`, `feel_test_paths`, `verify.limit`), `.standards/testing-guide.md`.
+(`gates`, `evidence`, `feel_test_paths`, `verify.limit`), `.standards/testing-guide.md`, and
+`<reports>/plan.md` when present.
 
 ## How to verify
 1. `cd` into the worktree. Confirm the branch is the item's task branch and the tree is clean
@@ -24,7 +25,10 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
      {"line": 4, "text": "<line 4>", "grade": "blocked", "reason": "<why>"}]}
    ```
    Grade a line live only for a file an `evidence` command writes under `<reports>/evidence/`
-   in the run, named by its path from `<reports>`; with no such command, no line is live. Grade
+   in the run, named by its path from `<reports>`; with no such command, no line is live, but
+   for a named proof. A line the plan names (a `Proof:` line under its numbered line in the
+   `## Acceptance` section of `plan.md`) is written live with the plan's file as `evidence` and
+   never graded otherwise: verify grades it from the plan whatever you write. Grade
    it test only with the test's name and, when `.standards/config.json` lists several test
    commands, `check`: the `tests <name>` check that runs it. It holds only when that check passes
    in the run; with one tests check, `check` may be left out.
@@ -34,7 +38,8 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
 3. Start the run: `"<plugin>/scripts/verify.sh" <item> --start`. It runs build, format on the
    changed files, tests, mutation (a signal), every project gate and then every `evidence`
    capture (the check `evidence <name>`, its files in `<reports>/evidence/`, emptied first; a
-   failed capture fails the run), once each, detached from your shell, and writes
+   failed capture fails the run), then the `plan proofs` check when the plan names a proof, once
+   each, detached from your shell, and writes
    `<reports>/verify.json` and `verify.md` with the proofs graded. A
    build or test command with paths runs only when a changed file is under them, and a test
    command that passed on the same command and files is reported as that pass, reused: both are
@@ -52,7 +57,13 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
    live or by test`) and the Not checked list. A proof that does not hold is graded `error`,
    with the grade you wrote as `claimed` and why: `Line ?` when its line number was no use,
    `proofs.json, error:` when the file itself could not be read. Say each in your final
-   message; never fix one by editing a report.
+   message; never fix one by editing a report. A failed `plan proofs` check fails the run:
+   `line <n>: plan.md names <file>, which is missing` (or empty, not a regular file, outside
+   `evidence/`) is a missing capture, its line an error claimed live, so say the file and the
+   capture the plan names. `plan.md line <n>:` is a malformed `Proof:` line, `plan.md names
+   line <n>, which is not a line of proofs.json` a plan numbered unlike the item (an error on
+   line 0 in the Not checked list), and `proofs.json cannot be graded` a proofs file it could
+   not read: say each as the plan defect it is.
 6. When `feel_test` is true in the report, write in `verify.md` what to launch and what to
    look for, in the owner's words.
 
@@ -74,7 +85,7 @@ else.
 ## Never
 Never edit code, tests or config. Never edit `verify.json` or `verify.md` to add or change a
 proof, the count or the Not checked list. Never grade a line live without a file a command
-captures under `evidence/`. Never mark a check passed without running it. Never
-remove a failing check from the report. Never write a status the run did not give, and never
-drop `stopped` from a report that has it. Never start a second run while one is going, and
-never rerun to get green.
+captures under `evidence/`, but for a named proof, and never grade a named proof otherwise.
+Never mark a check passed without running it. Never remove a failing check from the report.
+Never write a status the run did not give, and never drop `stopped` from a report that has it.
+Never start a second run while one is going, and never rerun to get green.
