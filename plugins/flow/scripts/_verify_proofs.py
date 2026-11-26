@@ -9,11 +9,13 @@ check did not pass in this run, reused passes included: `check` names a tests ch
 `tests <name>`), and may be left out only when the run has exactly one; build-only or blocked with
 no reason; any entry of a file written for another head. No proofs file is no proofs; a file that
 is no JSON object with a `proofs` list is one Not checked entry with line 0 and the file's name. A
-line the plan names (scripts/_verify_plan_proofs.py) whose file holds, by the rule for live, wins
-over the verifier's entry for any head: {"line", "text", "grade": "live", "evidence": <the plan's
-path>, "capture": <what captures it>}, the text kept from proofs.json; a named line out of range or
-graded twice is graded as any other. A proof never changes the status. See
-scripts/_verify_report.py.
+line the plan names (scripts/_verify_plan_proofs.py) wins over the verifier's entry for any head:
+when its file holds, by the rule for live and not empty, {"line", "text", "grade": "live",
+"evidence": <the plan's path>, "capture": <what captures it>}, the text kept from proofs.json;
+else {"line", "text", "grade": "error", "claimed": "live", "reason"} naming the file. A named line
+graded twice is graded as any other; one that is no line of proofs.json is one Not checked entry
+with line 0 and plan.md. A named proof can fail the run, through the `plan proofs` check of
+scripts/verify.sh; every other proof never changes the status. See scripts/_verify_report.py.
 """
 import json
 import os
@@ -27,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _verify_text import one_line, text  # noqa: E402
 
 PROOFS_FILE = "proofs.json"
+PLAN_FILE = "plan.md"
 EVIDENCE_FOLDER = "evidence"
 PARENT_FOLDER = ".."
 NULL_CHARACTER = "\0"
@@ -44,6 +47,13 @@ NO_HEAD = "no commit"
 GIVEN_VALUE_MAX = 80
 PASSED = "pass"
 TEST_CHECK = "tests"
+OUTSIDE_EVIDENCE = "is outside %s/" % EVIDENCE_FOLDER
+MISSING = "is missing"
+NOT_A_REGULAR_FILE = "is not a regular file"
+EMPTY = "is empty"
+EMPTY_SIZE = 0
+NAMED_FILE_PROBLEM = "%s names %s, which %s"
+UNMATCHED_NAMED_LINE = "%s names line %d, which is not a line of %s (%d to %d)"
 
 
 @dataclass(frozen=True)
@@ -80,7 +90,7 @@ class GradingContext:
     acceptance_lines: int
     repeated_lines: FrozenSet[int]
     head_problem: str
-    held_named_proofs: Mapping[int, NamedProof]
+    named_proofs: Mapping[int, NamedProof]
 
 
 def encodable(value: str) -> str:
@@ -120,13 +130,40 @@ def parsed_proof(entry: object) -> Proof:
                  reason=one_line(string_field(fields, "reason")))
 
 
-def is_captured_file(reports: str, evidence: str) -> bool:
+def captured_file_problem(reports: str, evidence: str) -> str:
     if NULL_CHARACTER in evidence or os.path.isabs(evidence) or PARENT_FOLDER in evidence.split("/"):
-        return False
+        return OUTSIDE_EVIDENCE
     evidence_folder = os.path.join(os.path.realpath(reports), EVIDENCE_FOLDER)
     real_path = os.path.realpath(os.path.join(reports, evidence))
-    inside = os.path.commonpath([real_path, evidence_folder]) == evidence_folder
-    return inside and os.path.isfile(real_path)
+    if os.path.commonpath([real_path, evidence_folder]) != evidence_folder:
+        return OUTSIDE_EVIDENCE
+    if not os.path.exists(real_path):
+        return MISSING
+    return "" if os.path.isfile(real_path) else NOT_A_REGULAR_FILE
+
+
+def is_captured_file(reports: str, evidence: str) -> bool:
+    return not captured_file_problem(reports, evidence)
+
+
+def named_file_problem(reports: str, evidence: str) -> str:
+    problem = captured_file_problem(reports, evidence)
+    if problem:
+        return problem
+    return EMPTY if os.path.getsize(os.path.join(reports, evidence)) == EMPTY_SIZE else ""
+
+
+def named_proof_problem(reports: str, named: NamedProof) -> str:
+    problem = named_file_problem(reports, named.evidence)
+    return NAMED_FILE_PROBLEM % (PLAN_FILE, given_text(named.evidence), problem) if problem else ""
+
+
+def is_acceptance_line(line: int, acceptance_lines: int) -> bool:
+    return FIRST_LINE <= line <= acceptance_lines
+
+
+def unmatched_line_problem(line: int, acceptance_lines: int) -> str:
+    return UNMATCHED_NAMED_LINE % (PLAN_FILE, line, PROOFS_FILE, FIRST_LINE, acceptance_lines)
 
 
 def captured_file(evidence: str, context: GradingContext) -> bool:
@@ -190,9 +227,12 @@ def proof_problem(proof: Proof, context: GradingContext) -> str:
 
 
 def named_entry(proof: Proof, context: GradingContext) -> Optional[dict]:
-    named = context.held_named_proofs.get(proof.line)
+    named = context.named_proofs.get(proof.line)
     if named is None or not line_in_range(proof, context) or proof.line in context.repeated_lines:
         return None
+    problem = named_proof_problem(context.reports, named)
+    if problem:
+        return {"line": proof.line, "text": proof.text, "grade": GRADE_ERROR, "claimed": GRADE_LIVE, "reason": problem}
     return {"line": proof.line, "text": proof.text, "grade": GRADE_LIVE, "evidence": named.evidence,
             "capture": named.capture}
 
@@ -223,6 +263,12 @@ def unreadable_proofs(reason: str) -> dict:
             "not_checked": [{"line": FILE_LINE, "text": PROOFS_FILE, "grade": GRADE_ERROR, "reason": reason}]}
 
 
+def unmatched_named_proofs(named_proofs: Tuple[NamedProof, ...], acceptance_lines: int) -> List[dict]:
+    return [{"line": FILE_LINE, "text": PLAN_FILE, "grade": GRADE_ERROR,
+             "reason": unmatched_line_problem(named.line, acceptance_lines)}
+            for named in named_proofs if not is_acceptance_line(named.line, acceptance_lines)]
+
+
 def graded(reports: str, head: str, report_checks: List[dict], named_proofs: Tuple[NamedProof, ...]) -> dict:
     proofs_file = read_proofs(reports)
     if proofs_file.problem:
@@ -236,11 +282,11 @@ def graded(reports: str, head: str, report_checks: List[dict], named_proofs: Tup
                              acceptance_lines=len(proofs),
                              repeated_lines=frozenset(line for line, count in line_counts.items() if count > ONCE),
                              head_problem=head_problem(proofs_file.written_for, head),
-                             held_named_proofs=MappingProxyType({named.line: named for named in named_proofs
-                                                                 if is_captured_file(reports, named.evidence)}))
+                             named_proofs=MappingProxyType({named.line: named for named in named_proofs}))
     entries = [graded_entry(proof, context) for proof in proofs]
     return {"proven": sum(entry["grade"] in PROVEN_GRADES for entry in entries), "acceptance_lines": len(entries),
             "proofs": entries,
             "not_checked": [{key: entry[key] for key in ("line", "text", "grade", "reason")}
-                            for entry in entries if entry["grade"] not in PROVEN_GRADES]}
+                            for entry in entries if entry["grade"] not in PROVEN_GRADES]
+            + unmatched_named_proofs(named_proofs, len(entries))}
 
