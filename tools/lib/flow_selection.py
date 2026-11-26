@@ -13,7 +13,7 @@ from types import MappingProxyType
 _FLOW = Path("plugins/flow")
 _TESTS = _FLOW / "tests"
 _VERIFY_INPUTS = frozenset(
-    _FLOW / "scripts" / name for name in ("verify.sh", "_verify_report.py", "_checks.py")
+    _FLOW / "scripts" / name for name in ("verify.sh", "_verify_report.py", "_verify_proofs.py", "_verify_text.py", "_checks.py")
 ) | {_FLOW / "lib/checks.sh"}
 _UNRELATED_TO_TESTS = (
     "plugins/flow/CHANGELOG.md",

@@ -131,5 +131,9 @@ changes. A new suite starts with the same two lines as `plugins/flow/tests/core-
   file. **test**: a named automated test passed in this run, or in an earlier run verify reused:
   the same test command on the same files, and the report names that run. **build-only**: only
   that it builds. **blocked**: it could not be checked, with why.
+- **proofs file**: `<reports>/proofs.json`, the verifier's grade for each acceptance line,
+  written before the run and graded by verify at its end.
+- **error**: what verify reports in place of a grade that does not hold, with why; counted as
+  not proven and listed in the Not checked list.
 - **Not checked list**: the report section, always present, of the acceptance lines graded
-  build-only or blocked, each with its reason.
+  build-only, blocked or error, each with its reason, and of a proofs file verify could not read.

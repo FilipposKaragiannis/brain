@@ -1,8 +1,10 @@
 #!/bin/sh
 # verify-verdict.sh: every report verify writes names the full head commit and opens with its
 # verdict line, on a pass, a fail, a run stopped at verify.limit, a run killed or ended by TERM and
-# a run whose report could not be built, in its Markdown and its JSON; and a report with nothing
-# unchecked still has its Not checked list, which says none, and empty JSON proofs and not_checked.
+# a run whose report could not be built, in its Markdown and its JSON; such a report with no
+# proofs file counts 0 of 0 acceptance lines on its second line and in its JSON; and a report with
+# nothing unchecked still has its Not checked list, which says none, and empty JSON proofs and
+# not_checked.
 # On the local adapter in throwaway repos.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
@@ -13,6 +15,7 @@ trap 'sandbox_close $?' EXIT
 . "$here/_verify_fixture.sh"
 
 held_run_wait_seconds=20
+count_line_number=2
 full_head() { git -C "$worktree" rev-parse HEAD; }
 report_head() { json_value head < "$reports/verify.json"; }
 report_first_line() { head -n 1 "$reports/verify.md"; }
@@ -33,6 +36,12 @@ check_report_lists_are_empty() {
   check "${1}WithNothingUnchecked_JsonNotCheckedIsAnEmptyList: a reader finds the field on every report, empty when nothing was left out" \
     '[ "$(json_value not_checked < "$reports/verify.json")" = "[]" ]'
 }
+check_report_counts_no_lines() {
+  check "${1}WithNoProofsFile_MarkdownSecondLineCountsNoLines: the count follows the verdict on every report, and no proofs file grades no line" \
+    '[ "$(sed -n "${count_line_number}p" "$reports/verify.md")" = "0 of 0 acceptance lines proven live or by test" ]'
+  check "${1}WithNoProofsFile_JsonAcceptanceLinesIsZero: a reader of the JSON gets the same count as the Markdown's second line" \
+    '[ "$(json_value acceptance_lines < "$reports/verify.json")" = 0 ]'
+}
 end_the_held_run() {
   verify --start >/dev/null 2>&1
   until_true "$held_run_wait_seconds" "[ -s $work/$(basename "$root").count ]"
@@ -49,6 +58,7 @@ check_report_carries_the_full_commit PassingRun pass
 check "PassingRunWithNothingUnchecked_MarkdownNotCheckedSaysNone: the list is always there, so its absence never reads as all checked" \
   not_checked_says_none
 check_report_lists_are_empty PassingRun
+check_report_counts_no_lines PassingRun
 
 echo "a plain run whose gate fails"
 new_item failing "  broken: 'false'"
@@ -67,6 +77,7 @@ wait_until_ended
 check_report_carries_the_full_commit RunPastTheLimit fail
 check "RunPastTheLimitWithNothingUnchecked_MarkdownNotCheckedSaysNone: the report of a run stopped at its limit keeps the list too" \
   not_checked_says_none
+check_report_counts_no_lines RunPastTheLimit
 
 for ending in KILL TERM; do
   echo "a run ended by $ending"
@@ -75,6 +86,7 @@ for ending in KILL TERM; do
   check_report_carries_the_full_commit "RunEndedBy$ending" fail
   check "RunEndedBy${ending}WithNothingUnchecked_MarkdownNotCheckedSaysNone: the minimal fail report keeps the list too" \
     not_checked_says_none
+  check_report_counts_no_lines "RunEndedBy$ending"
 done
 
 echo "a run whose report cannot be built"
@@ -88,5 +100,6 @@ check_report_carries_the_full_commit UnbuildableReport fail
 check "UnbuildableReportWithNothingUnchecked_MarkdownNotCheckedSaysNone: the report verify writes when its builder breaks keeps the list too" \
   not_checked_says_none
 check_report_lists_are_empty UnbuildableReport
+check_report_counts_no_lines UnbuildableReport
 
 if [ "$fails" -eq 0 ]; then echo "verify-verdict: ok"; else echo "verify-verdict: $fails failed"; exit 1; fi

@@ -18,18 +18,28 @@ one line of its source: the last line its pattern matches, else the last non-emp
 `ok`. A pattern that is no regular expression says so as the summary. Either is without control
 characters, terminal colours or terminal hyperlinks (OSC 8: the target goes and the link's text
 stays; one cut short with no terminator goes to the end), cut to 400 characters. <head> is the
-full commit the run checked. verify.md opens with the verdict line, `Verdict: <status> at <head>`,
-which verify.json holds as `verdict`; then the checks, then a `## Not checked` section, which says
-none when empty. verify.json holds `proofs` and `not_checked` as lists, empty until a run fills
-them; an evidence file a proof names lives under `evidence/` in the reports folder. Writes
-verify.json and verify.md through a temp file and a rename each, so a reader sees the old report
-or the new one, never a part.
+full commit the run checked.
+
+The verifier's proofs.json in the reports folder is graded by scripts/_verify_proofs.py.
+
+verify.json holds `proven` (the lines graded live or test that hold), `acceptance_lines` (M),
+`proofs` and `not_checked` ({"line", "text", "grade", "reason"} for each line graded build-only,
+blocked or error). verify.md opens with the verdict line, `Verdict: <status> at <head>`, which
+verify.json holds as `verdict`; then `N of M acceptance lines proven live or by test`; then a
+`## Proofs` table when there are proofs; then the checks, then a `## Not checked` section, which
+lists `- Line <n>, <grade>: <reason>.` or says none when empty. Writes verify.json and verify.md
+through a temp file and a rename each, so a reader sees the old report or the new one, never a part.
 """
 import json
 import os
 import re
 import sys
 from types import MappingProxyType
+from typing import Callable, List, Mapping
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _verify_proofs import FILE_LINE, GRADE_ERROR, GRADE_LIVE, GRADE_TEST, graded  # noqa: E402
+from _verify_text import one_line, text  # noqa: E402
 
 SUMMARY_MAX = 400
 MD_SUMMARY_MAX = 200
@@ -44,21 +54,17 @@ NAME_SEPARATOR = "\x1f"
 VERDICT_LINE = "Verdict: %s at %s"
 NOT_CHECKED_HEADING = "## Not checked"
 NOT_CHECKED_NONE = "None."
+UNKNOWN_LINE = "?"
+COUNT_LINE = "%d of %d acceptance lines proven live or by test"
+PROOFS_HEADING = "## Proofs"
+PROOFS_TABLE_HEAD = ("| line | acceptance | grade | proof |", "|---|---|---|---|")
+SEE_NOT_CHECKED = "see Not checked"
+NOT_CHECKED_LINE = "- Line %s, %s: %s."
+NOT_CHECKED_FILE = "- %s, %s: %s."
 FEEL_TEST_REASONS = MappingProxyType({
     "true": "a changed file matches `feel_test_paths`",
     "not_ruled_out": "verify could not list every changed file, so a change under `feel_test_paths` cannot be ruled out",
 })
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def text(raw):
-    return raw.decode("utf-8", errors="replace")
-
-
-def one_line(s):
-    return " ".join(_CONTROL.sub(" ", _ANSI.sub("", _OSC.sub("", s))).split())
 
 
 def summary(source):
@@ -139,6 +145,41 @@ def md_cell(s, limit=None):
     return (s[:limit] if limit else s).replace("|", "\\|")
 
 
+def shown_line(entry: dict) -> str:
+    return str(entry["line"]) if entry["line"] is not None else UNKNOWN_LINE
+
+
+PROOF_CELLS: Mapping[str, Callable[[dict], str]] = MappingProxyType({
+    GRADE_LIVE: lambda entry: "[%s](<%s>)" % (md_cell(entry["evidence"], None), md_cell(entry["evidence"], None)),
+    GRADE_TEST: lambda entry: "`%s`" % md_cell(entry["test"], None),
+    GRADE_ERROR: lambda entry: md_cell(entry["reason"], None),
+})
+
+
+def proof_cell(entry: dict) -> str:
+    cell = PROOF_CELLS.get(entry["grade"])
+    return cell(entry) if cell is not None else SEE_NOT_CHECKED
+
+
+def proofs_section(proofs: List[dict]) -> List[str]:
+    if not proofs:
+        return []
+    rows = ["| %s | %s | %s | %s |" % (shown_line(entry), md_cell(entry["text"], None), entry["grade"],
+                                       proof_cell(entry)) for entry in proofs]
+    return [PROOFS_HEADING, "", *PROOFS_TABLE_HEAD, *rows, ""]
+
+
+def not_checked_line(entry: dict) -> str:
+    reason = entry["reason"].rstrip(".")
+    if entry["line"] == FILE_LINE:
+        return NOT_CHECKED_FILE % (entry["text"], entry["grade"], reason)
+    return NOT_CHECKED_LINE % (shown_line(entry), entry["grade"], reason)
+
+
+def not_checked_lines(not_checked: List[dict]) -> List[str]:
+    return [not_checked_line(entry) for entry in not_checked] or [NOT_CHECKED_NONE]
+
+
 def main(argv):
     records, changed, reports, status, attempts, base, merge_base, head, feel, log = argv[:ARGUMENTS_WITHOUT_TIMINGS]
     has_timings = len(argv) > ARGUMENTS_WITHOUT_TIMINGS
@@ -154,6 +195,7 @@ def main(argv):
     with open(changed, "rb") as f:
         files = [name for name in text(f.read()).split(NAME_SEPARATOR) if name]
     verdict = VERDICT_LINE % (status, head)
+    graded_proofs = graded(reports, head, report_checks)
     report = {
         "status": status,
         "verdict": verdict,
@@ -163,10 +205,14 @@ def main(argv):
         "head": head,
         "changed_files": files,
         "feel_test": feel in FEEL_TEST_REASONS,
-        "proofs": [],
-        "not_checked": [],
+        "proven": graded_proofs["proven"],
+        "acceptance_lines": graded_proofs["acceptance_lines"],
+        "proofs": graded_proofs["proofs"],
+        "not_checked": graded_proofs["not_checked"],
     }
-    md = [verdict, "", "## Checks (attempt %s)" % attempts, ""]
+    md = [verdict, COUNT_LINE % (graded_proofs["proven"], graded_proofs["acceptance_lines"]), ""]
+    md += proofs_section(graded_proofs["proofs"])
+    md += ["## Checks (attempt %s)" % attempts, ""]
     if has_timings:
         report["seconds"] = whole_seconds(argv[ARGUMENTS_WITHOUT_TIMINGS + 1])
         md += ["| check | status | time | summary |", "|---|---|---|---|"]
@@ -178,7 +224,7 @@ def main(argv):
     md += ["", "Base `%s` (%s), head `%s`, %d changed files. Log: `%s`." % (base, merge_base, head, len(files), log)]
     if report["feel_test"]:
         md.append("**Feel-test needed:** %s." % FEEL_TEST_REASONS[feel])
-    md += ["", NOT_CHECKED_HEADING, "", NOT_CHECKED_NONE]
+    md += ["", NOT_CHECKED_HEADING, "", *not_checked_lines(graded_proofs["not_checked"])]
     write_atomic(os.path.join(reports, "verify.json"), json.dumps(report, indent=2) + "\n")
     write_atomic(os.path.join(reports, "verify.md"), "\n".join(md) + "\n")
 
