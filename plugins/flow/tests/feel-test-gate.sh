@@ -26,9 +26,12 @@ gate_message="$(jget message < ".flow/gates/$(item_slug "$feel_item").json")"
 
 echo "feel-test gate"
 message_names() { printf '%s\n' "$gate_message" | grep -qF -- "$1"; }
-message_names_the_three_parts() { message_names verdict && message_names proofs && message_names "Not checked list"; }
-check "FeelTestGate_Message_NamesTheVerdictTheProofsAndTheNotCheckedList because those are the parts of the report the owner reads before signing off" \
-  message_names_the_three_parts
+check "FeelTestGate_Message_NamesTheVerdict because the owner reads whether the run passed before signing off" \
+  message_names verdict
+check "FeelTestGate_Message_NamesTheProofs because the owner reads how each acceptance line was checked before signing off" \
+  message_names proofs
+check "FeelTestGate_Message_NamesTheNotCheckedList because the owner reads what no check covered before signing off" \
+  message_names "Not checked list"
 check "FeelTestGate_Message_PointsAtTheVerifyReport because the report holds those parts and what to launch" \
   message_names "\`$reports/verify.md\`"
 message_names_no_check_table() { [ -n "$gate_message" ] && ! printf '%s\n' "$gate_message" | grep -qiE 'checks? table'; }

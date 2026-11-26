@@ -19,11 +19,19 @@ first_section_lines=4
 count_line_number=2
 rendered_exit=0
 missing_report_exit=1
+usage_exit=2
+unreadable_proofs_bullet="- proofs.json, error: "
+missing_capture_bullet="- Line 1, error: "
 test_name=Greet_WithName_PrintsHello
 build_only_reason="the Unity client has no capture command yet"
 blocked_reason="the staging server is down"
 not_checked_title="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from _pr_report import NOT_CHECKED_TITLE; print(NOT_CHECKED_TITLE)' "$plugin/scripts")"
-not_checked_none="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from _verify_report import NOT_CHECKED_NONE; print(NOT_CHECKED_NONE)' "$plugin/scripts")"
+verify_report_constant() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report; print(getattr(_verify_report, sys.argv[2]))' "$plugin/scripts" "$1"; }
+not_checked_none="$(verify_report_constant NOT_CHECKED_NONE)"
+verdict_line="$(verify_report_constant VERDICT_LINE)"
+failed_status="$(verify_report_constant FAILED)"
+verdict_line_number=3
+house_template="$plugin/skills/pr/PR-BODY.md"
 pr_report_constant() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _pr_report; print(getattr(_pr_report, sys.argv[2]))' "$plugin/scripts" "$1"; }
 excerpt_lines_kept="$(pr_report_constant EXCERPT_LINES)"
 excerpt_line_characters="$(pr_report_constant EXCERPT_LINE_CHARACTERS)"
@@ -94,8 +102,10 @@ write_proofs "[{\"line\": 1, \"text\": \"greet prints hello\", \"grade\": \"test
 verify >/dev/null 2>&1
 every_grade_reports="$reports"
 render "$every_grade_reports" every-grade
+check "Render_PassingReport_ExitsZero: the pr-creator pastes the section only when the script succeeds" \
+  '[ "$(render_code every-grade)" = "$rendered_exit" ]'
 check "Render_PassingReport_FirstLinesAreHeadingVerdictAndCount: the section opens with its heading, then verify's own verdict and count" \
-  '[ "$(render_code every-grade)" = "$rendered_exit" ] && [ "$(rendered every-grade | head -n "$first_section_lines")" = "$(first_lines_expected)" ]'
+  '[ "$(rendered every-grade | head -n "$first_section_lines")" = "$(first_lines_expected)" ]'
 check "Render_ReportWithProofs_HasOneRowPerAcceptanceLine: a reviewer sees each graded line once" \
   '[ -n "$(json_proof_lines)" ] && [ "$(section_row_lines every-grade)" = "$(json_proof_lines)" ]'
 check "Render_LiveProof_NamesTheFileWithoutALink: a link relative to the reports folder resolves in no pull request" \
@@ -177,18 +187,60 @@ render "$reports" all-proven
 check "Render_NothingUnchecked_NotCheckedSaysNone: an empty list still says so, as verify's report does" \
   '[ -n "$not_checked_none" ] && [ "$(section_not_checked all-proven)" = "$not_checked_none" ]'
 
+echo "a failing report"
+new_item failing "  broken: 'false'"
+commit_test_command true
+verify >/dev/null 2>&1
+failing_head="$(git -C "$worktree" rev-parse HEAD)"
+render "$reports" failing
+check "Render_FailingReport_VerdictSaysFailAtTheHead: a reviewer never reads a failed run as a pass" \
+  '[ "$(rendered failing | sed -n "${verdict_line_number}p")" = "$(printf "$verdict_line" "$failed_status" "$failing_head")" ]'
+
+echo "a live proof with no captured file"
+new_item missing-capture "  ok: 'true'"
+commit_test_command true
+write_proofs '[{"line": 1, "text": "the login error shows", "grade": "live", "evidence": "evidence/missing.png"}]'
+verify >/dev/null 2>&1
+render "$reports" missing-capture
+check "Render_ProofThatDoesNotHold_ListedUnderNotChecked: an error is not proven, so the reviewer sees it with the unchecked lines" \
+  'section_not_checked missing-capture | grep -qF -e "$missing_capture_bullet"'
+
+echo "a proofs file that is not JSON"
+new_item unreadable-proofs "  ok: 'true'"
+commit_test_command true
+printf 'not json {\n' > "$reports/proofs.json"
+verify >/dev/null 2>&1
+render "$reports" unreadable-proofs
+check "Render_ProofsFileNotJson_NotCheckedNamesTheFile: the reviewer learns the proofs were unreadable, not that every line was skipped" \
+  'section_not_checked unreadable-proofs | grep -qF -e "$unreadable_proofs_bullet"'
+
 echo "a folder with no report"
 mkdir -p "$work/no-report"
 render "$work/no-report" no-report
-check "Render_NoVerifyJson_ExitsOneAndNamesTheFolder: the pr-creator stops and the owner learns which folder holds no report" \
-  '[ "$(render_code no-report)" = "$missing_report_exit" ] && grep -qF "$work/no-report" "$work/no-report.err"'
+check "Render_NoVerifyJson_ExitsOne: the pr-creator stops instead of pasting an empty section" \
+  '[ "$(render_code no-report)" = "$missing_report_exit" ]'
+check "Render_NoVerifyJson_NamesTheFolder: the owner learns which folder holds no report" \
+  'grep -qF "$work/no-report" "$work/no-report.err"'
 
 echo "a report of an older shape"
 mkdir -p "$work/old-shape"
 python3 -c 'import json,sys; report=json.load(open(sys.argv[1])); del report["proofs"]; json.dump(report, open(sys.argv[2], "w"))' \
   "$every_grade_reports/verify.json" "$work/old-shape/verify.json"
 render "$work/old-shape" old-shape
-check "Render_ReportWithoutProofsKey_ExitsOneAndNamesTheKey: a report verify wrote before proofs fails fast, naming what it lacks" \
-  '[ "$(render_code old-shape)" = "$missing_report_exit" ] && grep -qF "proofs" "$work/old-shape.err"'
+check "Render_ReportWithoutProofsKey_ExitsOne: a report verify wrote before proofs fails fast" \
+  '[ "$(render_code old-shape)" = "$missing_report_exit" ]'
+check "Render_ReportWithoutProofsKey_NamesTheKey: the owner learns what the old report lacks" \
+  'grep -qF "proofs" "$work/old-shape.err"'
+
+echo "no reports folder given"
+"$plugin/scripts/pr-report.sh" > /dev/null 2>&1; echo "$?" > "$work/no-argument.code"
+check "Render_NoArgument_ExitsTwo: a usage error is told apart from a missing report" \
+  '[ "$(render_code no-argument)" = "$usage_exit" ]'
+
+echo "the house pull request body"
+check "HouseTemplate_VerificationSection_IsTheReportScriptOutput: every pull request carries the verdict, the proofs and the Not checked list the script renders" \
+  'grep -qF "scripts/pr-report.sh <reports>" "$house_template" && grep -qF "\`$section_heading\`" "$house_template"'
+check "HouseTemplate_HasNoEvidenceSection: the old check table section is gone, so no body carries it" \
+  '[ -s "$house_template" ] && ! grep -qx "## Evidence" "$house_template"'
 
 if [ "$fails" -eq 0 ]; then echo "verify-pr-body: ok"; else echo "verify-pr-body: $fails failed"; exit 1; fi
