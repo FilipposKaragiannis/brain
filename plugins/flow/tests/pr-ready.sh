@@ -10,9 +10,7 @@
 trap 'sandbox_close $?' EXIT
 . "$here/_verify_fixture.sh"
 
-# pr_ready: runs scripts/pr-ready.sh in the worktree; its output and exit code are the function's.
 pr_ready() { (cd "$worktree" && "$plugin/scripts/pr-ready.sh" "$item" 2>&1); }
-# report_at <commit>: writes a verify report that names the commit.
 report_at() { printf '{"status":"pass","head":"%s","checks":[]}\n' "$1" > "$reports/verify.json"; }
 head_commit() { git -C "$worktree" rev-parse HEAD; }
 
