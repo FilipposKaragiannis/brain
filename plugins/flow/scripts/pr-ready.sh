@@ -5,6 +5,7 @@
 # a report made on an older commit or before an uncommitted change never passes. Exit 0 and nothing
 # printed when the PR may open; exit 1 with the reason on stdout when it may not; exit 2 on a usage
 # error. Never edits anything.
+set -u
 . "$(dirname "$0")/../lib/flow.sh"
 [ $# -eq 1 ] || die "usage: pr-ready.sh <item>" 2
 item="$1"
