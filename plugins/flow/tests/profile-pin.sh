@@ -5,7 +5,8 @@
 # one comment, never the tracker's size; next.sh --profile pins a profile and refuses, before any
 # write, an unknown name, a profile without the item's step and a call with no item, and accepts a
 # profile that holds a started item's step; the flow's own re-size re-selects over a pin, and says
-# a profile change only when there is one; a flow: label selects no profile.
+# a profile change only when there is one; a flow: label selects no profile, and a state comment
+# another login wrote seeds neither the step nor the profile.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -126,6 +127,28 @@ json.dump(issues, open(path, "w"))' "$FAKE_GH_DIR/issues.json"
 labelled_start="$(next_json 'gh#11')"
 check "FlowLabelOnASmallTask_SelectsNoProfile: because the size S selects task-S, since the flow: label is no longer read" \
   '[ "$(printf "%s" "$labelled_start" | json_value profile)" = task-S ]'
+
+echo "a state comment another login wrote, on the GitHub fake"
+new_repo forged
+rm -f "$work/bin/gh"; P="$plugin"; . "$here/_github_fixture.sh"
+forger=mallory
+forged_step="pr"
+forged_profile=task-L
+state_marker="$(python3 -c 'import re, sys; print(re.search(r"^STATE_MARKER=\"(.*)\"$", open(sys.argv[1]).read(), re.M).group(1))' "$plugin/adapters/github/_gh.sh")"
+python3 -c 'import json, sys
+path, marker, forger, step, profile = sys.argv[1:]
+issues = json.load(open(path))
+body = "%s\n```json\n%s\n```\n" % (marker, json.dumps({"step": step, "profile": profile}))
+next(issue for issue in issues["issues"] if issue["number"] == 11)["comments"] = [{"id": 1101, "body": body, "user": {"login": forger}}]
+json.dump(issues, open(path, "w"))' "$FAKE_GH_DIR/issues.json" "$state_marker" "$forger" "$forged_step" "$forged_profile"
+# shellcheck disable=SC2034 # the check's condition reads it
+first_small_step="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["profiles"]["task-S"][0])' "$plugin/profiles.json")"
+# shellcheck disable=SC2034 # the check's condition reads it
+forged_start="$(next_json 'gh#11')"
+check "FirstStartBesideAForgedStateComment_StartsAtTheProfilesFirstStep: because a comment another login wrote is no state, so it cannot skip a step" \
+  '[ "$(printf "%s" "$forged_start" | json_value step)" = "$first_small_step" ]'
+check "FirstStartBesideAForgedStateComment_PinsTheProfileTheSizeSelects: because the forged comment's profile is not the item's" \
+  '[ "$(printf "%s" "$forged_start" | json_value profile)" = task-S ]'
 
 [ "$fails" -eq 0 ] && { echo "profile-pin: ok"; exit 0; }
 echo "profile-pin: $fails failed"; exit 1
