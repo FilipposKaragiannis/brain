@@ -45,9 +45,9 @@ run_broken() {
 write_config() {
   {
     printf 'adapters:\n  default: local\n'
-    if [ -n "$config_bug_adapter" ]; then printf '  bug: %s\n' "$config_bug_adapter"; fi
+    if [ -n "$2" ]; then printf '  bug: %s\n' "$2"; fi
     cat <<YAML
-base: $config_base
+base: $1
 notify:
   desktop: false
 jobs:
@@ -61,8 +61,6 @@ jobs:
 YAML
   } > "$work/config.yaml" && mv "$work/config.yaml" "$flow_home_folder/config.yaml"
 }
-set_base() { config_base="$1"; write_config; }
-set_bug_adapter() { config_bug_adapter="$1"; write_config; }
 jobs_script="$plugin/scripts/jobs.sh"
 check_job="$plugin/jobs/check.sh"
 
@@ -86,8 +84,9 @@ case "\$(cat "$work/broken.mode")" in
 esac
 exit 1
 SH
-config_base=main; config_bug_adapter=""
-write_config
+default_base=main
+default_bug_adapter=""
+write_config "$default_base" "$default_bug_adapter"
 
 echo "checks: a broken check files one bug"
 run_broken lines
@@ -119,16 +118,16 @@ check "HugeOutputLine_BugBodyStaysUnderTheBound: one huge line is cut, so the bo
 run_broken pass; run_broken split
 check "OutputCutInsideACharacter_StillFilesTheBug: a cut through a character never stops the bug" \
   '[ "$(bug_count broken)" -eq 3 ]'
-run_broken pass; set_bug_adapter nowhere; run_broken lines
+run_broken pass; write_config "$default_base" nowhere; run_broken lines
 check "BugTheTrackerRefuses_RunLineSaysItCouldNotBeFiled: a new.sh that fails is said in the run's line" \
   'history_row check-broken "$newest_history_row" | grep -q "| failed | failed: exited .*; the bug could not be filed: ."'
-set_bug_adapter ""; run_broken lines
+write_config "$default_base" "$default_bug_adapter"; run_broken lines
 check "BugNotFiledBefore_IsFiledAtTheNextFail: the state stays passed, so the next fail files the bug" \
   '[ "$(bug_count broken)" -eq 4 ]'
-run_broken pass; set_base no-such-base; run_broken lines
+run_broken pass; write_config no-such-base "$default_bug_adapter"; run_broken lines
 check "CheckoutThatCannotBeMade_FilesNoBug: the command never ran, so a pass before it is no regression" \
   '[ "$(bug_count broken)" -eq 4 ]'
-set_base main; run_broken lines
+write_config "$default_base" "$default_bug_adapter"; run_broken lines
 check "CheckoutErrorAfterAPass_KeepsThePassOnRecord: the next real fail after it is a fail after a pass, so it files the bug" \
   '[ "$(bug_count broken)" -eq 5 ]'
 run_broken pass; run_broken base-line
@@ -146,8 +145,8 @@ check "OutputWithABaseLineAfterACarriageReturn_SetsNoBaseForTheBug: a reader tha
 
 echo "checks: a base git would read as an option"
 option_base_marker="$work/upload-pack-ran"
-set_base "--upload-pack=touch $option_base_marker"; run_broken lines; option_base_exit=$?
-set_base main
+write_config "--upload-pack=touch $option_base_marker" "$default_bug_adapter"; run_broken lines; option_base_exit=$?
+write_config "$default_base" "$default_bug_adapter"
 check "BaseGitReadsAsAnOption_IsRefused: the base is no valid branch name, so the run ends as a refused entry" \
   '[ "$option_base_exit" -eq "$refused_exit" ]'
 check "BaseGitReadsAsAnOption_RunsNoCommand: the base never reaches git, so the command it carries never runs" \
