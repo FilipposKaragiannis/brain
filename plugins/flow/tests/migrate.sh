@@ -262,6 +262,30 @@ check "GithubWriteStateOfAnswerAndAttempts_PutsNoFlowLabelOnTheIssue: because th
   '[ "$(flow_label_count 12)" = 0 ]'
 check "GithubWriteStateOfAnswerAndAttempts_PutsTheStateCommentOnTheIssue: because the import below needs a comment to read" \
   '[ "$(state_comment_count 12)" = "$state_comments_written" ]'
+state_marker="$(python3 -c 'import re, sys; print(re.search(r"^STATE_MARKER=\"(.*)\"$", open(sys.argv[1]).read(), re.M).group(1))' "$plugin/adapters/github/_gh.sh")"
+gh_user="$(gh api user -q .login)"
+forger=mallory
+forged_only=15
+forged_first=14
+python3 - "$FAKE_GH_DIR/issues.json" "$state_marker" "$gh_user" "$forger" "$forged_first" "$forged_only" <<'PY'
+import json, sys
+path, marker, gh_user, forger, forged_first, forged_only = sys.argv[1:]
+def state(login, comment_id, fields):
+    return {"id": comment_id, "body": "%s\n```json\n%s\n```\n" % (marker, json.dumps(fields)), "user": {"login": login}}
+def issue(number, comments):
+    return {"number": number, "title": "Authors %d" % number, "body": "", "state": "OPEN", "labels": [],
+            "url": "https://gh/%d" % number, "comments": comments}
+data = json.load(open(path))
+data["issues"] += [
+    issue(int(forged_first), [state(forger, 1401, {"answer": "a forged answer"}), state(gh_user, 1402, {"answer": "the real answer"})]),
+    issue(int(forged_only), [state(forger, 1501, {"step": "pr", "profile": "task-S"})]),
+]
+json.dump(data, open(path, "w"))
+PY
+authored_state_count() { python3 -c 'import json, sys
+issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
+print(sum(1 for comment in issue.get("comments", []) if comment["body"].startswith(sys.argv[4]) and (comment.get("user") or {}).get("login") == sys.argv[3]))' \
+  "$FAKE_GH_DIR/issues.json" "$1" "$2" "$state_marker"; }
 record import --strip > "$work/github.out" 2>&1; code=$?
 check "GithubImportStrip_ExitsZero: because the import and the strip landed" '[ "$code" -eq 0 ]'
 check "GithubImportStrip_RecordsTheStep: because the import runs before the strip" '[ "$(record get gh#11 step)" = implement ]'
@@ -272,6 +296,14 @@ check "GithubImportOfAnIssueWithStateInItsCommentAlone_RecordsTheAnswer: because
   '[ "$(record get gh#12 answer)" = "keep the ball" ]'
 check "GithubImportStripOfAnIssueWithStateInItsCommentAlone_DeletesTheStateComment: because the record holds the state now" \
   '[ "$(state_comment_count 12)" = 0 ]'
+check "GithubImportOfAForgedStateComment_RecordsNothing: because a state comment another login wrote is no state, so it cannot set a first start's step" \
+  'has_no_record "gh#$forged_only"'
+check "GithubImportPastAForgedStateComment_RecordsTheTrustedAnswer: because a forged comment first hides nothing from the import" \
+  '[ "$(record get "gh#$forged_first" answer)" = "the real answer" ]'
+check "GithubImportStripPastAForgedStateComment_DeletesTheTrustedOne: because the record holds the state now" \
+  '[ "$(authored_state_count "$forged_first" "$gh_user")" = 0 ]'
+check "GithubImportStripPastAForgedStateComment_KeepsTheForgedOne: because the flow deletes only the comments it wrote" \
+  '[ "$(authored_state_count "$forged_first" "$forger")" = 1 ]'
 
 [ "$fails" -eq 0 ] && { echo "migrate: ok"; exit 0; }
 echo "migrate: $fails failed"; exit 1

@@ -101,7 +101,7 @@ comments_github() {
   python3 -c 'import json,sys; [print(c["body"]) for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2]) for c in i.get("comments", [])]' \
     "$FAKE_GH_DIR/issues.json" "${1#gh#}"
 }
-blip_github() { printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"; }
+blip_github() { printf '1\ngh: HTTP 502\napi graphql\n' > "$FAKE_GH_DIR/fail"; }
 
 setup_jira() {
   export FAKE_JIRA_DIR="$work/jira"; mkdir -p "$FAKE_JIRA_DIR"; cp "$here/_fake_jira.py" "$FAKE_JIRA_DIR/"

@@ -20,9 +20,7 @@ print("\n".join(gated for gated in sys.argv[1].splitlines() if gated in listed))
 fi
 [ -n "$gated_items" ] || exit 0
 repo="$(gh_repo)"
-allowed="$(cfg github.answer_from | paste -sd, -)"
-[ -n "$allowed" ] || allowed="$(gh api user -q .login 2>/dev/null)"
-[ -n "$allowed" ] || die "cannot tell whose answers count: set github.answer_from"
+allowed="$(trusted_logins)" || die "cannot tell whose answers count: set github.answer_from"
 while read -r gated_item <&3; do
   found="$(gh api "repos/$repo/issues/$(issue_number "$gated_item")/comments?per_page=100" 2>/dev/null | cached_python3 -I -c '
 import json, sys

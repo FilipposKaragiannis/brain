@@ -1,8 +1,10 @@
 #!/bin/sh
 # Shared pieces of the GitHub adapter. Items are issues; ids are gh#<number>. State is mirrored
 # as labels (step:*, gate:*, wt:*, flow:*, and size:* unless github.fields.size names a field) and
-# kept in full in one issue comment marked <!-- flow:state -->. The profile is read from that
-# comment alone: the flow:* label is written for an older flow only.
+# kept in full in one issue comment that starts with <!-- flow:state -->, written by a login
+# trusted_logins names: anyone can comment on a public issue, and a comment of theirs read as
+# state would steer the run. The profile is read from that comment alone: the flow:* label is
+# written for an older flow only.
 . "$(dirname "$0")/../../lib/flow.sh"
 # lib/flow.sh wraps gh in a function, so the check looks past it to the command.
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
@@ -127,26 +129,23 @@ print(json.dumps({
 }))'
 }
 
-# state_comment <repo> <number>: the JSON inside the flow state comment, or {}, with the
-# comment's id. A failed read returns 1, and the caller must stop: taken for "no comment yet",
-# it would make write-state start a second state comment from an empty state, dropping the
-# attempts, the PR and the touches.
+# trusted_logins: the logins, comma-separated, whose /answer and state comments the flow acts on:
+# github.answer_from, else the gh user. Exit 1 when neither names one, which a caller must treat
+# as a failed read: taken for "no comment yet", it would make write-state post a second one.
+trusted_logins() {
+  trusted_logins_found="$(cfg github.answer_from | paste -sd, -)"
+  [ -n "$trusted_logins_found" ] || trusted_logins_found="$(gh api user -q .login 2>/dev/null)" || return 1
+  [ -n "$trusted_logins_found" ] || return 1
+  printf '%s' "$trusted_logins_found"
+}
+
+# state_comment <repo> <number> <logins>: the JSON inside the first state comment one of the
+# logins (trusted_logins) wrote, or {}, with the comment's id. A failed read returns 1, and the
+# caller must stop: taken for "no comment yet", it would make write-state start a second state
+# comment from an empty state, dropping the attempts, the PR and the touches.
 state_comment() {
   comments="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=$GH_REST_PAGE_SIZE")" || return 1
-  printf '%s' "$comments" | cached_python3 -I -c '
-import json, sys, re
-marker = sys.argv[1]
-for c in [c for page in json.load(sys.stdin) for c in page]:
-    body = c.get("body", "")
-    if marker in body:
-        m = re.search(r"```json\n(.*?)\n```", body, re.S)
-        try:
-            data = json.loads(m.group(1)) if m else {}
-        except ValueError:
-            data = {}
-        print(json.dumps({"id": c["id"], "data": data})); break
-else:
-    print(json.dumps({"id": None, "data": {}}))' "$STATE_MARKER"
+  printf '%s' "$comments" | cached_python3 -I "$FLOW_PLUGIN/adapters/github/_state_comment.py" first "$STATE_MARKER" "$3"
 }
 
 # ensure_label <label>: create it when missing (gh issue edit fails on unknown labels).

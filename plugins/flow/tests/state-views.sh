@@ -97,7 +97,7 @@ seeded_step="$(
   PATH="$work/gh-bin:$PATH"
   python3 -c 'import json,sys; marker="<!-- flow:state -->"
 body="%s\n```json\n%s\n```\n" % (marker, json.dumps({"step": "plan", "attempts": sys.argv[1]}))
-issue={"number": 7, "title": "Tracker attempts in other digits", "body": "", "state": "OPEN", "labels": ["size:S", "step:plan"], "url": "https://gh/7", "comments": [{"id": 701, "body": body}]}
+issue={"number": 7, "title": "Tracker attempts in other digits", "body": "", "state": "OPEN", "labels": ["size:S", "step:plan"], "url": "https://gh/7", "comments": [{"id": 701, "body": body, "user": {"login": "owner"}}]}
 json.dump({"issues": [issue]}, open(sys.argv[2], "w"))' "$tracker_attempts_outside_ascii" "$FAKE_GH_DIR/issues.json"
   cp .flow/config.yaml "$work/config.local"
   printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\ntracker_state: none\nnotify:\n  desktop: false\n' > .flow/config.yaml
