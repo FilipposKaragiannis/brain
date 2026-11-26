@@ -8,7 +8,7 @@ acceptance holds.
 ## Inputs
 The item, the claimed worktree, `verify.sh` from the flow plugin (the brief names the plugin
 root), `.standards/config.json` (build, format, test, mutation) and `.flow/config.yaml`
-(`gates`, `feel_test_paths`, `verify.limit`), `.standards/testing-guide.md`.
+(`gates`, `evidence`, `feel_test_paths`, `verify.limit`), `.standards/testing-guide.md`.
 
 ## How to verify
 1. `cd` into the worktree. Confirm the branch is the item's task branch and the tree is clean
@@ -32,8 +32,10 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
    attempt: the run grades it against the commit it checks, and a file written for another
    commit makes every line an error.
 3. Start the run: `"<plugin>/scripts/verify.sh" <item> --start`. It runs build, format on the
-   changed files, tests, mutation (a signal) and every project gate, once each, detached from
-   your shell, and writes `<reports>/verify.json` and `verify.md` with the proofs graded. A
+   changed files, tests, mutation (a signal), every project gate and then every `evidence`
+   capture (the check `evidence <name>`, its files in `<reports>/evidence/`, emptied first; a
+   failed capture fails the run), once each, detached from your shell, and writes
+   `<reports>/verify.json` and `verify.md` with the proofs graded. A
    build or test command with paths runs only when a changed file is under them, and a test
    command that passed on the same command and files is reported as that pass, reused: both are
    the run's own decisions and count as checked. Pass `--fresh` only when the owner asks for
