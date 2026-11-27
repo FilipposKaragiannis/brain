@@ -4,8 +4,10 @@
 # pr create and pr edit --body-file upload each --attach file: a `](./...)` reference in the body
 # that resolves to it against the body file's folder becomes https://gh/assets/<n>, and a file no
 # reference names is appended as its own paragraph; issues.json lists each uploaded file under
-# "assets", asset <n> at position <n>. pr list --state open lists only an open PR. pr edit prints
-# the PR's URL, and pr create refuses a second open PR on the same head, as gh does.
+# "assets", asset <n> at position <n>. pr edit --attach with no body flag does the same to the PR's
+# stored body, resolving references against the cwd. As gh does, pr create and pr edit refuse more
+# than 50 --attach values before any change. pr list --state open lists only an open PR. pr edit
+# prints the PR's URL, and pr create refuses a second open PR on the same head, as gh does.
 # $FAKE_GH_DIR/upload-fails: one name per line, a path under evidence/. As in gh, the upload stops
 # at the first --attach file that ends with one, printing `could not upload <path>: <message>` on
 # stderr, and every later file is never tried. With a file uploaded, the create or edit happens

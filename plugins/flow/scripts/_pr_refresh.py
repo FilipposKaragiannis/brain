@@ -15,16 +15,15 @@ import sys
 from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pr_gh import GhRunner, run_gh  # noqa: E402
 from _pr_publish import (  # noqa: E402
     PROBLEM_LINE,
     USAGE_EXIT,
-    GhRunner,
     Outcome,
     PullRequestTarget,
     failed,
     open_pull_request_url,
     repository_arguments,
-    run_gh,
     update_pull_request,
 )
 from _pr_report_input import read_report  # noqa: E402

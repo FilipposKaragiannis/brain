@@ -11,6 +11,7 @@ def issue(n): return next(i for i in data["issues"] if i["number"] == int(n))
 LOCAL_REFERENCE = re.compile(r"\]\((\./[^)\s]+)\)")
 ASSET_URL = "https://gh/assets/%d"
 STANDARD_INPUT = "-"
+ATTACH_LIMIT = 50
 def attached_paths(arguments: List[str]) -> List[str]:
     return [arguments[position + 1] for position, argument in enumerate(arguments) if argument == "--attach"]
 def body_folder(arguments: List[str]) -> str:
@@ -56,6 +57,8 @@ def pick(i, fields):
         elif f == "state": out["state"] = i["state"]
         else: out[f] = i.get(f, "")
     return out
+if args[:2] in (["pr", "create"], ["pr", "edit"]) and len(attached_paths(args)) > ATTACH_LIMIT:
+    sys.exit("`--attach` accepts at most %d values per command" % ATTACH_LIMIT)
 if args[:2] == ["repo", "view"]:
     print(json.dumps({"nameWithOwner": "acme/widgets", "defaultBranchRef": {"name": "main"}})) if "-q" not in args else print("acme/widgets")
 elif args[:2] == ["issue", "list"]:
@@ -111,6 +114,8 @@ elif args[:2] == ["pr", "edit"]:
         sys.exit("the pull request was not changed")
     if "--body-file" in args:
         pr()["body"] = upload_attachments(body_argument(args), args, uploaded)
+    elif attached:
+        pr()["body"] = upload_attachments(pr().get("body", ""), args, uploaded)
     save()
     print(pr()["url"])
     sys.exit(1 if uploaded != attached else 0)

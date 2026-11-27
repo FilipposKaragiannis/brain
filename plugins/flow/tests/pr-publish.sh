@@ -5,11 +5,13 @@
 # 0 with the URL, a --draft opens a draft, a text capture is never attached, and a base gh would
 # read as an option is refused as a usage error. When a file does not upload, the PR is still made
 # with the new section, the script exits 1 and names that file and every later one, and an empty
-# file is named without stopping the rest; its retry edits that same PR. A failed lookup of the
-# open PR makes none. After a later verify, refresh replaces the open PR's section whole, fenced
-# heading lines and old asset URLs included, attaches the new files and keeps every line outside
-# it; it makes no PR and leaves the body when the report was made at another commit. The report
-# comes from the real verify, on the local adapter in a throwaway repo, and gh is the fake one.
+# file is named without stopping the rest; its retry edits that same PR. More images than gh takes
+# in one call all reach the PR in batches, their references all rewritten, and a failed later batch
+# names each of its files. A failed lookup of the open PR makes none. After a later verify,
+# refresh replaces the open PR's section whole, fenced heading lines and old asset URLs included,
+# attaches the new files and keeps every line outside it; it makes no PR and leaves the body when
+# the report was made at another commit. The report comes from the real verify, on the local
+# adapter in a throwaway repo, and gh is the fake one.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -172,6 +174,44 @@ reset_fake_gh; write_body; printf '1\nthe lookup is refused\npr list\n' > "$FAKE
 publish lookup-fails main
 check "Open_LookupFails_ExitsOneWithoutCreating: a create after a failed lookup could open a second pull request on the branch" \
   '[ "$(publish_code lookup-fails)" = "$failed_exit" ] && [ -z "$(pull_request_field url)" ]'
+
+echo "more images than gh takes in one call"
+attach_limit="$(pr_publish_constant ATTACH_LIMIT)"
+media_file_count=$((attach_limit + 1))
+file_number_digits=3
+new_item many "  capture: 'sh $work/capture-many.sh'"
+branch="$(git -C "$worktree" symbolic-ref --short HEAD)"
+{ printf "evidence='%s/evidence'\nmedia_file_count='%s'\nfile_number_digits='%s'\n" "$reports" "$media_file_count" "$file_number_digits"
+  cat <<'CAPTURE'
+mkdir -p "$evidence"
+python3 -I -c 'import os, sys
+for file_number in range(1, int(sys.argv[2]) + 1):
+    with open(os.path.join(sys.argv[1], "shot-%0*d.png" % (int(sys.argv[3]), file_number)), "w") as image:
+        image.write("png bytes %d\n" % file_number)' "$evidence" "$media_file_count" "$file_number_digits"
+CAPTURE
+} > "$work/capture-many.sh"
+commit_test_command true
+write_proofs '[{"line": 1, "text": "the login screen shows", "grade": "live", "evidence": "evidence/shot-001.png"}]'
+verify >/dev/null 2>&1
+evidence_media_names() { (cd "$reports/evidence" && LC_ALL=C ls) | grep -F '.png'; }
+reset_fake_gh; write_body
+publish many main
+check "Open_FiftyOneMediaFiles_EveryFileAttached: a file past gh's limit for one call still reaches the pull request" \
+  '[ -n "$(uploaded_names)" ] && [ "$(uploaded_names)" = "$(evidence_media_names)" ]'
+check "Open_FiftyOneMediaFiles_NoCallCarriesMoreThanFifty: gh refuses a call with more files than its limit and makes no pull request" \
+  '[ "$(publish_code many)" = "$published_exit" ]'
+check "Open_FiftyOneMediaFiles_BodyHasNoLocalReferenceLeft: a later batch must rewrite the references the first call left local" \
+  'pull_request_field body | grep -qF "](https://gh/assets/" && ! pull_request_field body | grep -qF -e "$local_reference"'
+
+echo "a second batch whose first file does not upload"
+extra_name="$(printf "shot-%0${file_number_digits}d.png" "$((media_file_count + 1))")"
+printf 'extra png bytes\n' > "$reports/evidence/$extra_name"
+second_batch_names="$(evidence_media_names | tail -n "+$media_file_count")"
+reset_fake_gh; write_body; fail_upload_of "$(printf '%s\n' "$second_batch_names" | head -n 1)"
+publish second-batch-fails main
+rm -f "$reports/evidence/$extra_name"
+check "Open_SecondBatchFails_NamesEveryFileOfIt: gh stops at the first failure, so no file of that batch reached the pull request" \
+  '[ -n "$second_batch_names" ] && [ "$(not_uploaded second-batch-fails)" = "$second_batch_names" ]'
 
 echo "a re-verify after the pull request exists"
 new_item refresh "  capture: 'sh $work/capture-refresh.sh'"

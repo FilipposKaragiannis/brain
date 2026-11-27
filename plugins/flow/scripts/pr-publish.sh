@@ -6,14 +6,16 @@
 # gh pr edit on it, so a retry after a partial upload updates the same PR. Either way it swaps in
 # the Verification section pr-report.sh prints, writes the body to <reports>/pr-body.md and passes
 # it with an --attach for each image and video under <reports>/evidence/, so each shows inline in
-# the section. -R names github.repo from .flow/config.yaml when it is set. Every gh call that
-# carries the body goes through here, never through the agent.
+# the section. gh takes 50 files a call, so each later batch of 50 goes up with its own
+# gh pr edit --attach, run in <reports> with no body flag. -R names github.repo from
+# .flow/config.yaml when it is set. Every gh call that carries the body goes through here, never
+# through the agent.
 # Exit 0 with `created <url>` or `updated <url>` on stdout: the PR is made or changed and every file
 # is attached. 1 with that line on stdout: the PR is made or changed, but some files are not
 # attached; stderr quotes gh and names each with `not uploaded: <name>`, relative to evidence/: the
-# one gh stopped at and every later one, an empty file, an image over 10 MiB or a video over
-# 100 MiB. When gh uploaded nothing, the PR still gets the new section, its references left local
-# until a retry. 1 with nothing on stdout: no PR was made or changed, because the report, the body,
+# one gh stopped at and every later one, in its batch and the batches after it, an empty file, an
+# image over 10 MiB or a video over 100 MiB. When gh uploaded nothing, the PR still gets the new
+# section, its references left local until a retry. 1 with nothing on stdout: no PR was made or changed, because the report, the body,
 # the lookup or gh failed first; stderr quotes why. 2: a usage error, a base or a branch that is no
 # safe branch name included.
 # pr-publish.sh refresh <reports> <branch>: after a later verify, replaces the Verification section

@@ -10,8 +10,13 @@ that PR's body. It swaps in the section scripts/_pr_report.py renders from verif
 `gh pr edit <url>`, with `--body-file` on it and an `--attach` for each image and video under
 evidence/ (scripts/_pr_media.py) gh would take, by absolute path (scripts/_pr_attachments.py).
 gh resolves each `./evidence/...` reference against the body file's folder, uploads the file and
-puts its asset URL in the body. When gh uploaded nothing it made or changed no PR, so the same call
-runs again without `--attach`, and the PR holds the new section with those references still local.
+puts its asset URL in the body. gh takes at most ATTACH_LIMIT files a call, so the first call
+attaches that many and each later batch is a `gh pr edit <url> --attach ...` with no body flag, run
+in <reports dir>: gh then rewrites the PR's own body against that folder, and a second body file
+would put the local references back. A failed batch stops the rest. When the first call uploaded
+nothing, gh made or changed no PR, so the same call runs again without `--attach`, and the PR holds
+the new section with those references still local. A file not uploaded is the one gh stopped at
+and every later one, in that batch and the batches after it.
 Prints `created <url>` or `updated <url>` on stdout and exits 0 once every file is attached; exits
 1 with that line, gh's error and a `not uploaded: <name>` line per file on stderr when the PR is
 made or changed but some file is not attached; exits 1 with no line on stdout and the reason on
@@ -20,30 +25,26 @@ on a usage error. scripts/_pr_refresh.py runs the update path alone, after a lat
 """
 import json
 import os
-import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, List, Mapping, Optional, Sequence, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pr_attachments import Attachment, Attachments, attachments, not_uploaded  # noqa: E402
 from _pr_body import read_body, replace_body, swapped_section  # noqa: E402
+from _pr_gh import CURRENT_FOLDER, GH_SUCCEEDED_EXIT, GhResult, GhRunner, run_gh  # noqa: E402
 from _pr_media import media_names  # noqa: E402
 from _pr_report import LINE_BREAK, read_evidence, verification_section  # noqa: E402
-from _pr_report_input import TEXT_ENCODING, VerifyReport, read_report  # noqa: E402
+from _pr_report_input import VerifyReport, read_report  # noqa: E402
 from _verify_proofs import EVIDENCE_FOLDER  # noqa: E402
 
 OPEN_COMMAND = "open"
 OPEN_ARGUMENT_COUNT = 7
 BODY_FILE_NAME = "pr-body.md"
-GH_PROGRAM = "gh"
 REPOSITORY_OPTION = "-R"
-UNDECODABLE_BYTES = "replace"
-# A video may be up to 100 MiB, and gh uploads every file before it returns.
-GH_TIMEOUT_SECONDS = 1800
-GH_SUCCEEDED_EXIT = 0
-GH_NOT_RUN_EXIT = 127
+# gh refuses a call with more --attach values than this, before it uploads anything.
+ATTACH_LIMIT = 50
 URL_PREFIXES = ("https://", "http://")
 CREATED_LINE = "created %s"
 CREATE_COMMAND = "pr create"
@@ -55,7 +56,6 @@ LOOKUP_AMBIGUOUS = "more than one open pull request has the head %s: %s"
 BODY_FAILED = "gh pr view %s failed, so its body is left as it was: %s"
 UPDATED_LINE = "updated %s"
 NOT_UPLOADED = "not uploaded: %s"
-GH_TIMED_OUT = "gh took longer than %d seconds"
 PROBLEM_LINE = "flow: %s"
 USAGE = "usage: _pr_publish.py open <reports dir> <base> <branch> <title> <draft|ready> <repository>"
 PUBLISHED_EXIT = 0
@@ -87,13 +87,6 @@ class OpenRequest:
 
 
 @dataclass(frozen=True)
-class GhResult:
-    exit_code: int
-    stdout: str
-    stderr: str
-
-
-@dataclass(frozen=True)
 class Outcome:
     exit_code: int
     reported: Tuple[str, ...]
@@ -113,21 +106,6 @@ class Publication:
     command: str
     reported_line: str
     known_url: str
-
-
-GhRunner = Callable[[Sequence[str]], GhResult]
-
-
-def run_gh(arguments: Sequence[str]) -> GhResult:
-    try:
-        completed = subprocess.run(  # noqa: S603 - an argument list and no shell
-            [GH_PROGRAM, *arguments], capture_output=True, text=True, encoding=TEXT_ENCODING, errors=UNDECODABLE_BYTES,
-            timeout=GH_TIMEOUT_SECONDS, check=False)
-    except subprocess.TimeoutExpired:
-        return GhResult(GH_NOT_RUN_EXIT, "", GH_TIMED_OUT % GH_TIMEOUT_SECONDS)
-    except OSError as error:
-        return GhResult(GH_NOT_RUN_EXIT, "", str(error))
-    return GhResult(completed.returncode, completed.stdout, completed.stderr)
 
 
 def body_file(reports: str) -> str:
@@ -163,8 +141,8 @@ def failed(problem: str) -> Outcome:
     return Outcome(FAILED_EXIT, (), (problem,))
 
 
-def gh_failure(publication: Publication, result: GhResult) -> str:
-    return GH_FAILED % (publication.command, result.stderr.strip())
+def gh_failure(command: str, result: GhResult) -> str:
+    return GH_FAILED % (command, result.stderr.strip())
 
 
 def published(publication: Publication, url: str, reasons: Tuple[str, ...], missing: Tuple[Attachment, ...]) -> Outcome:
@@ -177,33 +155,49 @@ def published(publication: Publication, url: str, reasons: Tuple[str, ...], miss
 
 def published_without_attachments(publication: Publication, attached: Attachments, upload: GhResult,
                                   gh: GhRunner) -> Outcome:
-    result = gh(list(publication.arguments))
+    result = gh(list(publication.arguments), CURRENT_FOLDER)
     if result.exit_code != GH_SUCCEEDED_EXIT:
-        return failed(gh_failure(publication, result))
+        return failed(gh_failure(publication.command, result))
     url = pull_request_url(result.stdout) or publication.known_url
-    return published(publication, url, (gh_failure(publication, upload),), attached.refused + attached.uploadable)
+    return published(publication, url, (gh_failure(publication.command, upload),), attached.refused + attached.uploadable)
 
 
-def publish(publication: Publication, attached: Attachments, gh: GhRunner) -> Outcome:
-    result = gh([*publication.arguments, *attach_arguments(attached.uploadable)])
+def published_in_batches(target: PullRequestTarget, publication: Publication, url: str, attached: Attachments,
+                         gh: GhRunner) -> Outcome:
+    if not url:
+        return failed(GH_PRINTED_NO_URL % publication.command)
+    for batch_start in range(ATTACH_LIMIT, len(attached.uploadable), ATTACH_LIMIT):
+        batch_end = batch_start + ATTACH_LIMIT
+        batch = attached.uploadable[batch_start:batch_end]
+        result = gh(["pr", "edit", url, *target.repository_arguments, *attach_arguments(batch)],
+                    os.path.abspath(target.reports))
+        if result.exit_code != GH_SUCCEEDED_EXIT:
+            missing = (not_uploaded(batch, result.stderr) or batch) + attached.uploadable[batch_end:]
+            return published(publication, url, (gh_failure(EDIT_COMMAND, result),), attached.refused + missing)
+    return published(publication, url, (), attached.refused)
+
+
+def publish(target: PullRequestTarget, publication: Publication, attached: Attachments, gh: GhRunner) -> Outcome:
+    first_batch, later = attached.uploadable[:ATTACH_LIMIT], attached.uploadable[ATTACH_LIMIT:]
+    result = gh([*publication.arguments, *attach_arguments(first_batch)], CURRENT_FOLDER)
     printed_url = pull_request_url(result.stdout)
     if result.exit_code == GH_SUCCEEDED_EXIT:
-        return published(publication, printed_url or publication.known_url, (), attached.refused)
-    missing = not_uploaded(attached.uploadable, result.stderr)
+        return published_in_batches(target, publication, printed_url or publication.known_url, attached, gh)
+    missing = not_uploaded(first_batch, result.stderr)
     if printed_url:
-        return published(publication, printed_url, (gh_failure(publication, result),),
-                         attached.refused + (missing or attached.uploadable))
+        return published(publication, printed_url, (gh_failure(publication.command, result),),
+                         attached.refused + (missing or first_batch) + later)
     if not missing:
-        return failed(gh_failure(publication, result))
+        return failed(gh_failure(publication.command, result))
     return published_without_attachments(publication, attached, result, gh)
 
 
-def publish_body(reports: str, report: VerifyReport, publication: Publication, gh: GhRunner) -> Outcome:
-    section = verification_section(report, read_evidence(reports))
-    problem = replace_body(body_file(reports), swapped_section(publication.body, section))
+def publish_body(target: PullRequestTarget, report: VerifyReport, publication: Publication, gh: GhRunner) -> Outcome:
+    section = verification_section(report, read_evidence(target.reports))
+    problem = replace_body(body_file(target.reports), swapped_section(publication.body, section))
     if problem:
         return failed(problem)
-    return publish(publication, attachments(attachment_candidates(reports)), gh)
+    return publish(target, publication, attachments(attachment_candidates(target.reports)), gh)
 
 
 def listed_urls(stdout: str) -> Optional[Tuple[str, ...]]:
@@ -217,7 +211,8 @@ def listed_urls(stdout: str) -> Optional[Tuple[str, ...]]:
 
 
 def open_pull_request_url(target: PullRequestTarget, gh: GhRunner) -> Lookup:
-    result = gh(["pr", "list", *target.repository_arguments, "--head", target.branch, "--state", "open", "--json", "url"])
+    result = gh(["pr", "list", *target.repository_arguments, "--head", target.branch, "--state", "open", "--json", "url"],
+                CURRENT_FOLDER)
     urls = listed_urls(result.stdout) if result.exit_code == GH_SUCCEEDED_EXIT else None
     if urls is None:
         return Lookup("", LOOKUP_FAILED % (target.branch, result.stderr.strip() or result.stdout.strip()))
@@ -231,14 +226,14 @@ def create_pull_request(request: OpenRequest, report: VerifyReport, gh: GhRunner
     body_read = read_body(body_path)
     if body_read.problem:
         return failed(body_read.problem)
-    return publish_body(request.target.reports, report, create_publication(request, body_path, body_read.body), gh)
+    return publish_body(request.target, report, create_publication(request, body_path, body_read.body), gh)
 
 
 def update_pull_request(target: PullRequestTarget, report: VerifyReport, url: str, gh: GhRunner) -> Outcome:
-    result = gh(["pr", "view", url, *target.repository_arguments, "--json", "body", "-q", ".body"])
+    result = gh(["pr", "view", url, *target.repository_arguments, "--json", "body", "-q", ".body"], CURRENT_FOLDER)
     if result.exit_code != GH_SUCCEEDED_EXIT:
         return failed(BODY_FAILED % (url, result.stderr.strip()))
-    return publish_body(target.reports, report, edit_publication(target, url, body_file(target.reports), result.stdout), gh)
+    return publish_body(target, report, edit_publication(target, url, body_file(target.reports), result.stdout), gh)
 
 
 def open_pull_request(request: OpenRequest, gh: GhRunner) -> Outcome:
