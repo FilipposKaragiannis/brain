@@ -11,9 +11,9 @@ when it cannot: the reason and the line on stderr, nothing written. plan writes 
 
 A step looks only at the file, so a second run changes nothing; what each op does is in
 _config_migration_changes.py. The label becomes the new label when a step changed the file or the
-file has none, never otherwise. The helper reads each step's result again, and its own before it
-writes: a step's key that does not read as the step says, or a key no step named that lost or
-changed its value, is exit 2.
+file has none, never otherwise. The helper reads each step's result again, and the label's: a
+step's key that does not read as the step says, or a key the step or the label does not name that
+was lost or changed its value, is exit 2 and nothing is written.
 """
 
 from __future__ import annotations
@@ -119,24 +119,45 @@ def _named(path: str, named_keys: Tuple[str, ...]) -> bool:
     )
 
 
-def _check_problem(
-    before: _config_yaml.Document,
-    after: _config_yaml.Document,
-    steps: Tuple[Step, ...],
-    new_label: str,
-) -> Optional[Problem]:
-    named_keys = (_LABEL_KEY,) + tuple(
-        key for step in steps for key in _config_migration_steps.step_keys(step)
-    )
-    before_keys = _config_yaml.key_paths(before)
-    for path in before_keys + _config_yaml.key_paths(after):
+def _changed_outside(
+    before: _config_yaml.Document, after: _config_yaml.Document, named_keys: Tuple[str, ...]
+) -> Optional[str]:
+    """The first key outside the named ones whose reading differs between the two documents."""
+    for path in _config_yaml.key_paths(before) + _config_yaml.key_paths(after):
         unnamed = not _named(path, named_keys)
         moved = _config_yaml.values(before, path) != _config_yaml.values(after, path)
         lost = _config_yaml.has_key(before, path) != _config_yaml.has_key(after, path)
         if unnamed and (moved or lost):
-            return Problem("the migration would change %s, which no step names" % path)
+            return path
+    return None
+
+
+def _step_problem(
+    before: _config_yaml.Document, after: _config_yaml.Document, step: Step
+) -> Optional[Problem]:
+    outside = _changed_outside(before, after, _config_migration_steps.step_keys(step))
+    if outside is not None:
+        return Problem(
+            "the step %s would change %s, which it does not name; nothing written"
+            % (step.name, outside)
+        )
+    if not _config_migration_changes.left_as_it_says(before, after, step):
+        return Problem(
+            "the step %s would not leave its keys as it says; nothing written" % step.name
+        )
+    return None
+
+
+def _label_problem(
+    before: _config_yaml.Document, after: _config_yaml.Document, new_label: str
+) -> Optional[Problem]:
+    outside = _changed_outside(before, after, (_LABEL_KEY,))
+    if outside is not None:
+        return Problem("the label would change %s; nothing written" % outside)
     if _config_yaml.values(after, _LABEL_KEY) != (new_label,):
-        return Problem("the migration would not leave %s at %s" % (_LABEL_KEY, new_label))
+        return Problem(
+            "the migration would not leave %s at %s; nothing written" % (_LABEL_KEY, new_label)
+        )
     return None
 
 
@@ -149,8 +170,9 @@ def _stepped(original: _config_yaml.Document, steps: Tuple[Step, ...]) -> Union[
         reparsed = _reparsed(edit.text, original.newline, "the step " + step.name)
         if isinstance(reparsed, Problem):
             return reparsed
-        if not _config_migration_changes.left_as_it_says(document, reparsed, step):
-            return Problem("the step %s would not leave its keys as it says" % step.name)
+        problem = _step_problem(document, reparsed, step)
+        if problem is not None:
+            return problem
         document = reparsed
     return Stepped(document, tuple(changes))
 
@@ -170,9 +192,9 @@ def _migration(text: str, steps: Tuple[Step, ...], new_label: str) -> Union[Migr
     after = _reparsed(labelled.text, original.newline, "the label")
     if isinstance(after, Problem):
         return after
-    problem = _check_problem(original, after, steps, new_label)
+    problem = _label_problem(stepped.document, after, new_label)
     if problem is not None:
-        return Problem(problem.reason + "; nothing written")
+        return problem
     return Migration(label_found, labelled.text, changes)
 
 
