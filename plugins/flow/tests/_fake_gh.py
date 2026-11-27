@@ -1,11 +1,36 @@
 """The fake gh used by the adapter tests. See fake-gh.sh."""
 import json, os, re, sys
+from typing import List
+from urllib.parse import unquote
 db = sys.argv[1]; args = sys.argv[2:]
 data = json.load(open(db))
 def save(): json.dump(data, open(db, "w"))
 def pr():
     return data.setdefault("pr", {"number": 90, "state": "OPEN", "isDraft": True, "mergedAt": None, "url": "https://gh/pull/90", "headRefName": "flow/gh-11", "baseRefName": "main"})
 def issue(n): return next(i for i in data["issues"] if i["number"] == int(n))
+LOCAL_REFERENCE = re.compile(r"\]\((\./[^)\s]+)\)")
+ASSET_URL = "https://gh/assets/%d"
+STANDARD_INPUT = "-"
+def attached_paths(arguments: List[str]) -> List[str]:
+    return [arguments[position + 1] for position, argument in enumerate(arguments) if argument == "--attach"]
+def body_folder(arguments: List[str]) -> str:
+    body_file = arguments[arguments.index("--body-file") + 1] if "--body-file" in arguments else STANDARD_INPUT
+    return os.getcwd() if body_file == STANDARD_INPUT else os.path.dirname(os.path.abspath(body_file))
+def upload_attachments(body: str, arguments: List[str]) -> str:
+    uploaded = attached_paths(arguments)
+    folder = body_folder(arguments)
+    assets = data.setdefault("assets", [])
+    asset_urls = {os.path.abspath(path): ASSET_URL % asset for asset, path in enumerate(uploaded, len(assets) + 1)}
+    assets.extend(os.path.abspath(path) for path in uploaded)
+    referenced = set()
+    def asset_reference(reference: re.Match) -> str:
+        path = os.path.abspath(os.path.join(folder, unquote(reference.group(1))))
+        if path not in asset_urls:
+            return reference.group(0)
+        referenced.add(path)
+        return "](%s)" % asset_urls[path]
+    rewritten = LOCAL_REFERENCE.sub(asset_reference, body)
+    return rewritten + "".join("\n\n%s\n" % url for path, url in asset_urls.items() if path not in referenced)
 def pick(i, fields):
     out = {}
     for f in fields:
@@ -64,17 +89,19 @@ elif args[:2] == ["pr", "edit"]:
     if "--body" in args: pr()["body"] = args[args.index("--body") + 1]
     if "--body-file" in args:
         body_file = args[args.index("--body-file") + 1]
-        pr()["body"] = sys.stdin.read() if body_file == "-" else open(body_file).read()
+        pr()["body"] = upload_attachments(sys.stdin.read() if body_file == STANDARD_INPUT else open(body_file).read(), args)
     save()
 elif args[:2] == ["pr", "list"]:
     head = args[args.index("--head") + 1] if "--head" in args else None
-    print(json.dumps([pr()] if data.get("pr") and head in (None, pr()["headRefName"]) else []))
+    listed_state = args[args.index("--state") + 1].upper() if "--state" in args else "ALL"
+    print(json.dumps([pr()] if data.get("pr") and head in (None, pr()["headRefName"]) and listed_state in ("ALL", pr()["state"]) else []))
 elif args[:2] == ["pr", "create"]:
     opt = lambda f, d="": args[args.index(f) + 1] if f in args else d
     body = sys.stdin.read() if opt("--body-file") == "-" else open(opt("--body-file")).read() if "--body-file" in args else opt("--body")
     head = opt("--head") or os.popen("git symbolic-ref --short HEAD").read().strip()
     data["pr"] = {"number": 91, "state": "OPEN", "isDraft": "--draft" in args, "mergedAt": None, "url": "https://gh/pull/91",
-                  "headRefName": head, "baseRefName": opt("--base", "main"), "title": opt("--title"), "body": body}
+                  "headRefName": head, "baseRefName": opt("--base", "main"), "title": opt("--title"),
+                  "body": upload_attachments(body, args)}
     save(); print(data["pr"]["url"])
 elif args[:2] == ["pr", "comment"]:
     body = sys.stdin.read() if "--body-file" in args else args[args.index("--body") + 1]

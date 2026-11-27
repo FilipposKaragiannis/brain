@@ -15,8 +15,8 @@ the review requests.
 ## Inputs
 The item (its `parent`, acceptance lines, `state.base`), the task branch in the claimed
 worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` (must be pass), the
-Verification section `<plugin>/scripts/pr-report.sh <reports>` prints from it,
-`<reports>/explain.html` and `quiz.md` when the explain step ran, the PR body template in the
+publish script `<plugin>/scripts/pr-publish.sh`, which swaps in the Verification section
+`<plugin>/scripts/pr-report.sh <reports>` prints from it, `<reports>/explain.html` and `quiz.md` when the explain step ran, the PR body template in the
 `flow:pr` skill, the repo's `.github/PULL_REQUEST_TEMPLATE.md` when there is one, and
 `.flow/config.yaml` (`base`).
 
@@ -49,18 +49,21 @@ Verification section `<plugin>/scripts/pr-report.sh <reports>` prints from it,
    Mermaid, one of them), the Verification section, Merge danger (one-way or two-way door,
    blast radius in one word), and `Resolves #<n>` for a GitHub item (a local item gets
    `Item: <id>`). Glossary words only. The Verification section is the output of
-   `<plugin>/scripts/pr-report.sh <reports>`, pasted whole and never edited: the verdict, the
-   proofs and the Not checked list. With a repo template it goes at the template's verification
-   or testing section, else at the end before `Resolves`. When the script exits non-zero, stop
-   with status `fail` naming it and its message.
-   Open the PR with the whole body at once: `gh pr create --base <base> --head <branch> --title
-   <item title> --body-file <file>`. The PR is a GitHub PR on the origin whatever tracker holds
-   the item; a local or Jira item gets one too, and its tracker only records it (step 6). A
-   pushed branch is no PR: when `gh pr create` fails, stop with status `fail` naming it.
-5. When a quiz exists (`<reports>/quiz.md`): open as a draft (`--draft`) and say in the
-   result that the PR goes ready when the owner passes the quiz in the console. Never post the
-   quiz, its answers or a link to it on the PR: the console shows it on the Gates and Pull
-   requests pages.
+   `<plugin>/scripts/pr-report.sh <reports>`, never edited: the verdict, the proofs, the Not
+   checked list and each image and video under **Evidence**. Write the body to
+   `<reports>/pr-body.md` with a `## Verification` line where the section goes: with a repo
+   template at the template's verification or testing section, else at the end before
+   `Resolves`.
+   Open the PR with `<plugin>/scripts/pr-publish.sh open <reports> <base> <branch> <item
+   title>`, never `gh pr create`: it swaps in the section whole, attaches each image and video so
+   it shows inline, and prints `created <url>`. The PR is a GitHub PR on the origin whatever
+   tracker holds the item; a local or Jira item gets one too, and its tracker only records it
+   (step 6). A pushed branch is no PR: when the script exits non-zero, stop with status `fail`
+   quoting what it printed.
+5. When a quiz exists (`<reports>/quiz.md`): open as a draft (`--draft`, the script's last
+   argument) and say in the result that the PR goes ready when the owner passes the quiz in the
+   console. Never post the quiz, its answers or a link to it on the PR: the console shows it on
+   the Gates and Pull requests pages.
 6. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`. It also records the
    host that wrote the PR, which picks the reviewers in step 7. When it fails (a local item
    file can lie outside the worktree you may write), the step does not fail: say so in the

@@ -3,7 +3,8 @@
 # it from there. Sourced after lib/flow.sh and lib/base.sh by scripts/steward.sh, scripts/next.sh
 # and hooks/worktree-create.sh (claim_at_base picks the branch from the item it read), after
 # lib/flow.sh alone by scripts/comments.sh and jobs/comments.sh (branch_item), and after lib/flow.sh
-# and lib/base.sh by skills/init/scripts/init.sh (branch_problems).
+# and lib/base.sh by skills/init/scripts/init.sh (branch_problems) and scripts/pr-publish.sh
+# (branch_name_valid).
 #
 # branch: one template, or one per kind (epic, task, bug). Its placeholders: {slug} (item_slug),
 # {key} (branch_key), {kind} and {title} (branch_title).
