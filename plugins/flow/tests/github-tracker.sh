@@ -500,6 +500,10 @@ check "AnswerFromListingALogin_TrustsItsStateComment: a state comment by a login
   [ "$("$P/adapters/github/read.sh" 'gh#52' | jget state.profile)" = task-M ]
 check "AnswerFromLeavingOutTheGhUser_IgnoresItsStateComment: the gh user's state comment is not read when github.answer_from leaves it out, because the list names everyone trusted" \
   [ -z "$("$P/adapters/github/read.sh" 'gh#51' | jget state.profile)" ]
+check "ListWithAnswerFromListingALogin_TrustsItsStateComment: the list takes the profile from a state comment by a login in github.answer_from, because the list reads the comments apart from read.sh" \
+  [ "$(listed_profile 'gh#52')" = task-M ]
+check "ListWithAnswerFromLeavingOutTheGhUser_IgnoresItsStateComment: the list reads no profile from the gh user's state comment when github.answer_from leaves it out, because the list names everyone trusted" \
+  [ -z "$(listed_profile 'gh#51')" ]
 write_state_code="$(code_of "$P/adapters/github/write-state.sh" 'gh#53' attempts=1)"
 check "WriteStateWithTheGhUserOutsideAnswerFrom_Refuses: a first state comment the readers would ignore is refused, because the next write would post one more" \
   [ "$write_state_code" -ne 0 ]
