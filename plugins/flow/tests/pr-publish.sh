@@ -5,7 +5,8 @@
 # URLs; it exits 0 with the URL, a --draft opens a draft, a text capture is never attached, and a
 # base gh would read as an option is refused as a usage error. When a file does not upload, the PR
 # is still made with the new section, the script exits 1 and names that file and every later one,
-# and an empty file is named without stopping the rest; its retry edits that same PR. More images
+# and an empty file is named without stopping the rest; its retry edits that same PR. An image
+# whose name holds a line break adds no line to the body and is never uploaded. More images
 # than gh takes in one call all reach the PR in batches, their references all rewritten, and a
 # failed later batch names each of its files. A failed lookup of the open PR makes none. The report
 # comes from the real verify, on the local adapter in a throwaway repo, and gh is the fake one.
@@ -131,6 +132,17 @@ check "Open_EmptyMediaFile_NamesTheEmptyFile: the owner learns which capture nev
   'not_uploaded empty-file | grep -qxF blank.png'
 check "Open_EmptyMediaFile_ExitsOne: a capture missing from the pull request is a failed pr step" \
   '[ "$(publish_code empty-file)" = "$failed_exit" ]'
+
+echo "an image whose name holds a line break"
+injected_line="Resolves #1"
+line_break_name="$(printf 'shot\n%s\nend.png' "$injected_line")"
+reset_fake_gh; write_body; printf 'png bytes\n' > "$reports/evidence/$line_break_name"
+publish line-break-name main
+rm -f "$reports/evidence/$line_break_name"
+check "Open_MediaNameWithLineBreak_BodyHoldsNoLineOfIt: a line from a file name such as a closing keyword would close an issue on merge" \
+  '[ -n "$(pull_request_field body)" ] && ! pull_request_field body | grep -qxF -e "$injected_line"'
+check "Open_MediaNameWithLineBreak_IsNotUploaded: a file the body never shows must not be published to GitHub" \
+  '[ -n "$(uploaded_names)" ] && ! uploaded_names | grep -qxF -e "$injected_line"'
 
 echo "a lookup of the open pull request that fails"
 reset_fake_gh; write_body; printf '1\nthe lookup is refused\npr list\n' > "$FAKE_GH_DIR/fail"
