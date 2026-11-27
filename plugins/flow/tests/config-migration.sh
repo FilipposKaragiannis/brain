@@ -130,14 +130,16 @@ run_init >/dev/null 2>&1
 cp .flow/migrations/report.txt "$work/printed.report"
 run_start > "$work/printed.first" 2>&1
 run_start > "$work/printed.second" 2>&1
-check "SessionStart_AfterAMigratingInit_PrintsTheReportLines" '[ -n "$(change_line retro.commit)" ] && grep -qF -- "$(change_line retro.commit)" "$work/printed.first"'
+check "Init_BeforeTheFirstStart_IsMigrated" '[ -n "$(change_line retro.commit)" ]'
+check "SessionStart_AfterAMigratingInit_PrintsTheReportLines" 'grep -qF -- "$(change_line retro.commit)" "$work/printed.first"'
 check "SessionStart_SecondStart_PrintsNothing" '[ ! -s "$work/printed.second" ]'
 check "SessionStart_ReportPrinted_ReportTxtStays" 'cmp -s "$work/printed.report" .flow/migrations/report.txt'
 new_project pooled "${config_body}retro:\n  commit: false\n"
 run_init >/dev/null 2>&1
 git worktree add -q -b pool "$work/pooled-worktree" || exit 1
 (cd "$work/pooled-worktree" || exit 1; run_start) > "$work/pooled.start" 2>&1
-check "SessionStart_FromAPoolWorktree_PrintsTheMainWorktreesReport" '[ -n "$(change_line retro.commit)" ] && grep -qF -- "$(change_line retro.commit)" "$work/pooled.start"'
+check "Init_MainWorktreeOfAPool_IsMigrated" '[ -n "$(change_line retro.commit)" ]'
+check "SessionStart_FromAPoolWorktree_PrintsTheMainWorktreesReport" 'grep -qF -- "$(change_line retro.commit)" "$work/pooled.start"'
 
 [ "$fails" -eq 0 ] && { echo "config-migration: ok"; exit 0; }
 echo "config-migration: $fails failed"; exit 1
