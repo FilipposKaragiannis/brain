@@ -543,7 +543,7 @@ awk '{ print } /^jobs:$/ { print "  host: vim"; print "  model: opus"; print "  
 hostline="$(grep -n '^  host: vim' .flow/config.yaml | cut -d: -f1)"
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init.out" 2>&1; code=$?
 check "init: --check flags a jobs.host other than claude or codex as drift, with its line" sh -c "[ $code = 1 ] && grep -q 'gap: .flow/config.yaml:$hostline: jobs.host is vim; it must be claude or codex' '$work/init.out'"
-check "InitCheck_OldJobsModelSet_ListsItsMoveAsPendingDrift" grep -q 'drift: .flow/config.yaml: pending migration: jobs.model	jobs.claude.model	opus	' "$work/init.out"
+check "InitCheck_OldJobsModelSet_ListsItsMoveAsPendingDrift: --check shows the jobs.model move, because the owner sees what init would change before it does" grep -q 'drift: .flow/config.yaml: pending migration: jobs.model	jobs.claude.model	opus	' "$work/init.out"
 sed -i.bak 's/^  host: vim$/  host: codex/; s/^  effort: high$/  effort: max/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 check "init: --check flags an effort the jobs host does not take" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml:[0-9]*: jobs.effort is max; codex takes low, medium, high or xhigh'"
 cp "$work/fresh.config" .flow/config.yaml
@@ -551,8 +551,8 @@ check "init: the fresh config says the lessons log stays on this machine and off
 printf 'retro:\n  commit: false\n' >> .flow/config.yaml
 cp .flow/config.yaml "$work/retro.config"
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/retro-check.out" 2>&1
-check "InitCheck_RetroCommitSet_ListsItsRemovalAsPendingDrift" grep -q 'drift: .flow/config.yaml: pending migration: retro.commit	' "$work/retro-check.out"
-check "InitCheck_RetroCommitSet_LeavesTheConfigUnchanged" cmp -s "$work/retro.config" .flow/config.yaml
+check "InitCheck_RetroCommitSet_ListsItsRemovalAsPendingDrift: --check shows the retro.commit removal, because the owner sees what init would change before it does" grep -q 'drift: .flow/config.yaml: pending migration: retro.commit	' "$work/retro-check.out"
+check "InitCheck_RetroCommitSet_LeavesTheConfigUnchanged: the config stays as it was, because --check only reports" cmp -s "$work/retro.config" .flow/config.yaml
 cp "$work/fresh.config" .flow/config.yaml
 check "init: installs the health job wrapper and its default schedule" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q 'health: true' .flow/config.yaml"
 mkdir -p .flow/answers.lock .flow/health && echo $$ > .flow/answers.lock/pid && echo '{}' > .flow/health/last.json

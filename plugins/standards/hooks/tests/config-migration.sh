@@ -100,21 +100,21 @@ new_project migrated
 write_config
 cp .standards/config.json "$work/migrated.before"
 "$init" > "$work/migrated.init.out" 2>&1
-check "Init_LanguageWithDocAndNoDocInside_WritesTheDefault" value_is "$written_key" "$default_doc_inside"
-check "Init_DocInsideEmptyList_LeavesItAlone" value_is languages.1.comments.doc_inside "[]"
-check "Init_LanguageWithoutComments_GetsNoKey" value_is languages.2.comments absent
-check "Init_DocInsideWritten_ReportLineHasFourTabSeparatedFields" [ "$(change_field_count "$written_key")" = "$change_fields" ]
-check "Init_DocInsideWritten_BackupNamedAfterTheVersionFound" cmp -s "$work/migrated.before" "$migrations/config.json.$old_label.bak"
-check "Init_DocInsideWritten_VersionBecomesTheManifestVersion" value_is version "\"$copy_version\""
+check "Init_LanguageWithDocAndNoDocInside_WritesTheDefault: the C# language gets the default, because the doc-comment rule needs the key to know where docs go" value_is "$written_key" "$default_doc_inside"
+check "Init_DocInsideEmptyList_LeavesItAlone: an empty list stays, because the owner chose it" value_is languages.1.comments.doc_inside "[]"
+check "Init_LanguageWithoutComments_GetsNoKey: shell gets no comments map, because a language with no doc comments has nothing to set" value_is languages.2.comments absent
+check "Init_DocInsideWritten_ReportLineHasFourTabSeparatedFields: the line splits into old key, new key, value and reason, because the hook and the owner read it field by field" [ "$(change_field_count "$written_key")" = "$change_fields" ]
+check "Init_DocInsideWritten_BackupNamedAfterTheVersionFound: the backup carries the old version, because the owner restores by the version they had" cmp -s "$work/migrated.before" "$migrations/config.json.$old_label.bak"
+check "Init_DocInsideWritten_VersionBecomesTheManifestVersion: the label is the plugin version that migrated, because the next backup is named after it" value_is version "\"$copy_version\""
 tree_digest > "$work/migrated.first"
 "$init" > "$work/migrated.second.out" 2>&1
-check "Init_RunTwice_SecondRunChangesNothing" same_tree "$work/migrated.first"
+check "Init_RunTwice_SecondRunChangesNothing: a second init changes no file, because init runs again on every update" same_tree "$work/migrated.first"
 
 echo "session start after a migrating init"
 first_start="$(echo '{}' | "$start" 2>&1)"
 second_start="$(echo '{}' | "$start" 2>&1)"
-check "SessionStart_AfterAMigratingInit_PrintsTheChange" sh -c 'printf "%s" "$1" | grep -qF -- "$2"' _ "$first_start" "$written_key"
-check "SessionStart_SecondStart_PrintsNothing" [ -z "$second_start" ]
+check "SessionStart_AfterAMigratingInit_PrintsTheChange: the first session shows the change, because the owner must learn their config changed" sh -c 'printf "%s" "$1" | grep -qF -- "$2"' _ "$first_start" "$written_key"
+check "SessionStart_SecondStart_PrintsNothing: the report shows once, because the same lines every session would be noise" [ -z "$second_start" ]
 
 echo "init: a config with nothing to migrate"
 new_project current
@@ -122,7 +122,7 @@ write_config
 with_owner_doc_inside
 cp .standards/config.json "$work/current.before"
 "$init" > "$work/current.init.out" 2>&1
-check "Init_NothingToMigrate_ConfigBytesUnchanged" cmp -s "$work/current.before" .standards/config.json
+check "Init_NothingToMigrate_ConfigBytesUnchanged: an up-to-date config stays byte for byte, because a rewrite would show as a change the owner did not make" cmp -s "$work/current.before" .standards/config.json
 
 echo "init --check: a step is pending"
 new_project pending
@@ -130,8 +130,8 @@ write_config
 installed_with_doc_inside_removed
 tree_digest > "$work/pending.before"
 "$init" --check > "$work/pending.check.out" 2>&1; pending_exit=$?
-check "InitCheck_PendingStep_NamesItAsDrift" grep -qF -- "drift: .standards/config.json: pending migration: -	$written_key" "$work/pending.check.out"
-check "InitCheck_PendingStep_ChangesNothing" same_tree "$work/pending.before"
+check "InitCheck_PendingStep_NamesItAsDrift: --check lists the pending step, because the owner sees what init would change before it does" grep -qF -- "drift: .standards/config.json: pending migration: -	$written_key" "$work/pending.check.out"
+check "InitCheck_PendingStep_ChangesNothing: no file changes, because --check only reports" same_tree "$work/pending.before"
 check "InitCheck_PendingStep_ExitsOne: a pending step is drift, because a caller reads the exit code, not the text" [ "$pending_exit" = "$drift_exit" ]
 
 echo "init: a project that commits .standards/"
@@ -140,8 +140,8 @@ write_config
 installed_with_doc_inside_removed
 git add -A && git commit -qm "chore: install the standards [config]"
 "$init" > "$work/committed.init.out" 2>&1
-check "Init_CommittedStandardsFolder_IsMigrated" value_is "$written_key" "$default_doc_inside"
-check "Init_CommittedStandardsFolder_GitStatusShowsOnlyTheConfig" [ "$(git status --porcelain)" = " M .standards/config.json" ]
+check "Init_CommittedStandardsFolder_IsMigrated: a committed config still migrates, because many projects commit .standards/" value_is "$written_key" "$default_doc_inside"
+check "Init_CommittedStandardsFolder_GitStatusShowsOnlyTheConfig: only the config shows as changed, because backups and the report must not end up in a commit" [ "$(git status --porcelain)" = " M .standards/config.json" ]
 
 echo "init: a config indented by four spaces, with non-ASCII text"
 new_project layout
@@ -164,10 +164,10 @@ mkdir -p .standards && cat > .standards/config.json <<JSON
 }
 JSON
 "$init" > "$work/layout.init.out" 2>&1
-check "Init_FourSpaceIndentAndUnicode_IsMigrated" value_is "$written_key" "$default_doc_inside"
-check "Init_FourSpaceIndent_KeptAsWritten" python3 -I -c 'import json, sys
+check "Init_FourSpaceIndentAndUnicode_IsMigrated: the file migrates, because the layout checks below mean nothing on an untouched file" value_is "$written_key" "$default_doc_inside"
+check "Init_FourSpaceIndent_KeptAsWritten: the four-space indent stays, because a reindent shows the whole file as changed" python3 -I -c 'import json, sys
 text = open(".standards/config.json", encoding="utf-8").read()
 sys.exit(text != json.dumps(json.loads(text), indent=int(sys.argv[1]), ensure_ascii=False) + "\n")' "$layout_indent"
-check "Init_UnicodeText_KeptAsWritten" grep -qF -- '"_readme": "Réglages du projet"' .standards/config.json
+check "Init_UnicodeText_KeptAsWritten: non-ASCII text stays readable, because escaped text is not what the owner wrote" grep -qF -- '"_readme": "Réglages du projet"' .standards/config.json
 
 [ "$fails" -eq 0 ] && echo "config-migration: ok" || { echo "config-migration: $fails failed"; exit 1; }
