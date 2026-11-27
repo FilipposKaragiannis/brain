@@ -22,7 +22,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    comments` with `asked` and `answer`. Carry it out first: it settles what a gate an earlier
    pass raised asked (how a conflict resolves, which fix a check gets). Work on the PR's own
    branch, in the claimed worktree, the way steps 2 and 3 do (`implementer`, `verifier`, push,
-   re-request review). One base merge is this step's own: an answer that asks to merge the
+   refresh of the PR body, re-request review). One base merge is this step's own: an answer that asks to merge the
    default branch into the PR's base when that base is an epic branch (`epic/<n>`). Do it in a
    throwaway worktree: `git fetch origin`, `git worktree add --detach <tmp> origin/epic/<n>`,
    `git merge --no-edit -m "chore: merge <default> into epic/<n>" origin/<default>`, the
@@ -50,8 +50,13 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    task branch (never rebase, never force), resolve each conflict so both sides keep their intent,
    build and run the tests the conflicted files touch, commit the merge as `chore: merge <base>
    into <branch>`. Then spawn the `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"`
-   (never `-f` or `--force-with-lease`: a merge always fast-forwards) and re-request review (step
-   8) naming the merge commit. A conflict whose resolution needs the owner (two intents that
+   (never `-f` or `--force-with-lease`: a merge always fast-forwards), refresh the PR body and
+   re-request review (step 8) naming the merge commit. **Refresh**, in the claimed worktree after
+   that push: `"$P/scripts/pr-publish.sh" refresh <reports> <headRefName>` swaps in the new
+   verdict, proofs and images and keeps every line outside the Verification section. Its exit 1
+   does not stop the pass: name it in the report with what it printed, each file not uploaded or
+   why it refused. This is the only re-verify once a PR exists: the addressers of step 6 push
+   without one, so the body keeps the last verdict, which names its own commit. A conflict whose resolution needs the owner (two intents that
    cannot both hold) → `"$P/scripts/gate.sh" raise <item> ambiguity "<message>" --condition
    "pr:#<n> conflicting" --raised-by "comments job"` with each file and the choice; abort the
    merge and stop. The health job clears that gate once the PR no longer conflicts. A dirty tree
@@ -67,8 +72,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    spawn the `implementer` with this brief: read the failed logs (`gh pr checks <pr>`, `gh run
    view <run> --log-failed`), find the cause, fix it in the task branch, build and run the tests
    the fix touches, commit as `fix: make <check> pass`. Then the
-   `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"` (never force) and re-request
-   review (step 8) naming the fix. A failure that is not the change's (infra, billing, a flake,
+   `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"` (never force), refresh the PR
+   body (step 2) and re-request review (step 8) naming the fix. A failure that is not the change's (infra, billing, a flake,
    a check red on the base too), or a check still red on the head of an earlier `fix: make
    <check> pass` → no code change: say so in the report and go on to step 4 (a gate only when
    the owner must decide). A dirty tree → no fix: report it, go on to step 4. A failing verify →
@@ -113,7 +118,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 9. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
    to, and the interrupted work is committed or named in a reply.
 10. End with one report: the owner's answer carried out or raised again, the conflict merge, the checks
-   fixed or left red and why, threads addressed (valid, nit, wrong counts), commits, the owner's
+   fixed or left red and why, a refresh that exited 1 and what it named, threads addressed (valid, nit, wrong counts), commits, the owner's
    decisions pending, the quiz state.
 
 Never batch threads into one commit. Never resolve a thread without a reply. Never mark the

@@ -16,7 +16,7 @@ Prints `created <url>` or `updated <url>` on stdout and exits 0 once every file 
 1 with that line, gh's error and a `not uploaded: <name>` line per file on stderr when the PR is
 made or changed but some file is not attached; exits 1 with no line on stdout and the reason on
 stderr when the report, the body, the lookup or gh fails before the PR is made or changed; exits 2
-on a usage error.
+on a usage error. scripts/_pr_refresh.py runs the update path alone, after a later verify.
 """
 import json
 import os
@@ -72,13 +72,18 @@ READINESS_ARGUMENTS: Mapping[Readiness, Tuple[str, ...]] = {Readiness.DRAFT: ("-
 
 
 @dataclass(frozen=True)
-class OpenRequest:
+class PullRequestTarget:
     reports: str
-    base: str
     branch: str
+    repository_arguments: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OpenRequest:
+    target: PullRequestTarget
+    base: str
     title: str
     readiness: Readiness
-    repository_arguments: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -138,13 +143,14 @@ def attach_arguments(attached: Tuple[Attachment, ...]) -> List[str]:
 
 
 def create_publication(request: OpenRequest, body_path: str, body: str) -> Publication:
-    return Publication(body, ("pr", "create", *request.repository_arguments, "--base", request.base, "--head", request.branch,
+    target = request.target
+    return Publication(body, ("pr", "create", *target.repository_arguments, "--base", request.base, "--head", target.branch,
                         "--title", request.title, "--body-file", body_path, *READINESS_ARGUMENTS[request.readiness]),
                        CREATE_COMMAND, CREATED_LINE, "")
 
 
-def edit_publication(request: OpenRequest, url: str, body_path: str, body: str) -> Publication:
-    return Publication(body, ("pr", "edit", url, *request.repository_arguments, "--body-file", body_path),
+def edit_publication(target: PullRequestTarget, url: str, body_path: str, body: str) -> Publication:
+    return Publication(body, ("pr", "edit", url, *target.repository_arguments, "--body-file", body_path),
                        EDIT_COMMAND, UPDATED_LINE, url)
 
 
@@ -192,12 +198,12 @@ def publish(publication: Publication, attached: Attachments, gh: GhRunner) -> Ou
     return published_without_attachments(publication, attached, result, gh)
 
 
-def publish_body(request: OpenRequest, report: VerifyReport, publication: Publication, gh: GhRunner) -> Outcome:
-    section = verification_section(report, read_evidence(request.reports))
-    problem = replace_body(body_file(request.reports), swapped_section(publication.body, section))
+def publish_body(reports: str, report: VerifyReport, publication: Publication, gh: GhRunner) -> Outcome:
+    section = verification_section(report, read_evidence(reports))
+    problem = replace_body(body_file(reports), swapped_section(publication.body, section))
     if problem:
         return failed(problem)
-    return publish(publication, attachments(attachment_candidates(request.reports)), gh)
+    return publish(publication, attachments(attachment_candidates(reports)), gh)
 
 
 def listed_urls(stdout: str) -> Optional[Tuple[str, ...]]:
@@ -210,41 +216,45 @@ def listed_urls(stdout: str) -> Optional[Tuple[str, ...]]:
     return tuple(entry["url"] for entry in listed)
 
 
-def open_pull_request_url(request: OpenRequest, gh: GhRunner) -> Lookup:
-    result = gh(["pr", "list", *request.repository_arguments, "--head", request.branch, "--state", "open", "--json", "url"])
+def open_pull_request_url(target: PullRequestTarget, gh: GhRunner) -> Lookup:
+    result = gh(["pr", "list", *target.repository_arguments, "--head", target.branch, "--state", "open", "--json", "url"])
     urls = listed_urls(result.stdout) if result.exit_code == GH_SUCCEEDED_EXIT else None
     if urls is None:
-        return Lookup("", LOOKUP_FAILED % (request.branch, result.stderr.strip() or result.stdout.strip()))
+        return Lookup("", LOOKUP_FAILED % (target.branch, result.stderr.strip() or result.stdout.strip()))
     if len(urls) > 1:
-        return Lookup("", LOOKUP_AMBIGUOUS % (request.branch, " ".join(urls)))
+        return Lookup("", LOOKUP_AMBIGUOUS % (target.branch, " ".join(urls)))
     return Lookup(urls[0] if urls else "", "")
 
 
 def create_pull_request(request: OpenRequest, report: VerifyReport, gh: GhRunner) -> Outcome:
-    body_path = body_file(request.reports)
+    body_path = body_file(request.target.reports)
     body_read = read_body(body_path)
     if body_read.problem:
         return failed(body_read.problem)
-    return publish_body(request, report, create_publication(request, body_path, body_read.body), gh)
+    return publish_body(request.target.reports, report, create_publication(request, body_path, body_read.body), gh)
 
 
-def update_pull_request(request: OpenRequest, report: VerifyReport, url: str, gh: GhRunner) -> Outcome:
-    result = gh(["pr", "view", url, *request.repository_arguments, "--json", "body", "-q", ".body"])
+def update_pull_request(target: PullRequestTarget, report: VerifyReport, url: str, gh: GhRunner) -> Outcome:
+    result = gh(["pr", "view", url, *target.repository_arguments, "--json", "body", "-q", ".body"])
     if result.exit_code != GH_SUCCEEDED_EXIT:
         return failed(BODY_FAILED % (url, result.stderr.strip()))
-    return publish_body(request, report, edit_publication(request, url, body_file(request.reports), result.stdout), gh)
+    return publish_body(target.reports, report, edit_publication(target, url, body_file(target.reports), result.stdout), gh)
 
 
 def open_pull_request(request: OpenRequest, gh: GhRunner) -> Outcome:
-    report_read = read_report(request.reports)
+    report_read = read_report(request.target.reports)
     if report_read.problem:
         return failed(report_read.problem)
-    lookup = open_pull_request_url(request, gh)
+    lookup = open_pull_request_url(request.target, gh)
     if lookup.problem:
         return failed(lookup.problem)
     if lookup.url:
-        return update_pull_request(request, report_read.report, lookup.url, gh)
+        return update_pull_request(request.target, report_read.report, lookup.url, gh)
     return create_pull_request(request, report_read.report, gh)
+
+
+def repository_arguments(repository: str) -> Tuple[str, ...]:
+    return (REPOSITORY_OPTION, repository) if repository else ()
 
 
 def parsed_request(arguments: List[str]) -> Optional[OpenRequest]:
@@ -254,8 +264,16 @@ def parsed_request(arguments: List[str]) -> Optional[OpenRequest]:
     readiness_words = {readiness.value: readiness for readiness in Readiness}
     if command != OPEN_COMMAND or readiness_word not in readiness_words:
         return None
-    return OpenRequest(reports=reports, base=base, branch=branch, title=title, readiness=readiness_words[readiness_word],
-                       repository_arguments=(REPOSITORY_OPTION, repository) if repository else ())
+    return OpenRequest(target=PullRequestTarget(reports, branch, repository_arguments(repository)), base=base, title=title,
+                       readiness=readiness_words[readiness_word])
+
+
+def report_outcome(outcome: Outcome) -> int:
+    for line in outcome.reported:
+        print(line)
+    for problem in outcome.problems:
+        print(PROBLEM_LINE % problem, file=sys.stderr)
+    return outcome.exit_code
 
 
 def main(arguments: List[str]) -> int:
@@ -263,12 +281,7 @@ def main(arguments: List[str]) -> int:
     if request is None:
         print(USAGE, file=sys.stderr)
         return USAGE_EXIT
-    outcome = open_pull_request(request, run_gh)
-    for line in outcome.reported:
-        print(line)
-    for problem in outcome.problems:
-        print(PROBLEM_LINE % problem, file=sys.stderr)
-    return outcome.exit_code
+    return report_outcome(open_pull_request(request, run_gh))
 
 
 if __name__ == "__main__":

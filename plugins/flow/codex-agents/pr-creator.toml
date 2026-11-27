@@ -79,11 +79,10 @@ publish script `<plugin>/scripts/pr-publish.sh`, which swaps in the Verification
    the API. Never write a reviewer mention yourself.
 8. When the base is not the default branch, warn in the result that the merge will not
    auto-close the item; the closeout step closes it.
-9. Updating an existing PR (the state has `pr`): push, replace the `## Verification` section
-   with the script's new output (the section runs from that heading to the next `## ` heading,
-   the `Resolves #<n>` or `Item: <id>` line or the end, whichever comes first, so the footer
-   stays), add one comment with what changed since the last push, only when the push in this run
-   sent new commits, so a retry after a partial upload posts none.
+9. Updating an existing PR (the state has `pr`): push, then step 4's `pr-publish.sh open`: it
+   finds the PR, swaps in the new Verification section whole and keeps every line outside it, so
+   never edit the section yourself. Add one comment with what changed since the last push, only
+   when the push in this run sent new commits, so a retry after a partial upload posts none.
 
 ## Output
 The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
