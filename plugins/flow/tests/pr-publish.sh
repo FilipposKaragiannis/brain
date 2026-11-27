@@ -169,6 +169,8 @@ check "Open_ForkAndOurPullRequest_UpdatesOurs: only this repository's pull reque
   '[ -n "$(pull_request_field url)" ] && [ "$(published fork-and-ours)" = "$(printf "$updated_line" "$(pull_request_field url)")" ]'
 check "Open_ForkAndOurPullRequest_OurBodyHoldsTheNewVerdict: the reviewer reads this verify's verdict in the branch's own pull request" \
   '[ -n "$new_verdict" ] && pull_request_field body | grep -qF -e "$new_verdict"'
+check "Open_ForkAndOurPullRequest_ForkBodyStaysAsItWas: an update of ours must not also reach an outsider's pull request on the same branch name" \
+  '[ -n "$fork_pull_request_body" ] && [ "$(fork_pull_request_field body)" = "$fork_pull_request_body" ]'
 
 echo "more images than gh takes in one call"
 attach_limit="$(pr_publish_constant ATTACH_LIMIT)"

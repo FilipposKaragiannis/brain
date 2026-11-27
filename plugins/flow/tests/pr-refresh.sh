@@ -99,6 +99,10 @@ seed_fork_pull_request
 refresh fork-and-ours
 check "Refresh_ForkAndOurPullRequest_UpdatesOurs: only this repository's pull requests count, so a fork's leaves the lookup certain" \
   '[ -n "$(pull_request_field url)" ] && [ "$(published fork-and-ours)" = "$(printf "$updated_line" "$(pull_request_field url)")" ]'
+check "Refresh_ForkAndOurPullRequest_OurBodyHoldsTheNewVerdict: the reviewer reads the verdict of the commit under review in the branch's own pull request" \
+  '[ -n "$new_verdict" ] && pull_request_field body | grep -qF -e "$new_verdict"'
+check "Refresh_ForkAndOurPullRequest_ForkBodyStaysAsItWas: a refresh of ours must not also reach an outsider's pull request on the same branch name" \
+  '[ -n "$fork_pull_request_body" ] && [ "$(fork_pull_request_field body)" = "$fork_pull_request_body" ]'
 
 echo "a refresh with a report made at an earlier commit"
 stale_body="$(printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n%s\n\nItem: %s\n' "$new_verdict" "$item")"
