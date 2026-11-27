@@ -18,15 +18,18 @@ comments="$(gh api --paginate --slurp "repos/$repository/issues/$number/comments
 state_authors="$(trusted_logins)" || die "cannot tell whose state comments count on $item (set github.answer_from, or log in with gh auth login)"
 state_comment_ids="$(printf '%s' "$comments" | cached_python3 -I "$FLOW_PLUGIN/adapters/github/_state_comment.py" ids "$STATE_MARKER" "$state_authors")" \
   || die "cannot read the comments of $item"
+flow_labels="$(printf '%s\n' "$labels" | cached_python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _state_schema
+print("\n".join(label for label in sys.stdin.read().splitlines() if label.startswith(_state_schema.FLOW_LABEL_PREFIXES)))' "$FLOW_PLUGIN/scripts")" \
+  || die "cannot pick out the flow labels of $item"
 set --
 removed_labels=0
 while IFS= read -r label; do
-  case "$label" in step:*|gate:*|wt:*|flow:*) ;; *) continue ;; esac
+  [ -n "$label" ] || continue
   case "$label" in *,*) echo "flow: left the label '$label' on $item: a comma in it would make gh remove two" >&2; continue ;; esac
   set -- "$@" --remove-label "$label"
   removed_labels=$((removed_labels + 1))
 done <<LABELS
-$labels
+$flow_labels
 LABELS
 if [ "$removed_labels" -gt 0 ]; then
   gh issue edit "$number" -R "$repository" "$@" >/dev/null || die "cannot take the flow labels off $item"
