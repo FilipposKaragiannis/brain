@@ -14,8 +14,8 @@ line the first is named. See scripts/_verify_report.py.
   proof and no malformed line: no output, exit 0. Every named file holds: one line naming them,
   exit 0. Else exit 1 with one line per problem: a malformed line, naming its line in plan.md; a
   named file that does not hold, naming the file and why (missing, empty, not a regular file,
-  outside `evidence/`); a plan line that is no line of proofs.json; or proofs.json when it cannot
-  be read.
+  outside `evidence/`); a plan line that no entry of proofs.json grades, or that more than one
+  grades; or proofs.json when it cannot be read.
 """
 import os
 import posixpath
@@ -33,10 +33,13 @@ from _verify_proofs import (  # noqa: E402
     PLAN_FILE,
     PROOFS_FILE,
     NamedProof,
+    Proof,
     given_text,
     is_acceptance_line,
     named_proof_problem,
+    parsed_proof,
     read_proofs,
+    repeated_lines,
     unmatched_line_problem,
 )
 from _verify_text import text  # noqa: E402
@@ -67,6 +70,7 @@ HOLDING_FILES = "the named files hold: %s"
 LINE_PROBLEM = "line %d: %s"
 UNREADABLE_PROOFS_FILE = "%s cannot be graded: %s"
 NAMED_FILE_SEPARATOR = ", "
+REPEATED_NAMED_LINE = "%s names line %d, which %s grades more than once"
 
 
 @dataclass(frozen=True)
@@ -164,9 +168,15 @@ def line_problems(reports: str, proofs: Tuple[NamedProof, ...]) -> List[str]:
     proofs_file = read_proofs(reports)
     if proofs_file.problem:
         return [UNREADABLE_PROOFS_FILE % (PROOFS_FILE, proofs_file.problem)]
-    acceptance_lines = len(proofs_file.entries)
-    return [unmatched_line_problem(named.line, acceptance_lines) for named in proofs
-            if not is_acceptance_line(named.line, acceptance_lines)]
+    entries = [parsed_proof(entry) for entry in proofs_file.entries]
+    problems = (named_line_problem(named.line, entries) for named in proofs)
+    return [problem for problem in problems if problem]
+
+
+def named_line_problem(line: int, entries: List[Proof]) -> str:
+    if not is_acceptance_line(line, len(entries)) or line not in {entry.line for entry in entries}:
+        return unmatched_line_problem(line, len(entries))
+    return REPEATED_NAMED_LINE % (PLAN_FILE, line, PROOFS_FILE) if line in repeated_lines(entries) else ""
 
 
 def main(arguments: List[str]) -> int:

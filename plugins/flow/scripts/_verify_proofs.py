@@ -269,18 +269,22 @@ def unmatched_named_proofs(named_proofs: Tuple[NamedProof, ...], acceptance_line
             for named in named_proofs if not is_acceptance_line(named.line, acceptance_lines)]
 
 
+def repeated_lines(proofs: List[Proof]) -> FrozenSet[int]:
+    line_counts = Counter(proof.line for proof in proofs if proof.line is not None)
+    return frozenset(line for line, count in line_counts.items() if count > ONCE)
+
+
 def graded(reports: str, head: str, report_checks: List[dict], named_proofs: Tuple[NamedProof, ...]) -> dict:
     proofs_file = read_proofs(reports)
     if proofs_file.problem:
         return unreadable_proofs(proofs_file.problem)
     proofs = [parsed_proof(entry) for entry in proofs_file.entries]
-    line_counts = Counter(proof.line for proof in proofs if proof.line is not None)
     test_checks = [check for check in report_checks if is_test_check(check)]
     context = GradingContext(reports=reports, test_checks=tuple(check["name"] for check in test_checks),
                              passed_test_checks=frozenset(check["name"] for check in test_checks
                                                           if check["status"] == PASSED),
                              acceptance_lines=len(proofs),
-                             repeated_lines=frozenset(line for line, count in line_counts.items() if count > ONCE),
+                             repeated_lines=repeated_lines(proofs),
                              head_problem=head_problem(proofs_file.written_for, head),
                              named_proofs=MappingProxyType({named.line: named for named in named_proofs}))
     entries = [graded_entry(proof, context) for proof in proofs]

@@ -4,8 +4,8 @@
 # the evidence, its capture is carried, and the line counts as proven, whatever grade or file the
 # verifier wrote for it and whichever commit its proofs file was written for. A named file that is
 # missing, empty, a link out of evidence/ or a path through `..` fails verify: the check
-# `plan proofs` fails naming the file, and the line is graded error; so does a named line with no
-# line in proofs.json, naming the plan and the line. A malformed `Proof:` line in the section (no
+# `plan proofs` fails naming the file, and the line is graded error; so does a named line that no
+# entry of proofs.json grades, or that two entries grade, naming the plan and the line. A malformed `Proof:` line in the section (no
 # path, no capture, before any numbered line, a second for one line, a path that is absolute, goes
 # through `..` or is outside evidence/) fails verify naming its line in plan.md. No plan, no
 # section, a section with no `Proof:` and a `Proof:` outside the section give the report of a run
@@ -21,6 +21,7 @@ trap 'sandbox_close $?' EXIT
 
 other_line=1
 named_line=2
+line_after_the_named_one=3
 lines_proven_by_the_plan=1
 named_entry=1
 plan_file_line=0
@@ -217,6 +218,33 @@ check "NamedLineWithNoProofsFile_JsonNotCheckedNamesThePlan: the not checked ent
   '[ "$(report_value not_checked.$first_not_checked_entry.text)" = plan.md ]'
 check "NamedLineWithNoProofsFile_JsonAcceptanceLinesCountsTheProofsFile: the plan adds no acceptance line of its own" \
   '[ "$(report_value acceptance_lines)" = "$no_acceptance_lines" ]'
+
+named_line_fails() {
+  check "${1}_ReportSaysFail: a named line with no single proofs entry fails verify" \
+    '[ "$(report_status)" = fail ]'
+  check "${1}_PlanProofsCheckFails: the report names the plan proofs check as the one that failed" \
+    '[ "$(check_status "plan proofs")" = fail ]'
+  check "${1}_CheckSummaryNamesThePlanAndTheLine: the verifier learns which plan line has no single proofs entry" \
+    'check_summary "plan proofs" | grep -F -- plan.md | grep -qF -- "line $named_line"'
+}
+
+echo "a named line no proofs entry grades"
+new_item absentline "$(capture_gate absentline)"
+capture_named_file absentline
+write_plan "$named_evidence"
+write_proofs "[{\"line\": $other_line, \"text\": \"the client builds\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"},
+  {\"line\": $line_after_the_named_one, \"text\": \"$named_text\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"}]"
+verify >/dev/null 2>&1
+named_line_fails NamedLineNoProofsEntryGrades
+
+echo "a named line two proofs entries grade"
+new_item repeatedline "$(capture_gate repeatedline)"
+capture_named_file repeatedline
+write_plan "$named_evidence"
+write_proofs "[{\"line\": $named_line, \"text\": \"the client builds\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"},
+  {\"line\": $named_line, \"text\": \"$named_text\", \"grade\": \"blocked\", \"reason\": \"$blocked_reason\"}]"
+verify >/dev/null 2>&1
+named_line_fails NamedLineTwoProofsEntriesGrade
 
 echo "a proof with no path"
 malformed_proof_case nopath "$named_line. $named_text
