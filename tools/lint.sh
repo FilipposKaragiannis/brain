@@ -1,13 +1,16 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
 # JSON valid, shell scripts parse, ShellCheck and Ruff find nothing new, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
-# match the plugin's. Exit 1 on any finding.
+# match the plugin's, migration steps well-formed and in step with the flow schema's key mirror
+# (tools/lib/migration_steps.py), and with Node 24, the mirror in step with the console's schema
+# (flowSchemaKeys.test.ts). Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
 status=0
 fail() { echo "lint: $1"; status=1; }
 baseline_report="$(mktemp)" || exit 1
-trap 'rm -f "$baseline_report"' EXIT
+schema_report="$(mktemp)" || exit 1
+trap 'rm -f "$baseline_report" "$schema_report"' EXIT
 python3 -I tools/lib/lint_baseline.py check > "$baseline_report" 2>&1 &
 baseline_check=$!
 
@@ -79,6 +82,15 @@ python3 tools/lib/check_plugins.py || status=1
 
 # Changelog fragments: a changelog.d holds only .md files, each a bump line and bullets.
 python3 tools/lib/fragments.py || status=1
+
+python3 -I -B tools/lib/migration_steps.py . || status=1
+# CI's lint job has no Node, and the console job runs this test there.
+least_console_node=24
+console_node="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "$console_node" -ge "$least_console_node" ] 2>/dev/null; then
+  (cd plugins/console/app && sh ../../../tools/lib/sandboxed.sh . node --test daemon/test/flowSchemaKeys.test.ts > "$schema_report" 2>&1) \
+    || { cat "$schema_report"; fail "tools/config-keys/flow-schema.txt is not the console's schema (plugins/console/app/daemon/test/flowSchemaKeys.test.ts)"; }
+fi
 
 # A plugin's app packages (app/package.json, its lockfile, app/*/) carry the plugin's version.
 python3 tools/lib/packages.py || status=1

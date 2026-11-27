@@ -1,0 +1,11 @@
+{
+  "steps": [
+    {
+      "name": "mode-moves",
+      "op": "move",
+      "from": "old.mode",
+      "to": "new.mode",
+      "reason": "the mode is not old any more"
+    }
+  ]
+}

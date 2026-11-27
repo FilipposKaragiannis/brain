@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "name": "mode-moves",
+      "op": "move",
+      "from": "old.mode",
+      "to": "new.mode",
+      "reason": "the mode is not old any more",
+      "fallback": {"after": "1.0.0", "files": ["lib/reader.txt"]}
+    }
+  ]
+}

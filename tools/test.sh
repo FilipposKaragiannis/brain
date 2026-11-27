@@ -81,6 +81,7 @@ for part in $parts; do
       clean sh tools/tests/named-parts.sh || status=1
       clean sh tools/tests/build-workflow.sh || status=1
       clean sh tools/tests/fragments-needed.sh || status=1
+      clean sh tools/tests/migration-steps.sh || status=1
       clean tools/tests/suite-parity.sh || status=1
       ;;
     console-app) console_app || status=1 ;;
