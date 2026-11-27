@@ -219,11 +219,11 @@ def graphql(query, **variables):
     return gh(*args)
 
 
-def carries_flow_label(issue):
-    return any(label["name"].split(":")[0] in FLOW_LABEL_KEYS for label in issue["labels"])
+def carries_flow_label(issue: dict) -> bool:
+    return any(label["name"].split(LABEL_KEY_SEPARATOR)[0] in FLOW_LABEL_KEYS for label in issue["labels"])
 
 
-def unread_state(reading: str, why: str) -> None:
+def refuse_unread_state(reading: str, why: str) -> None:
     """Without the comment the item would read as unstarted, with no attempts, no PR and no
     touches: a wrong answer, so no answer. A read ends; a list leaves the issue out, so it is not
     picked, shown or synced this round, and goes on."""
@@ -238,11 +238,11 @@ def state_comment(repository: str, issue: dict, rule: _state_comment.StateCommen
         return {}
     number = issue["number"]
     if not rule.logins:
-        return unread_state(reading, "cannot tell whose state comments count on gh#%d (set github.answer_from, "
+        return refuse_unread_state(reading, "cannot tell whose state comments count on gh#%d (set github.answer_from, "
                                              "or log in with gh auth login)" % number)
     pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=%d" % (repository, number, REST_PAGE_SIZE))
     if pages is None:
-        return unread_state(reading, "cannot read the comments of gh#%d" % number)
+        return refuse_unread_state(reading, "cannot read the comments of gh#%d" % number)
     found = _state_comment.state_comments(rule, pages)
     return _state_comment.state_of(found[0]) if found else {}
 
