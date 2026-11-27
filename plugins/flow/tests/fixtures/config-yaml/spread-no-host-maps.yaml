@@ -1,0 +1,12 @@
+config_version: 1.40.0
+base: main
+jobs:
+  host: codex
+  # The pair every host reads.
+  model: "opus"  # the roster default
+  effort: high
+  schedule:
+    health: every 15m
+  # Ends the jobs map.
+notify:
+  desktop: false

@@ -1,0 +1,16 @@
+config_version: 9.9.9
+base: main
+jobs:
+  host: codex
+  # The pair every host reads.
+  schedule:
+    health: every 15m
+  # Ends the jobs map.
+  claude:
+    model: "opus"  # the roster default
+    effort: high
+  codex:
+    model: "codex-large"  # the roster default
+    effort: high
+notify:
+  desktop: false

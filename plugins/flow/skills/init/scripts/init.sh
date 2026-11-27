@@ -407,8 +407,7 @@ EOF_TRACKERS
   while IFS= read -r branch_problem; do [ -z "$branch_problem" ] || gap ".flow/config.yaml: $branch_problem"; done <<EOF_BRANCH
 $(branch_problems)
 EOF_BRANCH
-  # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
-  # the old jobs.model and jobs.effort still work for one release, with a note.
+  # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
@@ -421,7 +420,6 @@ EOF_CHECKS
 $(scope_problems)
 EOF_SCOPES
   missing_base_notes | sed 's/^/init: note: /'
-  host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
 # A flow hook entry an older init printed for the shared settings is the owner's to remove: the
 # file is committed, so init never edits it.

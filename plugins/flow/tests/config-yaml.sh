@@ -1,10 +1,11 @@
 #!/bin/sh
 # config-yaml.sh: the config migration's line editor, through the helper's plan and apply, one
 # process per case file in fixtures/config-yaml/ (the input, and the file apply must write beside
-# it as <case>.expected.yaml), on the step list there, and the move-* cases on move-steps.json.
-# Comments, a parent left empty, a map made or holding only comments, the label, line endings, the
-# files refused whole, plan writing nothing, and a moved key's block. Takes no argument. Exit 0
-# when every check passes, 1 on any failure.
+# it as <case>.expected.yaml), on the step list there, the move-* cases on move-steps.json and the
+# spread-* cases on spread-steps.json. Comments, a parent left empty, a map made or holding only
+# comments, the label, line endings, the files refused whole, plan writing nothing, a moved key's
+# block, and leaves spread into the maps absent. Takes no argument. Exit 0 when every check passes,
+# 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
@@ -112,6 +113,24 @@ check "Apply_MoveInACrlfFile_WritesANonEmptyFile" [ -s "$out" ]
 check "Apply_MoveInACrlfFileWithoutFinalNewline_EveryTerminatedLineTakesCrlf" sh -c "[ \"\$(grep -c '$carriage_return\$' '$out')\" = \"\$(( \$(grep -c '' '$out') - 1 ))\" ]"
 printf '{"steps": [{"name": "inside", "op": "move", "from": "ready", "to": "ready.needs", "reason": "r"}]}\n' > "$work/move-inside-itself.json"
 check "Plan_MoveIntoItself_ExitsTwo" sh -c "python3 -I '$helper' plan '$work/move-inside-itself.json' '$cases/move-parent-left-empty.yaml' '$new_label' >/dev/null 2>&1; [ \$? = '$cannot_exit' ]"
+
+echo "leaves spread into each map"
+steps="$cases/spread-steps.json"
+check "Apply_SpreadIntoAbsentMaps_CopiesTheLeavesIntoEachMap" writes_expected spread-no-host-maps
+check "Apply_SpreadWithAnEmptyMapThere_WritesOnlyTheAbsentOne" writes_expected spread-claude-map-empty
+check "Apply_SpreadWithEveryMapThere_LeavesTheOldCommentsAsCommentLines" writes_expected spread-both-host-maps
+check "Apply_SpreadOfANameOutsideTheTable_CopiesItAsWritten" writes_expected spread-name-outside-the-table
+writes_expected spread-no-host-maps
+cp "$out" "$work/spread-once.yaml"
+check "Apply_SpreadRunTwice_SecondRunChangesNothing" [ "$(apply_exit "$work/spread-once.yaml")" = "$nothing_to_change_exit" ]
+printf 'base: main\r\njobs:\r\n  effort: high' > "$work/spread-crlf.yaml"
+apply_exit "$work/spread-crlf.yaml" >/dev/null
+check "Apply_SpreadInACrlfFile_WritesANonEmptyFile" [ -s "$out" ]
+check "Apply_SpreadInACrlfFileWithoutFinalNewline_EveryTerminatedLineTakesCrlf" sh -c "[ \"\$(grep -c '$carriage_return\$' '$out')\" = \"\$(( \$(grep -c '' '$out') - 1 ))\" ]"
+printf '{"steps": [{"name": "outside", "op": "spread", "from": "jobs", "keys": ["model"], "to": ["hosts.claude"], "reason": "r"}]}\n' > "$work/spread-outside.json"
+check "Plan_SpreadIntoAMapOutsideItsFrom_ExitsTwo" sh -c "python3 -I '$helper' plan '$work/spread-outside.json' '$cases/spread-name-outside-the-table.yaml' '$new_label' >/dev/null 2>&1; [ \$? = '$cannot_exit' ]"
+printf '{"steps": [{"name": "stray", "op": "spread", "from": "jobs", "keys": ["model"], "to": ["jobs.claude"], "values": {"jobs.codex.model": {"opus": "x"}}, "reason": "r"}]}\n' > "$work/spread-stray-values.json"
+check "Plan_SpreadWithValuesForAKeyItDoesNotWrite_ExitsTwo" sh -c "python3 -I '$helper' plan '$work/spread-stray-values.json' '$cases/spread-name-outside-the-table.yaml' '$new_label' >/dev/null 2>&1; [ \$? = '$cannot_exit' ]"
 
 [ "$fails" -eq 0 ] && { echo "config-yaml: ok"; exit 0; }
 echo "config-yaml: $fails failed"; exit 1

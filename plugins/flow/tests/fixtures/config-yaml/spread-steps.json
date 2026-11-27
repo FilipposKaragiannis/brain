@@ -1,0 +1,5 @@
+{
+  "steps": [
+    {"name": "jobs-per-host", "op": "spread", "from": "jobs", "keys": ["model", "effort"], "to": ["jobs.claude", "jobs.codex"], "values": {"jobs.codex.model": {"opus": "codex-large"}}, "reason": "each host has its own model and effort"}
+  ]
+}

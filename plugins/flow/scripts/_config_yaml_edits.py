@@ -1,7 +1,7 @@
 """Edits to the flat YAML subset _config_yaml.py reads. Each returns the new text with every other
 line as it stood, its line ending too, so the owner's comments and layout stay: a comment line is
 never moved or deleted, a trailing comment on a removed line stays as a comment line, and one on a
-moved line moves with it.
+moved line moves with it, to every map a spread copies it into.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _config_yaml  # noqa: E402
@@ -99,7 +99,10 @@ def without_key(document: _config_yaml.Document, path: str) -> str:
     if index is None:
         return _config_yaml.render(document)
     taken = _key_and_item_lines(document, index)
-    removed = taken + _emptied_parents(document, path, taken, taken)
+    return _without_lines(document, taken + _emptied_parents(document, path, taken, taken))
+
+
+def _without_lines(document: _config_yaml.Document, removed: List[int]) -> str:
     kept: List[_config_yaml.Line] = []
     for position, line in enumerate(document.lines):
         entry = document.entries[position]
@@ -203,3 +206,76 @@ def with_value(document: _config_yaml.Document, path: str, value_text: str) -> s
     lines = list(document.lines)
     lines[index] = _config_yaml.Line(text, line.ending)
     return _config_yaml.rendered(lines, document.final_ending)
+
+
+def _copied_leaf(
+    document: _config_yaml.Document, index: int, mapped_value: Optional[str]
+) -> List[_config_yaml.Line]:
+    copies = [
+        _carried(document, position, _config_yaml.INDENT_STEP, "")
+        for position in _key_and_item_lines(document, index)
+    ]
+    if mapped_value is None:
+        return copies
+    line = document.lines[index]
+    entry = document.entries[index]
+    key_text = line.text[: entry.value_start] + " " + mapped_value
+    text = " " * _config_yaml.INDENT_STEP + key_text + line.text[entry.comment_start :]
+    return [_config_yaml.Line(text, line.ending)] + copies[1:]
+
+
+def _mapped_value(value_text: str, table: Mapping[str, str]) -> Optional[str]:
+    """The value text with its one value replaced from the table, its quotes kept; None when the
+    table does not hold it."""
+    items = _config_yaml.value_items(value_text)
+    if len(items) != 1 or items[0] not in table:
+        return None
+    return value_text.replace(items[0], table[items[0]], 1)
+
+
+def _copied_map(
+    document: _config_yaml.Document,
+    map_path: str,
+    leaf_indexes: List[int],
+    value_tables: Mapping[str, Mapping[str, str]],
+) -> List[_config_yaml.Line]:
+    depth = map_path.count(".")
+    lines = [
+        _config_yaml.Line(_indent(depth) + map_path.rpartition(".")[2] + ":", document.newline)
+    ]
+    for index in leaf_indexes:
+        entry = document.entries[index]
+        table = value_tables.get(map_path + "." + entry.key, {})
+        lines.extend(_copied_leaf(document, index, _mapped_value(entry.value, table)))
+    return lines
+
+
+def spread(
+    document: _config_yaml.Document,
+    from_path: str,
+    leaf_names: Tuple[str, ...],
+    to_paths: Tuple[str, ...],
+    value_tables: Mapping[str, Mapping[str, str]],
+) -> str:
+    """The text with the from map's leaves of those names copied into each map of to_paths that
+    is absent, each a map directly in it, made in to_paths' order at the end of its block. A copy is
+    the leaf's key and item lines one level deeper; its key line keeps its trailing comment and
+    takes its value from the table value_tables holds for the new path, when the table holds the
+    value. The leaves' lines go; when no map is absent, their trailing comments stay as comment
+    lines, as without_key leaves them."""
+    from_index = _config_yaml.key_index(document, from_path)
+    found = (_config_yaml.key_index(document, from_path + "." + name) for name in leaf_names)
+    leaf_indexes = [index for index in found if index is not None]
+    if from_index is None or not leaf_indexes:
+        return _config_yaml.render(document)
+    taken = [
+        position for index in leaf_indexes for position in _key_and_item_lines(document, index)
+    ]
+    absent = [path for path in to_paths if not _config_yaml.has_key(document, path)]
+    if not absent:
+        return _without_lines(document, taken)
+    copies = [
+        line for path in absent for line in _copied_map(document, path, leaf_indexes, value_tables)
+    ]
+    end = _Insertion(_config_yaml.block_end(document, from_index), (), absent[0].count("."))
+    return _inserted(document, end, copies, taken)

@@ -4,14 +4,18 @@ See _config_migration.py.
 The list is {"steps": [...]}, run in its order. Each step has a name, an op and a reason for the
 owner. A remove, add or known step names its key; an add step also has the value and the comment
 it writes. A move step names the key it moves from and the key it moves to, neither inside the
-other. A step of an op this helper does not take, or one missing a field, is a problem naming the
-step. The fallback field is for the lint and is not read here.
+other. A spread step names the map it spreads from, the names of the leaves it copies, the maps
+directly inside that map it copies them into, none of them a leaf's name, and optionally, per new
+leaf, a table of the values it writes in place of the old ones. A step of an op this helper does
+not take, or one missing a field, is a problem naming the step. The fallback field is for the lint
+and is not read here.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 _ENCODING = "utf-8"
@@ -50,7 +54,17 @@ class MoveStep:
     to_key: str
 
 
-Step = Union[RemoveStep, AddStep, KnownStep, MoveStep]
+@dataclass(frozen=True)
+class SpreadStep:
+    name: str
+    reason: str
+    from_key: str
+    leaf_names: Tuple[str, ...]
+    to_keys: Tuple[str, ...]
+    value_tables: Mapping[str, Mapping[str, str]]
+
+
+Step = Union[RemoveStep, AddStep, KnownStep, MoveStep, SpreadStep]
 
 
 @dataclass(frozen=True)
@@ -62,7 +76,14 @@ def step_keys(step: Step) -> Tuple[str, ...]:
     """The keys the step may change."""
     if isinstance(step, MoveStep):
         return (step.from_key, step.to_key)
+    if isinstance(step, SpreadStep):
+        return leaf_paths((step.from_key,) + step.to_keys, step.leaf_names)
     return (step.key,)
+
+
+def leaf_paths(map_keys: Tuple[str, ...], leaf_names: Tuple[str, ...]) -> Tuple[str, ...]:
+    """Each leaf's path in each map, map by map."""
+    return tuple(map_key + "." + leaf_name for map_key in map_keys for leaf_name in leaf_names)
 
 
 def _value_text(value: object) -> Optional[str]:
@@ -129,11 +150,72 @@ def _move_step(raw: Mapping[str, object], name: str) -> Union[Step, Problem]:
     return MoveStep(name, reason, from_key, to_key)
 
 
+def _names(raw: object) -> Optional[Tuple[str, ...]]:
+    """The list's entries when it is a list of distinct key names with no dot, else None."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    if not all(isinstance(entry, str) and entry and "." not in entry for entry in raw):
+        return None
+    return tuple(raw) if len(set(raw)) == len(raw) else None
+
+
+def _table(raw: object) -> Optional[Mapping[str, str]]:
+    if not isinstance(raw, dict):
+        return None
+    if not all(isinstance(old, str) and isinstance(new, str) and new for old, new in raw.items()):
+        return None
+    return MappingProxyType(dict(raw))
+
+
+def _value_tables(
+    raw: object, new_leaves: Tuple[str, ...]
+) -> Optional[Mapping[str, Mapping[str, str]]]:
+    """The tables by new leaf, when each names one of the new leaves; none at all is no table."""
+    if raw is None:
+        return MappingProxyType({})
+    if not isinstance(raw, dict) or not set(raw) <= set(new_leaves):
+        return None
+    tables = {new_leaf: _table(table) for new_leaf, table in raw.items()}
+    if any(table is None for table in tables.values()):
+        return None
+    return MappingProxyType(tables)
+
+
+def _to_keys(raw: object, from_key: str) -> Optional[Tuple[str, ...]]:
+    """The maps a spread writes, when each is a distinct map directly in from_key, else None."""
+    if not isinstance(raw, list):
+        return None
+    prefix = from_key + "."
+    inside = [
+        entry[len(prefix) :] for entry in raw if isinstance(entry, str) and entry.startswith(prefix)
+    ]
+    names = _names(inside)
+    return None if names is None or len(names) != len(raw) else tuple(raw)
+
+
+def _spread_step(raw: Mapping[str, object], name: str) -> Union[Step, Problem]:
+    reason = _field(raw, "reason")
+    from_key = _field(raw, "from")
+    leaf_names = _names(raw.get("keys"))
+    to_keys = _to_keys(raw.get("to"), from_key) if from_key is not None else None
+    if reason is None or from_key is None or leaf_names is None or to_keys is None:
+        return Problem(
+            "the spread step %s needs a from, keys, a to of maps in it and a reason" % name
+        )
+    if set(leaf_paths((from_key,), leaf_names)) & set(to_keys):
+        return Problem("the spread step %s spreads into one of its own leaves" % name)
+    value_tables = _value_tables(raw.get("values"), leaf_paths(to_keys, leaf_names))
+    if value_tables is None:
+        return Problem("the spread step %s has values for a key it does not write" % name)
+    return SpreadStep(name, reason, from_key, leaf_names, to_keys, value_tables)
+
+
 _READERS: Dict[str, Callable[[Mapping[str, object], str], Union[Step, Problem]]] = {
     "remove": _remove_step,
     "add": _add_step,
     "known": _known_step,
     "move": _move_step,
+    "spread": _spread_step,
 }
 
 

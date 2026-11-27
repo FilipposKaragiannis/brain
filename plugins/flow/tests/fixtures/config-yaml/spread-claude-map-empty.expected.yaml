@@ -1,0 +1,6 @@
+config_version: 9.9.9
+jobs:
+  claude:
+  codex:
+    model: codex-large
+    effort: high

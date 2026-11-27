@@ -1,0 +1,3 @@
+config_version: 1.40.0
+jobs:
+  model: their-own-model

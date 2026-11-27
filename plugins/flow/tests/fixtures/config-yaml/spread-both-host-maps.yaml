@@ -1,0 +1,8 @@
+config_version: 1.40.0
+jobs:
+  model: opus  # old
+  effort: high
+  claude:
+    model: claude-own
+  codex:
+    effort: low

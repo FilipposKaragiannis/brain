@@ -543,7 +543,7 @@ awk '{ print } /^jobs:$/ { print "  host: vim"; print "  model: opus"; print "  
 hostline="$(grep -n '^  host: vim' .flow/config.yaml | cut -d: -f1)"
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init.out" 2>&1; code=$?
 check "init: --check flags a jobs.host other than claude or codex as drift, with its line" sh -c "[ $code = 1 ] && grep -q 'gap: .flow/config.yaml:$hostline: jobs.host is vim; it must be claude or codex' '$work/init.out'"
-check "init: --check says once that jobs.model and jobs.effort are deprecated" [ "$(grep -c 'jobs.model and jobs.effort are deprecated' "$work/init.out")" = 1 ]
+check "InitCheck_OldJobsModelSet_ListsItsMoveAsPendingDrift" grep -q 'drift: .flow/config.yaml: pending migration: jobs.model	jobs.claude.model	opus	' "$work/init.out"
 sed -i.bak 's/^  host: vim$/  host: codex/; s/^  effort: high$/  effort: max/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 check "init: --check flags an effort the jobs host does not take" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml:[0-9]*: jobs.effort is max; codex takes low, medium, high or xhigh'"
 cp "$work/fresh.config" .flow/config.yaml

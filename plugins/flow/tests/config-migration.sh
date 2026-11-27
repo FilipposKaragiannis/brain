@@ -5,8 +5,10 @@
 # second run, the owner's comments and line endings, a refused file, a taken backup name, git
 # status, the migration before the first copy, fixture step lists for add and step order, the
 # label a fresh install writes, the session-start hook printing the report once, from the main
-# worktree and a linked one, and the two ready keys moving under ready as ready_rules reads them,
-# with the fallback that still reads them unmoved. Takes no argument. Exit 0 when every check passes, 1 on any failure.
+# worktree and a linked one, the two ready keys moving under ready as ready_rules reads them, and
+# jobs.model and jobs.effort spread into each host's map as host_jobs_pair reads them, each with
+# the fallback that still reads them unmoved. Takes no argument. Exit 0 when every check passes, 1
+# on any failure.
 # shellcheck disable=SC2154 # _base_fixture.sh and _init_fixture.sh set plugin, work, here, plugin_copy, init and fails
 # shellcheck disable=SC2034 # the check conditions read these names, through eval in _base_fixture.sh's check
 . "$(dirname "$0")/_base_fixture.sh"
@@ -36,6 +38,13 @@ project_ready_needs() { (unset FLOW_READY_WARNED; . "$plugin_copy/lib/flow.sh"; 
 project_priority_order() { (unset FLOW_READY_WARNED; . "$plugin_copy/lib/flow.sh"; ready_rules 2>/dev/null; printf '%s' "$READY_PRIORITY_ORDER"); }
 # change_line <old key>: the report line whose first field is the old key.
 change_line() { awk -F'\t' -v key="$1" 'NF > 1 && $1 == key' .flow/migrations/report.txt; }
+# change_line_to <old key> <new key>: the report line that moves the old key to the new one.
+change_line_to() { awk -F'\t' -v old_key="$1" -v new_key="$2" 'NF > 1 && $1 == old_key && $2 == new_key' .flow/migrations/report.txt; }
+# project_jobs_pair <host>, project_jobs_from <host>: the host's model and effort with a tab
+# between, and the key prefix they come from, as host_jobs_pair reads them.
+project_jobs_pair() { (. "$plugin_copy/lib/flow.sh"; . "$plugin_copy/lib/host.sh"; host_jobs_pair "$1"; printf '%s\t%s' "$jobs_model" "$jobs_effort"); }
+project_jobs_from() { (. "$plugin_copy/lib/flow.sh"; . "$plugin_copy/lib/host.sh"; host_jobs_pair "$1"; printf '%s' "$jobs_from"); }
+project_line() { (. "$plugin_copy/lib/flow.sh"; yaml_line .flow/config.yaml "$1"); }
 # tree_digest: every file of the project outside .git with its content hash.
 tree_digest() { find . -path ./.git -prune -o -type f -print | sort | while IFS= read -r project_file; do printf '%s %s\n' "$(content_hash "$project_file")" "$project_file"; done; }
 content_hash() { shasum -a 256 < "$1" | cut -d' ' -f1; }
@@ -186,6 +195,63 @@ check "Init_GithubLeftEmpty_ReadyRulesReadsTheWrittenNeeds" '[ "$(project_ready_
 check "Init_GithubLeftEmpty_RemovesItsLine" '! grep -q "^github:" .flow/config.yaml'
 check "Init_TwoReadyMoves_ReportHasTheReadyNeedsLine" '[ "$(change_line github.ready_needs | cut -f2)" = ready.needs ]'
 check "Init_TwoReadyMoves_ReportHasThePriorityOrderLine" '[ "$(change_line github.priority_order | cut -f2)" = ready.priority_order ]'
+
+echo "jobs.model and jobs.effort spread into each host's map"
+model_written=opus
+effort_written=high
+new_project jobs-unmigrated "${config_body}jobs:\n  model: $model_written\n  effort: $effort_written\n"
+check "HostJobsPair_UnmigratedConfig_ClaudeStillReadsTheOldPair" '[ "$(project_jobs_pair claude)" = "$(printf "%s\t%s" "$model_written" "$effort_written")" ]'
+check "HostJobsPair_UnmigratedConfig_CodexStillReadsTheOldEffort" '[ "$(project_jobs_pair codex | cut -f2)" = "$effort_written" ]'
+new_project jobs-no-host-maps "${config_body}jobs:\n  model: $model_written\n  effort: $effort_written\n"
+claude_before="$(project_jobs_pair claude)"; codex_before="$(project_jobs_pair codex)"
+run_init >/dev/null 2>&1
+check "Init_NoHostMaps_ClaudeReadsItsOwnMap" '[ "$(project_jobs_from claude)" = jobs.claude ]'
+check "Init_NoHostMaps_ClaudeGetsTheOldPairAsWritten" '[ "$(project_jobs_pair claude)" = "$claude_before" ]'
+check "Init_NoHostMaps_CodexReadsItsOwnMap" '[ "$(project_jobs_from codex)" = jobs.codex ]'
+check "Init_NoHostMaps_CodexReadsTheSamePair" '[ "$(project_jobs_pair codex)" = "$codex_before" ]'
+check "Init_NoHostMaps_OldModelGoes" '! project_keys jobs | grep -qx model'
+check "Init_NoHostMaps_OldEffortGoes" '! project_keys jobs | grep -qx effort'
+check "Init_NoHostMaps_ReportHasALineForClaudesModel" '[ -n "$(change_line_to jobs.model jobs.claude.model)" ]'
+check "Init_NoHostMaps_ReportHasALineForCodexsModel" '[ -n "$(change_line_to jobs.model jobs.codex.model)" ]'
+for roster_name in Sonnet Opus Fable Haiku; do
+  roster_model="$(printf '%s' "$roster_name" | tr '[:upper:]' '[:lower:]')"
+  new_project "jobs-$roster_model" "${config_body}jobs:\n  model: $roster_model\n"
+  codex_before="$(project_jobs_pair codex)"
+  run_init >/dev/null 2>&1
+  check "Init_NoHostMapsOldModel${roster_name}_CodexReadsItsOwnMap" '[ "$(project_jobs_from codex)" = jobs.codex ]'
+  check "Init_NoHostMapsOldModel${roster_name}_CodexGetsTheMappedModel" '[ "$(project_jobs_pair codex)" = "$codex_before" ]'
+done
+new_project jobs-claude-map "${config_body}jobs:\n  model: $model_written\n  effort: $effort_written\n  claude:\n    model: claude-own\n"
+claude_before="$(project_jobs_pair claude)"; codex_before="$(project_jobs_pair codex)"
+run_init >/dev/null 2>&1
+check "Init_ClaudeMapOnly_CodexReadsItsOwnMap" '[ "$(project_jobs_from codex)" = jobs.codex ]'
+check "Init_ClaudeMapOnly_CodexReadsTheSamePair" '[ "$(project_jobs_pair codex)" = "$codex_before" ]'
+check "Init_ClaudeMapOnly_ClaudeReadsTheSamePair" '[ "$(project_jobs_pair claude)" = "$claude_before" ]'
+check "Init_ClaudeMapOnly_ReportHasNoLineForClaude" '[ -z "$(change_line_to jobs.model jobs.claude.model)$(change_line_to jobs.effort jobs.claude.effort)" ]'
+new_project jobs-both-maps "${config_body}jobs:\n  model: $model_written\n  effort: $effort_written\n  claude:\n    model: claude-own\n  codex:\n    effort: low\n"
+claude_before="$(project_jobs_pair claude)"; codex_before="$(project_jobs_pair codex)"
+run_init >/dev/null 2>&1
+check "Init_BothHostMaps_OldModelGoes" '! project_keys jobs | grep -qx model'
+check "Init_BothHostMaps_OldEffortGoes" '! project_keys jobs | grep -qx effort'
+check "Init_BothHostMaps_ClaudeReadsTheSamePair" '[ "$(project_jobs_pair claude)" = "$claude_before" ]'
+check "Init_BothHostMaps_CodexReadsTheSamePair" '[ "$(project_jobs_pair codex)" = "$codex_before" ]'
+check "Init_BothHostMaps_ReportLineMovesTheOldModelNowhere" '[ "$(change_line jobs.model | cut -f2)" = - ]'
+new_project jobs-only-model "${config_body}jobs:\n  model: $model_written\n"
+run_init >/dev/null 2>&1
+check "Init_OnlyOldModel_ClaudeReadsItsOwnMap" '[ "$(project_jobs_from claude)" = jobs.claude ]'
+check "Init_OnlyOldModel_NoClaudeEffortKeyIsWritten" '! project_keys jobs.claude | grep -qx effort'
+check "Init_OnlyOldModel_NoCodexEffortKeyIsWritten" '! project_keys jobs.codex | grep -qx effort'
+new_project jobs-quoted "${config_body}jobs:\n  model: \"$model_written\"\n"
+codex_before="$(project_jobs_pair codex)"
+run_init >/dev/null 2>&1
+check "Init_QuotedOldModel_KeepsItsQuotesInBothMaps" '[ "$(grep -c "^    model: \".*\"\$" .flow/config.yaml)" = 2 ]'
+check "Init_QuotedOldModel_CodexGetsTheMappedModel" '[ "$(project_jobs_pair codex)" = "$codex_before" ]'
+new_project jobs-commented "${config_body}jobs:\n  model: $model_written  # the roster default\n"
+run_init >/dev/null 2>&1
+check "Init_OldModelWithTrailingComment_CommentOnEveryTarget" '[ "$(grep -c "^    model: .*  # the roster default\$" .flow/config.yaml)" = 2 ]'
+new_project jobs-codex-max "${config_body}jobs:\n  host: codex\n  model: $model_written\n  effort: max\n"
+run_init > "$work/jobs-codex-max.out" 2>&1
+check "Init_OldEffortMaxOnACodexProject_GapNamesTheMigratedLine" 'grep -qF ".flow/config.yaml:$(project_line jobs.codex.effort): jobs.codex.effort is max;" "$work/jobs-codex-max.out"'
 
 [ "$fails" -eq 0 ] && { echo "config-migration: ok"; exit 0; }
 echo "config-migration: $fails failed"; exit 1
