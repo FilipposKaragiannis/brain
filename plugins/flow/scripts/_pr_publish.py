@@ -268,20 +268,17 @@ def parsed_request(arguments: List[str]) -> Optional[OpenRequest]:
                        readiness=readiness_words[readiness_word])
 
 
-def report_outcome(outcome: Outcome) -> int:
-    for line in outcome.reported:
-        print(line)
-    for problem in outcome.problems:
-        print(PROBLEM_LINE % problem, file=sys.stderr)
-    return outcome.exit_code
-
-
 def main(arguments: List[str]) -> int:
     request = parsed_request(arguments)
     if request is None:
         print(USAGE, file=sys.stderr)
         return USAGE_EXIT
-    return report_outcome(open_pull_request(request, run_gh))
+    outcome = open_pull_request(request, run_gh)
+    for line in outcome.reported:
+        print(line)
+    for problem in outcome.problems:
+        print(PROBLEM_LINE % problem, file=sys.stderr)
+    return outcome.exit_code
 
 
 if __name__ == "__main__":

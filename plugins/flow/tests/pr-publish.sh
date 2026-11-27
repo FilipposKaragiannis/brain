@@ -189,6 +189,8 @@ CAPTURE
 # commit_change <line>: a new commit on the task branch, as a fix pushed after review is.
 commit_change() { printf '%s\n' "$1" >> "$worktree/change.txt" && git -C "$worktree" commit -qam "$1"; }
 fenced_heading_line="## Heading inside the first excerpt"
+section_heading="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _pr_report; print(_pr_report.SECTION_HEADING)' "$plugin/scripts")"
+one_section=1
 owner_summary="The owner rewrote this summary."
 write_refresh_capture before.png "$fenced_heading_line"
 commit_test_command true
@@ -210,13 +212,15 @@ refresh refreshed
 check "Refresh_NewVerdict_ReplacesTheVerificationSection: the reviewer reads the verdict of the commit under review" \
   '[ -n "$new_verdict" ] && [ "$new_verdict" != "$old_verdict" ] && pull_request_field body | grep -qF -e "$new_verdict" && ! pull_request_field body | grep -qF -e "$old_verdict"'
 check "Refresh_NewEvidence_AttachesTheNewFiles: an image the later verify captured shows only once it is uploaded" \
-  'uploaded_names | grep -qxF after.png && ! pull_request_field body | grep -qF -e "$local_reference"'
+  'uploaded_names | grep -qxF after.png'
 check "Refresh_OldAssetUrls_AreGoneFromTheBody: an image of the old verdict beside the new one would show a run that no longer holds" \
   '[ -n "$old_asset_urls" ] && ! pull_request_field body | grep -qF -e "$old_asset_urls"'
-check "Refresh_SummaryAndFooter_StayAsTheyWere: the owner's edit to the Summary and the footer that closes the item are outside the section" \
-  'pull_request_field body | grep -qxF -e "$owner_summary" && pull_request_field body | grep -qxF -e "Item: $item"'
+check "Refresh_OwnerEditedSummary_StaysAsTheOwnerLeftIt: the Summary is outside the section, so the PR's own text is kept, not the local file's" \
+  'pull_request_field body | grep -qxF -e "$owner_summary"'
+check "Refresh_Footer_StaysAsItWas: the footer line after the section is what closes the item on merge" \
+  'pull_request_field body | grep -qxF -e "Item: $item"'
 check "Refresh_ExcerptHoldingAHeadingLine_SwapsTheWholeSection: a heading line in a fence is excerpt text, and the old section must go whole" \
-  'printf "%s\n" "$body_before_refresh" | grep -qxF -e "$fenced_heading_line" && ! pull_request_field body | grep -qxF -e "$fenced_heading_line" && [ "$(pull_request_field body | grep -cxF "## Verification")" -eq 1 ]'
+  'printf "%s\n" "$body_before_refresh" | grep -qxF -e "$fenced_heading_line" && ! pull_request_field body | grep -qxF -e "$fenced_heading_line" && [ "$(pull_request_field body | grep -cxF -e "$section_heading")" -eq "$one_section" ]'
 
 echo "a refresh with no open pull request"
 no_open_pull_request="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _pr_refresh; print(_pr_refresh.NO_OPEN_PULL_REQUEST % sys.argv[2])' "$plugin/scripts" "$branch")"

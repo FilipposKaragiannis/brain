@@ -16,13 +16,13 @@ from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pr_publish import (  # noqa: E402
+    PROBLEM_LINE,
     USAGE_EXIT,
     GhRunner,
     Outcome,
     PullRequestTarget,
     failed,
     open_pull_request_url,
-    report_outcome,
     repository_arguments,
     run_gh,
     update_pull_request,
@@ -51,7 +51,12 @@ def main(arguments: List[str]) -> int:
         print(USAGE, file=sys.stderr)
         return USAGE_EXIT
     reports, branch, repository = arguments
-    return report_outcome(refresh_pull_request(PullRequestTarget(reports, branch, repository_arguments(repository)), run_gh))
+    outcome = refresh_pull_request(PullRequestTarget(reports, branch, repository_arguments(repository)), run_gh)
+    for line in outcome.reported:
+        print(line)
+    for problem in outcome.problems:
+        print(PROBLEM_LINE % problem, file=sys.stderr)
+    return outcome.exit_code
 
 
 if __name__ == "__main__":
