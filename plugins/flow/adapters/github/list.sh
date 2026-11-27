@@ -7,7 +7,8 @@
 # gh user), labels, state and kind, or its query as search qualifiers. A scope goes to GitHub as
 # search qualifiers (_query.py), and its kinds and the pick's fields are matched before
 # github.limit counts an issue, so the limit counts the issues they keep.
-# With FLOW_LIST_EVERY_STATE set (state.sh import), the state comment of every issue is read.
+# With FLOW_LIST_EVERY_STATE set (state.sh import), the state comment of every issue is read. With
+# FLOW_LIST_STATE_WHOLE set (health), a list that cannot tell whose state comments count fails.
 . "$(dirname "$0")/_gh.sh"
 ready_rules
 scope_filter github
@@ -25,8 +26,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 repository="$(gh_repo)"
-# No logins leave out only the issues whose state comment the list reads (_query.py), and say so.
-state_authors="$(trusted_logins)" || state_authors=""
+# With no trusted login only the issues whose state comment the list reads are left out (_query.py),
+# so a pick or the board still sees the rest; health would read a left-out holder as gone.
+state_authors="$(trusted_logins)" || {
+  [ -z "${FLOW_LIST_STATE_WHOLE:-}" ] || die "cannot tell whose state comments count (set github.answer_from, or log in with gh auth login)"
+  state_authors=""
+}
 raw="$(cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" list "$repository" "$STATE_MARKER" "$state" "$limit" "$state_authors")" || die "cannot list issues"
 printf '%s\n' "$raw" | while read -r line; do [ -n "$line" ] && printf '%s\n' "$line" | issue_to_item; done | cached_python3 -I -c '
 import json, sys

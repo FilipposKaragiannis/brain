@@ -69,7 +69,9 @@ it never fails for one. `--blocked-by` may name items of other adapters. A track
 the list first (Tracker scope, below), and a tracker limit caps what is left. A `list` cut short by
 a tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
 every item). With `FLOW_LIST_EVERY_STATE` set, a `list` gives each item the state the tracker
-holds for it, even where a cheaper list would leave it out (`state.sh import`).
+holds for it, even where a cheaper list would leave it out (`state.sh import`). With
+`FLOW_LIST_STATE_WHOLE` set, a `list` that cannot tell whose stored state to trust fails rather than
+leave items out (the health job, which would read a left-out holder as gone).
 
 Exit codes, for every script:
 

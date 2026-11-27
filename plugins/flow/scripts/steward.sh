@@ -1578,11 +1578,12 @@ health_epic_branches() {
 
 # health_list: every tracker's open items, one JSON list per line, in $health_items, which
 # health_splits, health_epic_branches and health_holds read; the trackers whose list failed go in
-# $health_list_failed.
+# $health_list_failed. FLOW_LIST_STATE_WHOLE fails a list that cannot tell whose stored state to
+# trust, as it would leave items out, so their holders read skip and not gone.
 health_list() {
   health_items="$home/health/.items.$$"; health_list_failed=""
   for a in $health_trackers; do
-    if hl_out="$(items_listed "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
+    if hl_out="$(FLOW_LIST_STATE_WHOLE=1 items_listed "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
     else health_list_failed="$health_list_failed $a "; fi
   done > "$health_items"
 }

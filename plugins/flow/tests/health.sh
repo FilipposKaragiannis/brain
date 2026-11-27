@@ -560,6 +560,14 @@ hs >/dev/null 2>&1
 issue_labels 11 size:S step:implement
 hs > "$labels_root/out" 2>&1
 check "HealthWhenTheLabelsGoAndOneComesBack_SaysTheCountAgain: because a count of zero forgets the one said before" [ "$(flow_label_lines "$one_labelled_issue")" = "$said_once" ]
+record set 'gh#12' 'held_by=gh#11' 'held_reason=both change src/a' >/dev/null
+gh_user_lookups_failing=99
+printf '%s\ngh: HTTP 401: Bad credentials\napi user\n' "$gh_user_lookups_failing" > "$FAKE_GH_DIR/fail"
+hs > "$labels_root/out" 2>&1
+rm -f "$FAKE_GH_DIR/fail"
+check_all "HealthWithNoTrustedLogin_KeepsTheHoldBehindALabelledIssue: because a list that cannot tell whose state comment counts leaves the holder out, which is not the holder gone" \
+  'grep -q "^health: [0-9]* claimed" "$labels_root/out" && [ "$(record get "gh#12" held_by)" = "gh#11" ]'
+record set 'gh#12' held_by= held_reason= >/dev/null
 cp "$labels_root/config.yaml" .flow/config.yaml; cp "$labels_root/issues.json" "$FAKE_GH_DIR/issues.json"
 unset FLOW_HEALTH_PROCS
 
