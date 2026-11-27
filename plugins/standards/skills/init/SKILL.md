@@ -53,9 +53,10 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    levels table.
 5. **On a first install, add one more numbered item to that list**: "Doc comments are allowed
    above `public` declarations and on `interface` and `enum` members (`comments.doc_inside`).
-   Add more container kinds, such as `class`, `struct` or `record`, or remove one?" An existing
-   config without the key keeps the same default; say so and do not add it unasked. Never hold
-   the report back for the answers.
+   Add more container kinds, such as `class`, `struct` or `record`, or remove one?" On an existing
+   config the installer writes that default into each language with `comments.doc` and no
+   `doc_inside`, and its migration report says so; ask nothing. Never hold the report back for
+   the answers.
 6. **Apply the answers.** Write each accepted value where the list said: the config keys in
    `.standards/config.json`, the guide lines in `.standards/testing-guide.md` (replace the
    `_fill in_` placeholder, keep the section), a slot in its levels row and under the key the
@@ -75,7 +76,7 @@ such and left to `flow:init`.
 
 | Target | Content | Re-run behaviour |
 |---|---|---|
-| `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links, roster and eval cases folder (`project.evals`), the rules the project relaxes (`rules.relaxed`, `rules.judgement`) | written once, never overwritten; empty `build`, `test`, `languages` or a language without `format` is a gap, and so is a bad id in `rules` |
+| `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links, roster and eval cases folder (`project.evals`), the rules the project relaxes (`rules.relaxed`, `rules.judgement`) | written once, never replaced; a later run migrates it to the plugin's settings (`skills/init/migrations.json`), keeps the old file in `.standards/migrations/` and lists the changes in `.standards/migrations/report.txt`, which the next session prints once; empty `build`, `test`, `languages` or a language without `format` is a gap, and so is a bad id in `rules` |
 | `.standards/testing-guide.md` | levels with the slot that runs each and its command, fixtures, declared exceptions, the hand-test list | written once, never overwritten; a `_fill in_` placeholder is a gap |
 | `.standards/rules/*.md` | the full rule text with ids and reasons, without the `rules.relaxed` rules and with the `rules.judgement` ones tagged judgement; a language appendix (`csharp.md`, `shell.md`, `python.md`) only when a configured language shares a file extension with it | replaced; an appendix no configured language uses is removed |
 | `AGENTS.md` (and a separate `CLAUDE.md`) | one block between `<!-- standards:begin vX.Y.Z -->` and `<!-- standards:end -->`: the language sentence naming the appendix files installed with `.standards/rules/*.md`, hard rules, signals, `## Code Review Rules`; with `rules.relaxed` or `rules.judgement` set, those ids leave the hard rules and signals for a `## Waived by this project` and a `## Judgement in this project` list | the block is replaced, nothing outside it is touched |
