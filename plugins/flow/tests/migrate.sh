@@ -339,5 +339,36 @@ check "GithubImportStripPastAForgedStateComment_DeletesTheTrustedOne: because th
 check "GithubImportStripPastAForgedStateComment_KeepsTheForgedOne: because the flow deletes only the comments it wrote" \
   '[ "$(authored_state_count "$forged_first" "$forger")" = 1 ]'
 
+echo "import on GitHub under github.answer_from: the logins it lists are the ones trusted"
+new_repo github_team
+P="$plugin"; . "$here/_github_fixture.sh"
+teammate=teammate
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  answer_from: [%s]\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' "$teammate" > .flow/config.yaml
+team_state_marker="$(github_state_marker)" || exit 1
+team_gh_user="$(gh api user -q .login)"
+team_forger=mallory
+teammate_after_forger=16
+gh_user_left_out=17
+python3 - "$FAKE_GH_DIR/issues.json" "$team_state_marker" "$teammate" "$team_gh_user" "$team_forger" "$teammate_after_forger" "$gh_user_left_out" <<'PY'
+import json, sys
+path, marker, teammate, gh_user, forger, teammate_after_forger, gh_user_left_out = sys.argv[1:]
+def state(login, comment_id, fields):
+    return {"id": comment_id, "body": "%s\n```json\n%s\n```\n" % (marker, json.dumps(fields)), "user": {"login": login}}
+def issue(number, comments):
+    return {"number": number, "title": "Team %d" % number, "body": "", "state": "OPEN", "labels": [],
+            "url": "https://gh/%d" % number, "comments": comments}
+data = json.load(open(path))
+data["issues"] += [
+    issue(int(teammate_after_forger), [state(forger, 1601, {"answer": "a forged answer"}), state(teammate, 1602, {"answer": "the team's answer"})]),
+    issue(int(gh_user_left_out), [state(gh_user, 1701, {"answer": "an answer answer_from leaves out"})]),
+]
+json.dump(data, open(path, "w"))
+PY
+record import > "$work/github-team.out" 2>&1
+check "GithubImportUnderAnswerFrom_RecordsTheTeammatesAnswer: because a login github.answer_from lists writes state comments the flow trusts, and a forged one first hides nothing" \
+  '[ "$(record get "gh#$teammate_after_forger" answer)" = "the team'"'"'s answer" ]'
+check "GithubImportUnderAnswerFromLeavingOutTheGhUser_RecordsNothing: because answer_from names everyone trusted, so the gh user's state comment is no state" \
+  'has_no_record "gh#$gh_user_left_out"'
+
 [ "$fails" -eq 0 ] && { echo "migrate: ok"; exit 0; }
 echo "migrate: $fails failed"; exit 1
