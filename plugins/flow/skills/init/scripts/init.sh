@@ -1,10 +1,11 @@
 #!/bin/sh
 # Install or refresh the flow plugin in a repository.
 #   init.sh [--root <repo>] [--check] [--force] [--user-codex] [--source-hash]
-# Writes: .flow/config.yaml (once), .flow/plugin.sh (finds the installed plugin when a wrapper
-# runs), .flow/notify.sh, .flow/build-passed.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and
-# .flow/hooks/*.sh (wrappers, always replaced; they hold no path or version, so a plugin update
-# leaves them as they are), the
+# Writes: .flow/config.yaml (once; later runs first migrate it to the plugin's settings, with a
+# backup and a report in .flow/migrations/, see lib/config_migration.sh), .flow/plugin.sh (finds
+# the installed plugin when a wrapper runs), .flow/notify.sh, .flow/build-passed.sh,
+# .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers, always replaced; they
+# hold no path or version, so a plugin update leaves them as they are), the
 # Codex rules/flow.rules and agents/<flow agents>.toml (replaced, unless edited by hand since: then
 # refused, exit 1, --force replaces), the Claude worktree hook entries in
 # .claude/settings.local.json (merged, every other key kept), a marked block in .git/info/exclude
@@ -13,8 +14,9 @@
 # commits or edits the index.
 # The Codex files go to the repo's .codex/ when it has one, else to the user's ~/.codex
 # ($CODEX_HOME); --user-codex picks ~/.codex, and a later run keeps the place the stamp records.
-# --check reports drift and hand edits and writes nothing (exit 1 on either). --source-hash
-# prints the hash of the plugin's install set and exits (the session-start hook).
+# --check reports drift (a pending migration step too) and hand edits and writes nothing (exit 1
+# on either). --source-hash prints the hash of the plugin's install set and exits (the
+# session-start hook).
 set -u
 plugin="$(cd "$(dirname "$0")/../../.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"

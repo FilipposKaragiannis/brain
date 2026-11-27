@@ -211,9 +211,10 @@ Facts to answer with:
   it, with the gate's question and answer in the step's brief. `health` resumes only a run that
   died with nobody told; a stop the flow saw is the owner's gate, and the owner's answer goes on
   through `next`, so the two never start the same step.
-- `jobs.model` and `jobs.effort` are deprecated (read only while the host has no `jobs.<host>`
-  map, with the old name mapping for Codex and one warning in the job's log). To migrate, move
-  them under `jobs.claude` and give `jobs.codex` Codex names.
+- `jobs.model` and `jobs.effort` are deprecated: init's `jobs-per-host` migration step moves them
+  into `jobs.claude` and `jobs.codex`, with the model under its Codex name for Codex. Until init
+  runs, and for this release only, they are read while the host has no `jobs.<host>` map, with
+  the old name mapping for Codex and one warning in the job's log.
 - A check runs from a clean checkout of the base, never a claimed worktree. Each run fetches
   `base` (the config's, default `main`) in the main worktree, takes `origin/<base>` (as the last
   fetch left it when the fetch fails, which the log says, else the local `<base>`), and checks

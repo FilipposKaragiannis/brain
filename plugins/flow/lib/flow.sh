@@ -85,8 +85,9 @@ gh_blip() { grep -Eqi 'HTTP 5[0-9][0-9]|connection reset|connection refused|erro
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 
 # The install set of plugin <root>: every file whose content init copies into a project, plus
-# init.sh (it shapes the wrappers). Not the manifest: a version bump alone changes no installed
-# file. init stamps its hash; the session-start hook compares.
+# init.sh (it shapes the wrappers) and the config migration's step list and helpers (they shape
+# .flow/config.yaml). Not the manifest: a version bump alone changes no installed file. init
+# stamps its hash; the session-start hook compares.
 flow_install_set() {
   for flow_install_set_file in "$1"/skills/init/scripts/init.sh "$1"/skills/init/migrations.json \
            "$1"/scripts/_config_*.py "$1"/templates/* "$1"/codex-agents/*.toml; do
