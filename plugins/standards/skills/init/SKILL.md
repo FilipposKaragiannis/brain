@@ -14,9 +14,10 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    "<plugin root>/skills/init/scripts/init.sh"
    ```
    The plugin root is the directory that holds this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude;
-   on Codex, the plugin's install path, which `codex plugin list` prints). To only report drift,
-   hand edits and gaps, add `--check`. If it refuses a file edited by hand, do not add `--force`
-   for the owner: show the refusal and ask. The edit belongs in the plugin source.
+   on Codex, the plugin's install path, which `codex plugin list` prints). To only report drift
+   (each pending config migration step among it), hand edits and gaps, add `--check`. If it
+   refuses a file edited by hand, do not add `--force` for the owner: show the refusal and ask.
+   The edit belongs in the plugin source.
    Add `--scope machine` when the project must not change: rules and agents go to your user
    folders and apply to every project on this machine. On a first install (no
    `.standards/stamp` and no `--scope` in the ask), ask the owner which scope before running it:

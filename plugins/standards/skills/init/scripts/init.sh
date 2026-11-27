@@ -13,8 +13,9 @@
 # The hosts run the gates from the plugin's hooks/hooks.json: init writes no hook entry into a host
 # settings file, and reports one (the gates would run twice). Old docs/ copies (before v0.2.0) are
 # removed when unchanged, or reported. Re-running replaces only what it wrote, and refuses a copy
-# edited by hand since (exit 1; --force replaces it). --check reports drift and hand edits and
-# writes nothing (exit 1 on either). --source-hash prints the install set's hash and exits.
+# edited by hand since (exit 1; --force replaces it). --check reports drift (a pending migration
+# step too) and hand edits and writes nothing (exit 1 on either). --source-hash prints the install
+# set's hash and exits.
 set -u
 plugin="$(cd "$(dirname "$0")/../../.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
