@@ -5,8 +5,8 @@
 # checks table; a folder with no report or a report without a key the section needs stops it with
 # the reason. Each text capture under evidence/, nested or not, shows its last lines in a collapsed
 # block with a fence no backtick run closes and no control character, a live proof of it points
-# there, and the excerpts stop at the budget; an image shows none, a binary file is only named, and
-# a link is never read. The reports come from the real verify, on the local adapter in throwaway
+# there, and the excerpts stop at the budget; an image gets no excerpt, a binary file is only named,
+# and a link is never read. The reports come from the real verify, on the local adapter in throwaway
 # repos, from a proofs file and captures the suite writes. Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -112,8 +112,10 @@ check "Render_PassingReport_FirstLinesAreHeadingVerdictAndCount: the section ope
   '[ "$(rendered every-grade | head -n "$first_section_lines")" = "$(first_lines_expected)" ]'
 check "Render_ReportWithProofs_HasOneRowPerAcceptanceLine: a reviewer sees each graded line once" \
   '[ -n "$(json_proof_lines)" ] && [ "$(section_row_lines every-grade)" = "$(json_proof_lines)" ]'
-check "Render_LiveProof_NamesTheFileWithoutALink: a link relative to the reports folder resolves in no pull request" \
-  'section_row every-grade 2 | grep -qF "\`login-error.png\`" && ! section_row every-grade 2 | grep -qF "]("'
+check "Render_LiveProof_CellNamesTheFile: a reviewer sees which capture proves the line" \
+  'section_row every-grade 2 | grep -qF "\`login-error.png\`"'
+check "Render_LiveProof_CellHoldsNoLink: the cell carries no link a reviewer would have to follow to see the capture" \
+  '[ -n "$(section_row every-grade 2)" ] && ! section_row every-grade 2 | grep -qF "]("'
 check "Render_TestProof_NamesTheTest: a reviewer finds the test that proves the line" \
   'section_row every-grade 1 | grep -qF "\`$test_name\`"'
 check "Render_BuildOnlyAndBlockedLines_ListedUnderNotChecked: a reviewer sees what was left out and why" \
@@ -150,7 +152,7 @@ check "Render_LongLog_KeepsOnlyTheLastLines: the end of a log holds the outcome,
 check "Render_EvidenceWithBackticks_FenceIsLongerThanAnyRun: a capture that holds a fence cannot close the block early" \
   'excerpt_lines excerpts ticks.txt | grep -qF "$backtick_run" && [ "$(fence_length excerpts ticks.txt)" -gt "$backtick_run_length" ]'
 check "Render_ImageEvidence_HasNoExcerpt: an image is no text, so it shows only where a proof names it" \
-  '[ -n "$details_open" ] && rendered excerpts | grep -qF "$details_open" && ! rendered excerpts | grep -qF screen.png'
+  '[ -n "$details_open" ] && rendered excerpts | grep -qF "$details_open" && [ -z "$(excerpt_block excerpts screen.png)" ]'
 check "Render_BinaryEvidence_NamedWithoutExcerpt: a reviewer learns the file exists without bytes that render as noise" \
   'rendered excerpts | grep -qxF -e "$(kept_line_of core.bin)" && [ -z "$(excerpt_block excerpts core.bin)" ]'
 check "Render_EvidenceWithColours_ExcerptHasNoControlCharacters: terminal codes would show as noise in the pull request" \

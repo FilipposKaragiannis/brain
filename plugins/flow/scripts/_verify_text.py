@@ -16,5 +16,9 @@ def one_line(value: str) -> str:
     return " ".join(_CONTROL.sub(" ", _ANSI.sub("", _OSC.sub("", value))).split())
 
 
+def holds_control_character(value: str) -> bool:
+    return _CONTROL.search(value) is not None
+
+
 def terminal_free(value: str) -> str:
     return _CONTROL_BUT_TAB.sub("", _ANSI.sub("", _OSC.sub("", value)))
