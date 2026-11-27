@@ -93,6 +93,8 @@ a silent log, say the loop was ended from outside: a loop that ends by itself pr
 session's text and how advance.sh ended, so a new result with lines after it is said as it is
 (advance.sh may have read it and failed, as when it cannot read the tracker)."""
 import calendar, json, os, re, signal, subprocess, sys, time
+from types import MappingProxyType
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _process  # noqa: E402
@@ -731,56 +733,62 @@ def labelled(items: dict) -> int:
 
 COMMAND_ARGUMENT = 1
 LABELLED_COMMAND = "labelled"
+PID_SLOT, IDLE_SECONDS_SLOT = 3, 4
+REVIEW_RECORD_SLOT = 2
+HOLDS_OLD_SECONDS_SLOT = 5
+DIED_ARGUMENT_COUNT = 5
 
 
-def main():
+def optional_argument(arguments: list, slot: int) -> Optional[str]:
+    return arguments[slot] if len(arguments) > slot else None
+
+
+def alive_command(arguments: list) -> None:
+    idle_seconds = optional_argument(arguments, IDLE_SECONDS_SLOT)
+    print(alive(snapshot(arguments[0]), arguments[1], arguments[2], optional_argument(arguments, PID_SLOT) or "",
+                idle_after=None if idle_seconds is None else int(idle_seconds)))
+
+
+def present_command(arguments: list) -> None:
+    print(alive(snapshot(arguments[0]), arguments[1], arguments[2], optional_argument(arguments, PID_SLOT) or "", skip_self=False))
+
+
+def review_command(arguments: list) -> None:
+    rows = [json.loads(line) for line in open(arguments[1]) if line.strip()]
+    review(json.loads(arguments[0]), rows, optional_argument(arguments, REVIEW_RECORD_SLOT))
+
+
+COMMANDS = MappingProxyType({
+    "procs": lambda arguments: procs(),
+    "alive": alive_command,
+    "present": present_command,
+    "session": lambda arguments: print(session_line(snapshot(arguments[0]), arguments[1])),
+    "sessions": lambda arguments: sessions(snapshot(arguments[0]), int(arguments[1]), arguments[2:]),
+    "owner": lambda arguments: print(owner()),
+    "activity": lambda arguments: print(activity(*arguments)),
+    "runs": lambda arguments: runs(sys.stdin if arguments[0] == "-" else open(arguments[0]), arguments[1], int(arguments[2])),
+    "last-next": lambda arguments: last_next(arguments[0]),
+    "next-streaks": lambda arguments: next_streaks(arguments[0]),
+    "works-in": lambda arguments: sys.exit(0 if works_in(arguments[0], arguments[1]) else 1),
+    "epoch": lambda arguments: print(epoch(arguments[0])),
+    "seconds": lambda arguments: print(seconds(*arguments)),
+    "ago": lambda arguments: print(ago(int(arguments[0]))),
+    "review": review_command,
+    "holders": lambda arguments: holders(arguments[0]),
+    "holds": lambda arguments: holds(*arguments[:HOLDS_OLD_SECONDS_SLOT], int(arguments[HOLDS_OLD_SECONDS_SLOT])),
+    LABELLED_COMMAND: lambda arguments: print(labelled(open_items(arguments[0]))),
+    "died": lambda arguments: died(*arguments[:DIED_ARGUMENT_COUNT]),
+    "spawn": lambda arguments: spawn(arguments[0], arguments[1:]),
+    "bounded": lambda arguments: sys.exit(bounded(int(arguments[0]), int(arguments[1]), arguments[2:], time.monotonic)),
+})
+
+
+def main() -> None:
     command, arguments = sys.argv[COMMAND_ARGUMENT], sys.argv[COMMAND_ARGUMENT + 1:]
-    if command == "procs":
-        procs()
-    elif command == "alive":
-        print(alive(snapshot(arguments[0]), arguments[1], arguments[2], arguments[3] if len(arguments) > 3 else "",
-                    idle_after=int(arguments[4]) if len(arguments) > 4 else None))
-    elif command == "present":
-        print(alive(snapshot(arguments[0]), arguments[1], arguments[2], arguments[3] if len(arguments) > 3 else "", skip_self=False))
-    elif command == "session":
-        print(session_line(snapshot(arguments[0]), arguments[1]))
-    elif command == "sessions":
-        sessions(snapshot(arguments[0]), int(arguments[1]), arguments[2:])
-    elif command == "owner":
-        print(owner())
-    elif command == "activity":
-        print(activity(*arguments))
-    elif command == "runs":
-        runs(sys.stdin if arguments[0] == "-" else open(arguments[0]), arguments[1], int(arguments[2]))
-    elif command == "last-next":
-        last_next(arguments[0])
-    elif command == "next-streaks":
-        next_streaks(arguments[0])
-    elif command == "works-in":
-        sys.exit(0 if works_in(arguments[0], arguments[1]) else 1)
-    elif command == "epoch":
-        print(epoch(arguments[0]))
-    elif command == "seconds":
-        print(seconds(*arguments))
-    elif command == "ago":
-        print(ago(int(arguments[0])))
-    elif command == "review":
-        rows = [json.loads(line) for line in open(arguments[1]) if line.strip()]
-        review(json.loads(arguments[0]), rows, arguments[2] if len(arguments) > 2 else None)
-    elif command == "holders":
-        holders(arguments[0])
-    elif command == "holds":
-        holds(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], int(arguments[5]))
-    elif command == LABELLED_COMMAND:
-        print(labelled(open_items(arguments[0])))
-    elif command == "died":
-        died(*arguments[:5])
-    elif command == "spawn":
-        spawn(arguments[0], arguments[1:])
-    elif command == "bounded":
-        sys.exit(bounded(int(arguments[0]), int(arguments[1]), arguments[2:], time.monotonic))
-    else:
+    handler = COMMANDS.get(command)
+    if handler is None:
         sys.exit("flow: unknown command %s" % command)
+    handler(arguments)
 
 
 main()
