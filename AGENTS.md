@@ -139,3 +139,17 @@ changes. A new suite starts with the same two lines as `plugins/flow/tests/core-
   that it builds. **blocked**: it could not be checked, with why.
 - **Not checked list**: the report section, always present, of the acceptance lines graded
   build-only or blocked, each with its reason.
+
+### Config migrations
+
+- **migration step**: one entry of a plugin's ordered list in `skills/init/migrations.json`, such
+  as a key to move, remove or add. It looks only at the config file, so init runs the steps that
+  still apply before it copies anything, and a second run finds none.
+- **label**: the plugin version in the config (`config_version` in `.flow/config.yaml`, `version`
+  in `.standards/config.json`) that last changed the file. Init writes it when a step changes the
+  file, and flow's when it is missing too. The backup is named after the label init found
+  (`unversioned` when there is none); the label is never compared.
+- **migration report**: `migrations/report.txt` beside the config, one section per migrating
+  init, one line per change: old key, new key, value and reason, split by tabs.
+- **unseen copy**: `migrations/report.unseen`, the sections no session has printed yet. The
+  SessionStart hook prints it once and removes it; the migration report stays.
