@@ -15,7 +15,7 @@
 # start writes none. --profile takes a named item only, and refuses, before any write, a name that
 # is no profile in profiles.json or a started item whose step that profile does not have.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 2 the config refuses: a bad --pick or --profile, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
+# Exit codes: 0 step ready · 2 the config refuses: a bad --pick or --profile, a stored profile profiles.json does not have, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
 # an open item (blocked_by), held on another machine, outside the ready: policy (its tracker category or its assignees, scripts/_ready_policy.py), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
@@ -146,6 +146,11 @@ kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" 
 [ -z "$asked_profile" ] || { refusal="$(profile_refusal "$asked_profile" "$(state_get "$data" step)")"; [ -z "$refusal" ] || die "$refusal" "$EXIT_PROFILE_REFUSED"; }
 profile="$asked_profile"
 [ -n "$profile" ] || profile="$(state_get "$data" profile)"
+# A stored profile can come from the tracker (the lazy seed), and one profiles.json does not have
+# gives no steps, so the run would end after one. Only the name is checked: a done or split item is
+# at no step of any profile.
+[ -n "$asked_profile" ] || [ -z "$profile" ] || { refusal="$(profile_refusal "$profile" "")"; [ -z "$refusal" ] \
+  || pass_over "$item cannot run: its state's profile $refusal. Pin one: next.sh $item --profile <name>" "$EXIT_PROFILE_REFUSED"; }
 [ -n "$profile" ] || profile="$(profile_select "$kind" "$size")"
 [ -n "$profile" ] || die "no profile for kind $kind size $size"
 gate="$(state_get "$data" gate)"

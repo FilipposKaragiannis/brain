@@ -5,7 +5,8 @@
 # one comment, never the tracker's size; next.sh --profile pins a profile and refuses, before any
 # write, an unknown name, a profile without the item's step and a call with no item, and accepts a
 # profile that holds a started item's step; the flow's own re-size re-selects over a pin, and says
-# a profile change only when there is one; a flow: label selects no profile, and a state comment
+# a profile change only when there is one; a stored profile profiles.json does not have is refused
+# on a named item and passed over by a pick; a flow: label selects no profile, and a state comment
 # another login wrote seeds neither the step nor the profile.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
@@ -112,6 +113,29 @@ check "ProfileWithNoItem_ExitsTwo: because a pick has no item to pin a profile o
   '[ "$unnamed_status" -eq "$profile_refused_status" ]'
 check "ProfileWithNoItem_StartsNothing: because the one ready item, the one a pick would take, holds no record" \
   '[ ! -e "$(record path "$ready")" ]'
+
+echo "a stored profile profiles.json does not have"
+new_repo stored
+unknown_stored_profile=task-XL
+stale="$(new_task "Profile an older flow stored")"
+"$local_adapter/write-state.sh" "$stale" "profile=$unknown_stored_profile"
+refused_start "$stale"
+# shellcheck disable=SC2034 # the check's condition reads it
+stale_status=$?
+check "NamedItemWithAnUnknownStoredProfile_ExitsTwo: because a profile with no steps would end the run after one step" \
+  '[ "$stale_status" -eq "$profile_refused_status" ]'
+check "NamedItemWithAnUnknownStoredProfile_RecordsNothing: because the refusal comes before any write" \
+  '[ ! -e "$(record path "$stale")" ]'
+
+new_repo stored-pick
+passed_over="$(new_task "Profile an older flow stored, first in the pick")"
+"$local_adapter/write-state.sh" "$passed_over" "profile=$unknown_stored_profile"
+# shellcheck disable=SC2034 # the check's condition reads it
+fresh="$(new_task "Ready beside it")"
+# shellcheck disable=SC2034 # the check's condition reads it
+picked_beside_stale="$(next_json)"
+check "PickBesideAnUnknownStoredProfile_StartsTheNextReadyItem: because one bad item passes over and the pick goes on" \
+  '[ "$(printf "%s" "$picked_beside_stale" | json_value item)" = "$fresh" ]'
 
 echo "a flow: label on the GitHub fake"
 new_repo labelled
