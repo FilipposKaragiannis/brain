@@ -268,7 +268,10 @@ def seed_imported_record(options: command_line.Options, item: importing.ListedIt
             write_record(item_paths(item_options).record, starting_record(record, item_options, item.state), random_bytes)
         return schema.DONE
 
-    return under_lock(item_paths(item_options), seed)
+    try:
+        return under_lock(item_paths(item_options), seed)
+    except OSError as error:
+        return schema.Outcome(schema.EXIT_UNREADABLE, str(error))
 
 
 def seed_imports(options: command_line.Options, rows: tuple, listed: tuple,

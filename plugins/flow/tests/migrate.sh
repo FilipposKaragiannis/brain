@@ -1,9 +1,9 @@
 #!/bin/sh
 # migrate.sh: how the work an older flow left on its trackers carries over to the flow records.
 # The lazy seed of an unrecorded item, state.sh import and its dry run, --strip, a run that fails
-# part way, and which tracker_state the mirror follows, on the local adapter with the state put
-# there by write-state.sh as an older flow left it; then import --strip end to end on the GitHub
-# fake. Messages and the pushed status are read from scripts/_state_import.py and _state_schema.py.
+# part way or fails one record write, and which tracker_state the mirror follows, on the local
+# adapter with the state put there by write-state.sh as an older flow left it; then import --strip
+# end to end on the GitHub fake. Messages and the pushed status are read from scripts/_state_import.py and _state_schema.py.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -262,6 +262,19 @@ else
   check "ImportStripThatFailsForOneItem_StillStripsTheNext: because one refusal does not stop the run" \
     'no_stripped_key_left "$cleanable"'
 fi
+
+echo "import where one item's record write fails: the other items' rows still come out"
+new_repo unwritable
+unwritable="$(new_task "Record write fails")"
+"$local_adapter/write-state.sh" "$unwritable" step=plan
+writable="$(new_task "Record write lands")"
+"$local_adapter/write-state.sh" "$writable" step=plan
+mkdir -p ".flow/locks/$(slug "$unwritable").lock"
+record import > "$work/unwritable.out" 2>&1; code=$?
+check "ImportWhereOneRecordWriteFails_ExitsOne: because part of the run failed" \
+  '[ "$code" -eq "$import_partly_failed" ]'
+check "ImportWhereOneRecordWriteFails_ReportsTheImportOfTheOtherItem: because one failed write does not drop the rows of the items seeded" \
+  'reports_import_of "$work/unwritable.out" "$writable"'
 
 echo "the mirror: tracker_state switches the tracker write"
 mirrored="$(new_task "Mirror")"
