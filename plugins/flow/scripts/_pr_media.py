@@ -2,9 +2,11 @@
 scripts/_pr_publish.py.
 
 A media file is a regular file under <reports>/evidence/, nested or not, whose extension is in
-MEDIA_EXTENSIONS. The walk follows no link, because an attached file goes public. Its reference is
-`![<name>](./evidence/<name>)`, the name percent-encoded in the destination, so gh resolves it
-against the body file in <reports> and swaps in the asset URL it uploads the file to.
+MEDIA_EXTENSIONS. The walk follows no link, because an attached file goes public. A media file whose
+name holds a control character is left out of the body and the uploads, because a line break in its
+reference would start a line of its own in the body, such as a closing keyword or a heading. Its
+reference is `![<name>](./evidence/<name>)`, the name percent-encoded in the destination, so gh
+resolves it against the body file in <reports> and swaps in the asset URL it uploads the file to.
 """
 import os
 import posixpath
@@ -13,6 +15,7 @@ from typing import List
 from urllib.parse import quote
 
 from _verify_proofs import EVIDENCE_FOLDER
+from _verify_text import holds_control_character
 
 MEDIA_EXTENSIONS = frozenset((".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov", ".webm"))
 MEDIA_REFERENCE = "![%s](./%s/%s)"
@@ -41,7 +44,8 @@ def evidence_names(folder: str) -> List[str]:
 
 
 def media_names(reports: str) -> List[str]:
-    return [name for name in evidence_names(os.path.join(reports, EVIDENCE_FOLDER)) if is_media(name)]
+    return [name for name in evidence_names(os.path.join(reports, EVIDENCE_FOLDER))
+            if is_media(name) and not holds_control_character(name)]
 
 
 def alt_text(name: str) -> str:
