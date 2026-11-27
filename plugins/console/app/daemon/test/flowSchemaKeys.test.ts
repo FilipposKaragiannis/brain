@@ -9,10 +9,10 @@ const MIRROR = path.resolve(import.meta.dirname, '..', '..', '..', '..', '..', '
 const DEPRECATED_MARK = ' deprecated';
 
 function schemaLines(): string[] {
-  return FLOW_CONFIG_SCHEMA.flatMap((spec) => {
-    const names = [...(spec.keys ?? []).map((key) => key.name), ...(spec.counts?.keys ?? [])];
-    const paths = [spec.path, ...names.map((name) => `${spec.path}.${name}`)];
-    return paths.map((keyPath) => (spec.deprecated === undefined ? keyPath : `${keyPath}${DEPRECATED_MARK}`));
+  return FLOW_CONFIG_SCHEMA.flatMap((field) => {
+    const names = [...(field.keys ?? []).map((key) => key.name), ...(field.counts?.keys ?? [])];
+    const paths = [field.path, ...names.map((name) => `${field.path}.${name}`)];
+    return paths.map((keyPath) => (field.deprecated === undefined ? keyPath : `${keyPath}${DEPRECATED_MARK}`));
   }).sort();
 }
 

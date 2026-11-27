@@ -205,8 +205,8 @@ def _plugin_lint(root: str, plugin: str) -> Lint:
 def lint(root: str) -> Lint:
     linted = [_plugin_lint(root, plugin) for plugin in (_FLOW, _STANDARDS)]
     return Lint(
-        tuple(finding for each in linted for finding in each.findings),
-        tuple(note for each in linted for note in each.notes),
+        tuple(finding for plugin_lint in linted for finding in plugin_lint.findings),
+        tuple(note for plugin_lint in linted for note in plugin_lint.notes),
     )
 
 

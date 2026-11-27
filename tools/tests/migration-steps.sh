@@ -20,13 +20,12 @@ finding_exit=1
 output="$work/output"
 
 lint_case() {
-  # lint_case <case>: lints the base tree with the case laid over it; sets lint_exit, output in $output.
   lint_case_tree="$work/tree-$1"
   rm -rf "$lint_case_tree"; cp -R "$fixtures/base" "$lint_case_tree"
   [ "$1" = base ] || cp -R "$fixtures/$1/." "$lint_case_tree"
-  python3 -I -B "$lint_check" "$lint_case_tree" > "$output" 2>&1; lint_exit=$?
+  python3 -I -B "$lint_check" "$lint_case_tree" > "$output" 2>&1; lint_case_exit=$?
 }
-exited() { [ "$lint_exit" -eq "$1" ]; }
+exited() { [ "$lint_case_exit" -eq "$1" ]; }
 printed() { grep -q -e "$1" "$output"; }
 printed_finding() { grep -v '^lint: note:' "$output" | grep -q -e "$1"; }
 
@@ -69,7 +68,7 @@ check "MigrationSteps_UnknownOp_Fails" exited "$finding_exit"
 check "MigrationSteps_UnknownOp_NamesTheOp" printed_finding 'rename'
 
 echo "this repository"
-python3 -I -B "$lint_check" "$root" > "$output" 2>&1; lint_exit=$?
+python3 -I -B "$lint_check" "$root" > "$output" 2>&1; lint_case_exit=$?
 check "MigrationSteps_ThisRepository_Passes" exited "$passes_exit"
 
 [ "$fails" -eq 0 ] && echo "migration-steps: ok"

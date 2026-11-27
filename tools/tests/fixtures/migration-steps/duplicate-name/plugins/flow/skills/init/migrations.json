@@ -10,9 +10,9 @@
     },
     {
       "name": "mode-moves",
-      "op": "remove",
+      "op": "known",
       "key": "alpha",
-      "reason": "alpha is read nowhere"
+      "reason": "the scripts already read alpha"
     }
   ]
 }
