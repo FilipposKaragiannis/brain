@@ -1,0 +1,10 @@
+config_version: 9.9.9
+jobs:
+  claude:
+    model:
+      - opus  # the large one
+    effort: high
+  codex:
+    model:
+      - codex-large  # the large one
+    effort: high

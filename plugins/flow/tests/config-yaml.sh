@@ -120,6 +120,9 @@ check "Apply_SpreadIntoAbsentMaps_CopiesTheLeavesIntoEachMap" writes_expected sp
 check "Apply_SpreadWithAnEmptyMapThere_WritesOnlyTheAbsentOne" writes_expected spread-claude-map-empty
 check "Apply_SpreadWithEveryMapThere_LeavesTheOldCommentsAsCommentLines" writes_expected spread-both-host-maps
 check "Apply_SpreadOfANameOutsideTheTable_CopiesItAsWritten" writes_expected spread-name-outside-the-table
+check "Apply_SpreadOfABlockListWithAMappedItem_MapsTheItemLineInTheTablesMap: the codex copy's item line takes the table's value and the claude copy keeps it, because the readers take the item line's value as the key's" writes_expected spread-block-list-mapped
+check "Apply_SpreadOfABlockListWithAnUnmappedItem_CopiesItAsWritten: both copies keep the item line, because a value outside the table is not changed" writes_expected spread-block-list-unmapped
+check "Apply_SpreadOfAnInlineList_MapsItsOneValue: the codex copy's list holds the table's value, because the readers take [opus] as opus" writes_expected spread-inline-list
 writes_expected spread-no-host-maps
 cp "$out" "$work/spread-once.yaml"
 check "Apply_SpreadRunTwice_SecondRunChangesNothing" [ "$(apply_exit "$work/spread-once.yaml")" = "$nothing_to_change_exit" ]

@@ -1,0 +1,8 @@
+config_version: 9.9.9
+jobs:
+  claude:
+    model:
+      - their-own-model
+  codex:
+    model:
+      - their-own-model

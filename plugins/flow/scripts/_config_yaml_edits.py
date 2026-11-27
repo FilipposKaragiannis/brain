@@ -208,45 +208,60 @@ def with_value(document: _config_yaml.Document, path: str, value_text: str) -> s
     return _config_yaml.rendered(lines, document.final_ending)
 
 
-def _copied_leaf(
-    document: _config_yaml.Document, index: int, mapped_value: Optional[str]
-) -> List[_config_yaml.Line]:
-    copies = [
-        _carried(document, position, _config_yaml.INDENT_STEP, "")
-        for position in _key_and_item_lines(document, index)
-    ]
-    if mapped_value is None:
-        return copies
-    line = document.lines[index]
-    entry = document.entries[index]
-    key_text = line.text[: entry.value_start] + " " + mapped_value
-    text = " " * _config_yaml.INDENT_STEP + key_text + line.text[entry.comment_start :]
-    return [_config_yaml.Line(text, line.ending)] + copies[1:]
+def _mapped_line(
+    document: _config_yaml.Document, position: int, item: str, new_item: str
+) -> _config_yaml.Line:
+    line = document.lines[position]
+    entry = document.entries[position]
+    value_text = line.text[entry.value_start : entry.comment_start].replace(item, new_item, 1)
+    text = line.text[: entry.value_start] + value_text + line.text[entry.comment_start :]
+    return _config_yaml.Line(" " * _config_yaml.INDENT_STEP + text, line.ending)
 
 
-def _mapped_value(value_text: str, table: Mapping[str, str]) -> Optional[str]:
-    """The value text with its one value replaced from the table, its quotes kept; None when the
-    table does not hold it."""
-    items = _config_yaml.value_items(value_text)
-    if len(items) != 1 or items[0] not in table:
+def _value_position(
+    document: _config_yaml.Document,
+    positions: List[int],
+    items: Tuple[str, ...],
+    table: Mapping[str, str],
+) -> Optional[int]:
+    """The line holding the leaf's one value when the table holds it: its key line, or its one
+    item line; None otherwise."""
+    holding = [position for position in positions if document.entries[position].value]
+    if len(items) != 1 or items[0] not in table or len(holding) != 1:
         return None
-    return value_text.replace(items[0], table[items[0]], 1)
+    return holding[0]
+
+
+def _copied_leaf(
+    document: _config_yaml.Document, path: str, table: Mapping[str, str]
+) -> List[_config_yaml.Line]:
+    index = _config_yaml.key_index(document, path)
+    if index is None:
+        return []
+    positions = _key_and_item_lines(document, index)
+    items = _config_yaml.values(document, path)
+    value_position = _value_position(document, positions, items, table)
+    return [
+        _mapped_line(document, position, items[0], table[items[0]])
+        if position == value_position
+        else _carried(document, position, _config_yaml.INDENT_STEP, "")
+        for position in positions
+    ]
 
 
 def _copied_map(
     document: _config_yaml.Document,
     map_path: str,
-    leaf_indexes: List[int],
+    leaf_paths: List[str],
     value_tables: Mapping[str, Mapping[str, str]],
 ) -> List[_config_yaml.Line]:
     depth = map_path.count(".")
     lines = [
         _config_yaml.Line(_indent(depth) + map_path.rpartition(".")[2] + ":", document.newline)
     ]
-    for index in leaf_indexes:
-        entry = document.entries[index]
-        table = value_tables.get(map_path + "." + entry.key, {})
-        lines.extend(_copied_leaf(document, index, _mapped_value(entry.value, table)))
+    for path in leaf_paths:
+        table = value_tables.get(map_path + "." + path.rpartition(".")[2], {})
+        lines.extend(_copied_leaf(document, path, table))
     return lines
 
 
@@ -276,7 +291,7 @@ def spread(
     if not absent:
         return _without_lines(document, taken)
     copies = [
-        line for path in absent for line in _copied_map(document, path, leaf_indexes, value_tables)
+        line for path in absent for line in _copied_map(document, path, present, value_tables)
     ]
     end = _Insertion(_config_yaml.block_end(document, from_index), (), absent[0].count("."))
     return _inserted(document, end, copies, taken)
