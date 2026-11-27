@@ -1,7 +1,8 @@
 #!/bin/sh
 # pr-publish.sh open <reports> <base> <branch> <title> [--draft]: opens the pull request of the
 # task branch, or updates the open one, run from the claimed worktree (scripts/_pr_publish.py). It
-# looks up the open PR whose head is <branch> first. With none, it takes the body the pr-creator
+# looks up the open PR whose head is <branch> first, counting only this repository's: a fork's PR
+# on a branch of the same name is never the branch's. With none, it takes the body the pr-creator
 # wrote to <reports>/pr-body.md and runs gh pr create; with one, it takes that PR's body and runs
 # gh pr edit on it, so a retry after a partial upload updates the same PR. Either way it swaps in
 # the Verification section pr-report.sh prints, writes the body to <reports>/pr-body.md and passes
@@ -19,10 +20,10 @@
 # the lookup or gh failed first; stderr quotes why. 2: a usage error, a base or a branch that is no
 # safe branch name included.
 # pr-publish.sh refresh <reports> <branch>: after a later verify, replaces the Verification section
-# of the open PR whose head is <branch> with the new one and attaches its images and videos
-# (scripts/_pr_refresh.py). It creates nothing, and every line outside the section stays as the PR
-# holds it. It exits as open does, and also 1 with nothing on stdout when no open PR has that head,
-# or when <reports>/verify.json was made at another commit than the worktree's HEAD, as pr-ready.sh
+# of this repository's open PR whose head is <branch> with the new one and attaches its images
+# and videos (scripts/_pr_refresh.py). It creates nothing, and every line outside the section
+# stays as the PR holds it. It exits as open does, and also 1 with nothing on stdout when no open
+# PR of this repository has that head, or when <reports>/verify.json was made at another commit than the worktree's HEAD, as pr-ready.sh
 # refuses the pr step, with both commits on stderr.
 set -u
 . "$(dirname "$0")/../lib/flow.sh"

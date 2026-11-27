@@ -6,7 +6,8 @@ db = sys.argv[1]; args = sys.argv[2:]
 data = json.load(open(db))
 def save(): json.dump(data, open(db, "w"))
 def pr():
-    return data.setdefault("pr", {"number": 90, "state": "OPEN", "isDraft": True, "mergedAt": None, "url": "https://gh/pull/90", "headRefName": "flow/gh-11", "baseRefName": "main"})
+    forks = [fork for fork in data.get("forks", []) if len(args) > 2 and fork["url"] == args[2]]
+    return forks[0] if forks else data.setdefault("pr", {"number": 90, "state": "OPEN", "isDraft": True, "mergedAt": None, "url": "https://gh/pull/90", "headRefName": "flow/gh-11", "baseRefName": "main"})
 def issue(n): return next(i for i in data["issues"] if i["number"] == int(n))
 LOCAL_REFERENCE = re.compile(r"\]\((\./[^)\s]+)\)")
 ASSET_URL = "https://gh/assets/%d"
@@ -122,7 +123,10 @@ elif args[:2] == ["pr", "edit"]:
 elif args[:2] == ["pr", "list"]:
     head = args[args.index("--head") + 1] if "--head" in args else None
     listed_state = args[args.index("--state") + 1].upper() if "--state" in args else "ALL"
-    print(json.dumps([pr()] if data.get("pr") and head in (None, pr()["headRefName"]) and listed_state in ("ALL", pr()["state"]) else []))
+    listed = ([dict(pr(), isCrossRepository=False)] if data.get("pr") else []) + [dict(fork, isCrossRepository=True) for fork in data.get("forks", [])]
+    matching = [entry for entry in listed if head in (None, entry["headRefName"]) and listed_state in ("ALL", entry["state"])]
+    fields = args[args.index("--json") + 1].split(",") if "--json" in args else []
+    print(json.dumps([{field: entry.get(field, "") for field in fields} if fields else entry for entry in matching]))
 elif args[:2] == ["pr", "create"]:
     opt = lambda f, d="": args[args.index(f) + 1] if f in args else d
     head = opt("--head") or os.popen("git symbolic-ref --short HEAD").read().strip()

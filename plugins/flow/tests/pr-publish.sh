@@ -8,7 +8,8 @@
 # and an empty file is named without stopping the rest; its retry edits that same PR. An image
 # whose name holds a line break adds no line to the body and is never uploaded. More images
 # than gh takes in one call all reach the PR in batches, their references all rewritten, and a
-# failed later batch names each of its files. A failed lookup of the open PR makes none. The report
+# failed later batch names each of its files. A failed lookup of the open PR makes none, and a
+# fork's PR on a branch of the same name is left as it was, beside ours or alone. The report
 # comes from the real verify, on the local adapter in a throwaway repo, and gh is the fake one.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
@@ -151,6 +152,23 @@ check "Open_LookupFails_ExitsOne: the script cannot tell a new pull request from
   '[ "$(publish_code lookup-fails)" = "$failed_exit" ]'
 check "Open_LookupFails_CreatesNoPullRequest: a create after a failed lookup could open a second pull request on the branch" \
   '[ -z "$(pull_request_field url)" ]'
+
+echo "a pull request from a fork on a branch of the same name"
+reset_fake_gh; write_body; seed_fork_pull_request
+publish fork-alone main
+check "Open_ForkPullRequestAlone_CreatesOurOwn: a fork's pull request on a branch of the same name is an outsider's, not this branch's" \
+  '[ -n "$(pull_request_field url)" ] && [ "$(published fork-alone)" = "$(printf "$created_line" "$(pull_request_field url)")" ]'
+check "Open_ForkPullRequestAlone_ForkBodyStaysAsItWas: an outsider's pull request must never carry this branch's verdict and evidence" \
+  '[ -n "$fork_pull_request_body" ] && [ "$(fork_pull_request_field body)" = "$fork_pull_request_body" ]'
+
+echo "a pull request from a fork beside our own"
+reset_fake_gh; seed_pull_request "$(printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n%s\n\nItem: %s\n' "$old_verdict" "$item")"
+seed_fork_pull_request
+publish fork-and-ours main
+check "Open_ForkAndOurPullRequest_UpdatesOurs: only this repository's pull requests count, so a fork's leaves the lookup certain" \
+  '[ -n "$(pull_request_field url)" ] && [ "$(published fork-and-ours)" = "$(printf "$updated_line" "$(pull_request_field url)")" ]'
+check "Open_ForkAndOurPullRequest_OurBodyHoldsTheNewVerdict: the reviewer reads this verify's verdict in the branch's own pull request" \
+  '[ -n "$new_verdict" ] && pull_request_field body | grep -qF -e "$new_verdict"'
 
 echo "more images than gh takes in one call"
 attach_limit="$(pr_publish_constant ATTACH_LIMIT)"

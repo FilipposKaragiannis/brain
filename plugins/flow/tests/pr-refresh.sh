@@ -2,8 +2,9 @@
 # pr-refresh.sh: pr-publish.sh refresh, run after a later verify once the pull request exists. It
 # replaces the open PR's Verification section whole, fenced heading lines and old asset URLs
 # included, attaches the new files and keeps every line outside it; it makes no PR when none is
-# open, and it leaves the body when the report was made at another commit. The reports come from
-# the real verify, on the local adapter in a throwaway repo, and gh is the fake one.
+# open, a fork's PR on a branch of the same name counting as none, and it leaves the body when the
+# report was made at another commit. The reports come from the real verify, on the local adapter
+# in a throwaway repo, and gh is the fake one.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -83,6 +84,21 @@ check "Refresh_NoPullRequest_CreatesNone: a refresh runs where a PR exists, and 
   '[ -z "$(pull_request_field url)" ]'
 check "Refresh_NoPullRequest_SaysNoOpenPullRequest: the owner learns why the body kept its old verdict" \
   '[ -n "$no_open_pull_request" ] && grep -qF -e "$no_open_pull_request" "$work/no-pull-request.err"'
+
+echo "a refresh with a fork's pull request on a branch of the same name"
+reset_fake_gh; seed_fork_pull_request
+refresh fork-alone
+check "Refresh_ForkPullRequestAlone_SaysNoOpenPullRequest: a fork's pull request is an outsider's, so this branch has none to refresh" \
+  '[ -n "$no_open_pull_request" ] && grep -qF -e "$no_open_pull_request" "$work/fork-alone.err"'
+check "Refresh_ForkPullRequestAlone_ForkBodyStaysAsItWas: an outsider's pull request must never carry this branch's verdict and evidence" \
+  '[ -n "$fork_pull_request_body" ] && [ "$(fork_pull_request_field body)" = "$fork_pull_request_body" ]'
+
+echo "a refresh with a fork's pull request beside our own"
+reset_fake_gh; seed_pull_request "$(printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n%s\n\nItem: %s\n' "$old_verdict" "$item")"
+seed_fork_pull_request
+refresh fork-and-ours
+check "Refresh_ForkAndOurPullRequest_UpdatesOurs: only this repository's pull requests count, so a fork's leaves the lookup certain" \
+  '[ -n "$(pull_request_field url)" ] && [ "$(published fork-and-ours)" = "$(printf "$updated_line" "$(pull_request_field url)")" ]'
 
 echo "a refresh with a report made at an earlier commit"
 stale_body="$(printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n%s\n\nItem: %s\n' "$new_verdict" "$item")"

@@ -4,11 +4,13 @@ See scripts/pr-publish.sh.
   _pr_publish.py open <reports dir> <base> <branch> <title> <draft|ready> <repository or "">
 
 Looks up the open pull request whose head is <branch> first, and a failed lookup changes nothing.
-With none, it reads the body the pr-creator wrote to <reports dir>/pr-body.md; with one, it reads
-that PR's body. It swaps in the section scripts/_pr_report.py renders from verify.json
-(scripts/_pr_body.py), writes the body to <reports dir>/pr-body.md and runs `gh pr create`, or
-`gh pr edit <url>`, with `--body-file` on it and an `--attach` for each image and video under
-evidence/ (scripts/_pr_media.py) gh would take, by absolute path (scripts/_pr_attachments.py).
+Only a pull request from this repository counts: one from a fork whose branch has the same name, or
+an entry gh lists without saying where it comes from, is never taken as the branch's. With none, it
+reads the body the pr-creator wrote to <reports dir>/pr-body.md; with one, it reads that PR's body.
+It swaps in the section scripts/_pr_report.py renders from verify.json (scripts/_pr_body.py),
+writes the body to <reports dir>/pr-body.md and runs `gh pr create`, or `gh pr edit <url>`, with
+`--body-file` on it and an `--attach` for each image and video under evidence/
+(scripts/_pr_media.py) gh would take, by absolute path (scripts/_pr_attachments.py).
 gh resolves each `./evidence/...` reference against the body file's folder, uploads the file and
 puts its asset URL in the body. gh takes at most ATTACH_LIMIT files a call, so the first call
 attaches that many and each later batch is a `gh pr edit <url> --attach ...` with no body flag, run
@@ -46,13 +48,17 @@ REPOSITORY_OPTION = "-R"
 # gh refuses a call with more --attach values than this, before it uploads anything.
 ATTACH_LIMIT = 50
 URL_PREFIXES = ("https://", "http://")
+URL_FIELD = "url"
+# A fork's pull request on a branch of the same name is an outsider's: gh's --head matches the name alone.
+CROSS_REPOSITORY_FIELD = "isCrossRepository"
+LISTED_FIELDS = "%s,%s" % (URL_FIELD, CROSS_REPOSITORY_FIELD)
 CREATED_LINE = "created %s"
 CREATE_COMMAND = "pr create"
 EDIT_COMMAND = "pr edit"
 GH_FAILED = "gh %s failed: %s"
 GH_PRINTED_NO_URL = "gh %s printed no pull request URL"
 LOOKUP_FAILED = "gh pr list --head %s --state open failed, so no pull request is made or changed: %s"
-LOOKUP_AMBIGUOUS = "more than one open pull request has the head %s: %s"
+LOOKUP_AMBIGUOUS = "more than one open pull request from this repository has the head %s: %s"
 BODY_FAILED = "gh pr view %s failed, so its body is left as it was: %s"
 UPDATED_LINE = "updated %s"
 NOT_UPLOADED = "not uploaded: %s"
@@ -200,20 +206,20 @@ def publish_body(target: PullRequestTarget, report: VerifyReport, publication: P
     return publish(target, publication, attachments(attachment_candidates(target.reports)), gh)
 
 
-def listed_urls(stdout: str) -> Optional[Tuple[str, ...]]:
+def same_repository_urls(stdout: str) -> Optional[Tuple[str, ...]]:
     try:
         listed = json.loads(stdout)
     except ValueError:
         return None
-    if not isinstance(listed, list) or not all(isinstance(entry, dict) and isinstance(entry.get("url"), str) for entry in listed):
+    if not isinstance(listed, list) or not all(isinstance(entry, dict) and isinstance(entry.get(URL_FIELD), str) for entry in listed):
         return None
-    return tuple(entry["url"] for entry in listed)
+    return tuple(entry[URL_FIELD] for entry in listed if entry.get(CROSS_REPOSITORY_FIELD) is False)
 
 
 def open_pull_request_url(target: PullRequestTarget, gh: GhRunner) -> Lookup:
-    result = gh(["pr", "list", *target.repository_arguments, "--head", target.branch, "--state", "open", "--json", "url"],
+    result = gh(["pr", "list", *target.repository_arguments, "--head", target.branch, "--state", "open", "--json", LISTED_FIELDS],
                 CURRENT_FOLDER)
-    urls = listed_urls(result.stdout) if result.exit_code == GH_SUCCEEDED_EXIT else None
+    urls = same_repository_urls(result.stdout) if result.exit_code == GH_SUCCEEDED_EXIT else None
     if urls is None:
         return Lookup("", LOOKUP_FAILED % (target.branch, result.stderr.strip() or result.stdout.strip()))
     if len(urls) > 1:

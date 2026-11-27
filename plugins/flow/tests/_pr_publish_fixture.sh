@@ -32,6 +32,14 @@ seed_pull_request() {
   python3 -c 'import json,sys; json.dump({"issues": [], "pr": {"number": 91, "state": "OPEN", "isDraft": False, "mergedAt": None, "url": "https://gh/pull/91", "headRefName": sys.argv[2], "baseRefName": "main", "body": sys.argv[3]}}, open(sys.argv[1], "w"))' \
     "$FAKE_GH_DIR/issues.json" "$branch" "$1"
 }
+fork_pull_request_url="https://gh/pull/92"
+fork_pull_request_body="$(printf '## Summary\n\nA change from a fork.')"
+# seed_fork_pull_request: the fake GitHub also holds an open pull request from a fork whose head has the branch's name.
+seed_fork_pull_request() {
+  python3 -c 'import json,sys; state = json.load(open(sys.argv[1])); state["forks"] = [{"number": 92, "state": "OPEN", "url": sys.argv[2], "headRefName": sys.argv[3], "baseRefName": "main", "body": sys.argv[4]}]; json.dump(state, open(sys.argv[1], "w"))' \
+    "$FAKE_GH_DIR/issues.json" "$fork_pull_request_url" "$branch" "$fork_pull_request_body"
+}
+fork_pull_request_field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("forks", [{}])[0].get(sys.argv[2], ""))' "$FAKE_GH_DIR/issues.json" "$1"; }
 # write_body: the body the pr-creator writes, with the line where the Verification section goes.
 write_body() {
   printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n## Merge danger\n\n**Door:** two-way\n\nItem: %s\n' "$item" > "$reports/pr-body.md"
