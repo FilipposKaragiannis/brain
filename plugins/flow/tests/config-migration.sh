@@ -4,8 +4,9 @@
 # named after the label found, the report's change lines, --check as drift that changes nothing, a
 # second run, the owner's comments and line endings, a refused file, a taken backup name, git
 # status, the migration before the first copy, fixture step lists for add and step order, the
-# label a fresh install writes, and the session-start hook printing the report once, from the main
-# worktree and a linked one. Takes no argument. Exit 0 when every check passes, 1 on any failure.
+# label a fresh install writes, the session-start hook printing the report once, from the main
+# worktree and a linked one, and the two ready keys moving under ready as ready_rules reads them,
+# with the fallback that still reads them unmoved. Takes no argument. Exit 0 when every check passes, 1 on any failure.
 # shellcheck disable=SC2154 # _base_fixture.sh and _init_fixture.sh set plugin, work, here, plugin_copy, init and fails
 # shellcheck disable=SC2034 # the check conditions read these names, through eval in _base_fixture.sh's check
 . "$(dirname "$0")/_base_fixture.sh"
@@ -30,6 +31,9 @@ run_init() { FLOW_PLUGIN="$plugin_copy" "$init" "$@"; }
 run_start() { echo '{}' | FLOW_PLUGIN="$plugin_copy" "$start"; }
 project_cfg() { (. "$plugin_copy/lib/flow.sh"; cfg "$1"); }
 project_keys() { (. "$plugin_copy/lib/flow.sh"; yaml_keys .flow/config.yaml "$1"); }
+# project_ready_needs, project_priority_order: the rule as ready_rules exports it, its warning unsaid.
+project_ready_needs() { (unset FLOW_READY_WARNED; . "$plugin_copy/lib/flow.sh"; ready_rules 2>/dev/null; printf '%s' "$READY_NEEDS"); }
+project_priority_order() { (unset FLOW_READY_WARNED; . "$plugin_copy/lib/flow.sh"; ready_rules 2>/dev/null; printf '%s' "$READY_PRIORITY_ORDER"); }
 # change_line <old key>: the report line whose first field is the old key.
 change_line() { awk -F'\t' -v key="$1" 'NF > 1 && $1 == key' .flow/migrations/report.txt; }
 # tree_digest: every file of the project outside .git with its content hash.
@@ -140,6 +144,48 @@ git worktree add -q -b pool "$work/pooled-worktree" || exit 1
 (cd "$work/pooled-worktree" || exit 1; run_start) > "$work/pooled.start" 2>&1
 check "Init_MainWorktreeOfAPool_IsMigrated" '[ -n "$(change_line retro.commit)" ]'
 check "SessionStart_FromAPoolWorktree_PrintsTheMainWorktreesReport" 'grep -qF -- "$(change_line retro.commit)" "$work/pooled.start"'
+
+echo "the ready keys move under ready"
+needs_written=priority,size
+order_written=P1,P0,P2
+new_project ready-unmigrated "${config_body}github:\n  repo: acme/widgets\n  ready_needs: [priority, size]\n  priority_order: [P1, P0, P2]\n"
+check "ReadyRules_UnmigratedConfig_StillReadsTheOldReadyNeeds" '[ "$(project_ready_needs)" = "$needs_written" ]'
+check "ReadyRules_UnmigratedConfig_StillReadsTheOldPriorityOrder" '[ "$(project_priority_order)" = "$order_written" ]'
+new_project ready-inline "${config_body}github:\n  repo: acme/widgets\n  ready_needs: [priority, size]\n"
+needs_before="$(project_ready_needs)"
+run_init >/dev/null 2>&1
+check "Init_ReadyNeedsInline_MovesUnderReady" '[ "$(project_cfg ready.needs | paste -sd, -)" = "$needs_written" ]'
+check "Init_ReadyNeedsInline_LeavesNoOldKey" '! project_keys github | grep -qx ready_needs'
+check "Init_ReadyNeedsInline_ReadyRulesReadsTheSame" '[ "$(project_ready_needs)" = "$needs_before" ]'
+new_project ready-block "${config_body}github:\n  repo: acme/widgets\n  ready_needs:\n    - priority\n    - size\n"
+needs_before="$(project_ready_needs)"
+run_init >/dev/null 2>&1
+check "Init_ReadyNeedsBlockList_MovesUnderReady" '[ "$(project_cfg ready.needs | paste -sd, -)" = "$needs_written" ]'
+check "Init_ReadyNeedsBlockList_ReadyRulesReadsTheSame" '[ "$(project_ready_needs)" = "$needs_before" ]'
+new_project priority-order "${config_body}github:\n  repo: acme/widgets\n  priority_order: [P1, P0, P2]\n"
+order_before="$(project_priority_order)"
+run_init >/dev/null 2>&1
+check "Init_PriorityOrder_MovesUnderReady" '[ "$(project_cfg ready.priority_order | paste -sd, -)" = "$order_written" ]'
+check "Init_PriorityOrder_ReadyRulesReadsTheSame" '[ "$(project_priority_order)" = "$order_before" ]'
+new_project ready-set-empty "${config_body}ready:\n  needs: []\ngithub:\n  repo: acme/widgets\n  ready_needs: [priority]\n"
+needs_before="$(project_ready_needs)"
+run_init >/dev/null 2>&1
+check "Init_ReadyNeedsAlreadySetEmpty_IsMigrated" '[ -n "$(change_line github.ready_needs)" ]'
+check "Init_ReadyNeedsAlreadySetEmpty_KeepsTheNewKey" 'project_keys ready | grep -qx needs'
+check "Init_ReadyNeedsAlreadySetEmpty_DropsTheOldKey" '! project_keys github | grep -qx ready_needs'
+check "Init_ReadyNeedsAlreadySetEmpty_ReadyRulesReadsTheSame" '[ "$(project_ready_needs)" = "$needs_before" ]'
+check "Init_ReadyNeedsAlreadySetEmpty_ReportLineMovesItNowhere" '[ "$(change_line github.ready_needs | cut -f2)" = - ]'
+new_project ready-comments "${config_body}ready:\n  # needs: [priority]  # an example\n  # The priority is a label.\ngithub:\n  repo: acme/widgets\n  ready_needs: [priority, size]\n"
+needs_before="$(project_ready_needs)"
+run_init >/dev/null 2>&1
+check "Init_ReadyMapHoldsOnlyComments_ReadyRulesReadsTheSame" '[ "$(project_ready_needs)" = "$needs_before" ]'
+check "Init_ReadyMapHoldsOnlyComments_AddsTheKeyAfterThem" '[ "$(line_of "  needs:" .flow/config.yaml)" -gt "$(line_of "# The priority is a label." .flow/config.yaml)" ]'
+new_project github-emptied "${config_body}github:\n  ready_needs: [priority, size]\n  priority_order: [P1, P0, P2]\n"
+run_init >/dev/null 2>&1
+check "Init_GithubLeftEmpty_ReadyRulesReadsTheWrittenNeeds" '[ "$(project_ready_needs)" = "$needs_written" ]'
+check "Init_GithubLeftEmpty_RemovesItsLine" '! grep -q "^github:" .flow/config.yaml'
+check "Init_TwoReadyMoves_ReportHasTheReadyNeedsLine" '[ "$(change_line github.ready_needs | cut -f2)" = ready.needs ]'
+check "Init_TwoReadyMoves_ReportHasThePriorityOrderLine" '[ "$(change_line github.priority_order | cut -f2)" = ready.priority_order ]'
 
 [ "$fails" -eq 0 ] && { echo "config-migration: ok"; exit 0; }
 echo "config-migration: $fails failed"; exit 1

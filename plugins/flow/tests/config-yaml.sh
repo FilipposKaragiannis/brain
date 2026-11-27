@@ -1,9 +1,10 @@
 #!/bin/sh
 # config-yaml.sh: the config migration's line editor, through the helper's plan and apply, one
 # process per case file in fixtures/config-yaml/ (the input, and the file apply must write beside
-# it as <case>.expected.yaml), on the step list there. Comments, a parent left empty, a map made
-# or holding only comments, the label, line endings, the files refused whole, and plan writing
-# nothing. Takes no argument. Exit 0 when every check passes, 1 on any failure.
+# it as <case>.expected.yaml), on the step list there, and the move-* cases on move-steps.json.
+# Comments, a parent left empty, a map made or holding only comments, the label, line endings, the
+# files refused whole, plan writing nothing, and a moved key's block. Takes no argument. Exit 0
+# when every check passes, 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
@@ -94,6 +95,23 @@ check "Apply_ListItemOfNoKey_IsRefused" refused_whole refuse-item-of-no-key
 check "Apply_KeyTwoLevelsDeeper_IsRefused" refused_whole refuse-key-two-levels-deeper
 apply_exit "$cases/refuse-tab-indentation.yaml" >/dev/null
 check "Apply_RefusedFile_WritesNoOutFile" [ ! -e "$out" ]
+
+echo "a moved key"
+steps="$cases/move-steps.json"
+check "Apply_MoveOfABlockList_CarriesItsItemsAndTrailingComments" writes_expected move-block-list
+check "Apply_MoveTargetPresentAndEmpty_TargetWins" writes_expected move-target-present-and-empty
+check "Apply_MoveIntoAMapHoldingOnlyComments_PutsTheKeyAfterThem" writes_expected move-into-a-map-holding-only-comments
+check "Apply_MoveLeavingItsParentEmpty_RemovesTheParent" writes_expected move-parent-left-empty
+check "Apply_MoveAcrossDepths_ReindentsTheBlockByTheDifference" writes_expected move-across-depths
+writes_expected move-parent-left-empty
+cp "$out" "$work/moved-once.yaml"
+check "Apply_MoveRunTwice_SecondRunChangesNothing" [ "$(apply_exit "$work/moved-once.yaml")" = "$nothing_to_change_exit" ]
+printf 'base: main\r\ngithub:\r\n  ready_needs: [size]' > "$work/move-crlf.yaml"
+apply_exit "$work/move-crlf.yaml" >/dev/null
+check "Apply_MoveInACrlfFile_WritesANonEmptyFile" [ -s "$out" ]
+check "Apply_MoveInACrlfFileWithoutFinalNewline_EveryTerminatedLineTakesCrlf" sh -c "[ \"\$(grep -c '$carriage_return\$' '$out')\" = \"\$(( \$(grep -c '' '$out') - 1 ))\" ]"
+printf '{"steps": [{"name": "inside", "op": "move", "from": "ready", "to": "ready.needs", "reason": "r"}]}\n' > "$work/move-inside-itself.json"
+check "Plan_MoveIntoItself_ExitsTwo" sh -c "python3 -I '$helper' plan '$work/move-inside-itself.json' '$cases/move-parent-left-empty.yaml' '$new_label' >/dev/null 2>&1; [ \$? = '$cannot_exit' ]"
 
 [ "$fails" -eq 0 ] && { echo "config-yaml: ok"; exit 0; }
 echo "config-yaml: $fails failed"; exit 1

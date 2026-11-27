@@ -1,0 +1,10 @@
+config_version: 9.9.9
+base: main
+github:
+  repo: acme/widgets
+  # The fields an item needs.
+ready:
+  priority_order: [P0]
+  needs:  # mine
+    - priority
+    - size  # later

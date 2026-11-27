@@ -300,10 +300,11 @@ trackers_unread() {
 
 # ready_rules: the readiness rules of every tracker, exported comma-separated: READY_NEEDS, the
 # fields an unstarted item must have before it is ready (ready.needs), and READY_PRIORITY_ORDER,
-# the priorities from most to least urgent (ready.priority_order). The deprecated
-# github.ready_needs and github.priority_order stand in for a key the file leaves out (an empty
-# list written there is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it
-# starts quiet). A field no adapter knows is refused, exit 2.
+# the priorities from most to least urgent (ready.priority_order). The old github.ready_needs and
+# github.priority_order, which init moves and whose fallback entries are in
+# skills/init/migrations.json, stand in for a key the file leaves out (an empty list written there
+# is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it starts quiet). A field
+# no adapter knows is refused, exit 2.
 READY_FIELDS="priority size"
 ready_rules() {
   _needs_key=ready.needs; _old=""; _new=""

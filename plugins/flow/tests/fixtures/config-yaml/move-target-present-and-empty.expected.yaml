@@ -1,0 +1,6 @@
+config_version: 9.9.9
+ready:
+  needs: []
+github:
+  repo: acme/widgets
+  # old

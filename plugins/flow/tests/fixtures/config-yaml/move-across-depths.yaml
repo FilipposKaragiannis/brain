@@ -1,0 +1,10 @@
+config_version: 1.40.0
+verify:
+  timeout:
+    - 30
+    - 60
+  command: make
+jobs:
+  retro:
+    schedule: daily  # nights
+base: main
