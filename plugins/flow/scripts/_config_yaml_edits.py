@@ -252,22 +252,23 @@ def _copied_map(
 
 def spread(
     document: _config_yaml.Document,
-    from_path: str,
-    leaf_names: Tuple[str, ...],
+    leaf_paths: Tuple[str, ...],
     to_paths: Tuple[str, ...],
     value_tables: Mapping[str, Mapping[str, str]],
 ) -> str:
-    """The text with the from map's leaves of those names copied into each map of to_paths that
-    is absent, each a map directly in it, made in to_paths' order at the end of its block. A copy is
-    the leaf's key and item lines one level deeper; its key line keeps its trailing comment and
+    """The text with the leaves there, all in one map, copied into each map of to_paths that is
+    absent, each a map directly in theirs, made in to_paths' order at the end of its block. A copy
+    is the leaf's key and item lines one level deeper; its key line keeps its trailing comment and
     takes its value from the table value_tables holds for the new path, when the table holds the
     value. The leaves' lines go; when no map is absent, their trailing comments stay as comment
     lines, as without_key leaves them."""
-    from_index = _config_yaml.key_index(document, from_path)
-    found = (_config_yaml.key_index(document, from_path + "." + name) for name in leaf_names)
-    leaf_indexes = [index for index in found if index is not None]
-    if from_index is None or not leaf_indexes:
+    present = [path for path in leaf_paths if _config_yaml.has_key(document, path)]
+    from_index = (
+        _config_yaml.key_index(document, present[0].rpartition(".")[0]) if present else None
+    )
+    if from_index is None:
         return _config_yaml.render(document)
+    leaf_indexes = [_config_yaml.key_index(document, path) for path in present]
     taken = [
         position for index in leaf_indexes for position in _key_and_item_lines(document, index)
     ]

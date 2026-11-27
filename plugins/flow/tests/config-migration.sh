@@ -227,7 +227,8 @@ run_init >/dev/null 2>&1
 check "Init_ClaudeMapOnly_CodexReadsItsOwnMap" '[ "$(project_jobs_from codex)" = jobs.codex ]'
 check "Init_ClaudeMapOnly_CodexReadsTheSamePair" '[ "$(project_jobs_pair codex)" = "$codex_before" ]'
 check "Init_ClaudeMapOnly_ClaudeReadsTheSamePair" '[ "$(project_jobs_pair claude)" = "$claude_before" ]'
-check "Init_ClaudeMapOnly_ReportHasNoLineForClaude" '[ -z "$(change_line_to jobs.model jobs.claude.model)$(change_line_to jobs.effort jobs.claude.effort)" ]'
+check "Init_ClaudeMapOnly_ReportHasNoLineForClaudesModel" '[ -z "$(change_line_to jobs.model jobs.claude.model)" ]'
+check "Init_ClaudeMapOnly_ReportHasNoLineForClaudesEffort" '[ -z "$(change_line_to jobs.effort jobs.claude.effort)" ]'
 new_project jobs-both-maps "${config_body}jobs:\n  model: $model_written\n  effort: $effort_written\n  claude:\n    model: claude-own\n  codex:\n    effort: low\n"
 claude_before="$(project_jobs_pair claude)"; codex_before="$(project_jobs_pair codex)"
 run_init >/dev/null 2>&1

@@ -108,10 +108,12 @@ def _mapped(items: Tuple[str, ...], table: Mapping[str, str]) -> Tuple[str, ...]
     return (table[items[0]],) if len(items) == 1 and items[0] in table else items
 
 
-def _spread_line(document: _config_yaml.Document, step: SpreadStep, old: str, new: str) -> Change:
-    table = step.value_tables.get(new, {})
-    new_value = report_value(_mapped(_config_yaml.values(document, old), table))
-    return Change(old, new, new_value, step.reason)
+def _spread_line(
+    document: _config_yaml.Document, step: SpreadStep, old_key: str, new_key: str
+) -> Change:
+    table = step.value_tables.get(new_key, {})
+    new_value = report_value(_mapped(_config_yaml.values(document, old_key), table))
+    return Change(old_key, new_key, new_value, step.reason)
 
 
 def _spread_lines(document: _config_yaml.Document, step: SpreadStep) -> Tuple[Change, ...]:
@@ -136,9 +138,7 @@ def _spread(document: _config_yaml.Document, step: SpreadStep) -> Edit:
     old_keys = leaf_paths((step.from_key,), step.leaf_names)
     if not any(_config_yaml.has_key(document, old_key) for old_key in old_keys):
         return _unchanged(document)
-    text = _config_yaml_edits.spread(
-        document, step.from_key, step.leaf_names, step.to_keys, step.value_tables
-    )
+    text = _config_yaml_edits.spread(document, old_keys, step.to_keys, step.value_tables)
     return Edit(text, _spread_lines(document, step))
 
 
