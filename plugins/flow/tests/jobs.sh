@@ -526,13 +526,15 @@ fi
 PASS_LIMIT_BOUND_SECONDS=15
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
+date +%s > "$work/pass-host.started"
 sleep 30 & echo \$! > "$work/pass-child.pid"
 wait
 EOF
-chmod +x "$work/bin/claude"; rm -f .flow/log/comments.seen/gh_21.fails "$work/pass-child.pid"
+chmod +x "$work/bin/claude"; rm -f .flow/log/comments.seen/gh_21.fails "$work/pass-child.pid" "$work/pass-host.started"
 jobscfg '  comments:\n    pass_limit: 2s\n'
-started="$(date +%s)"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?; elapsed=$(( $(date +%s) - started ))
-check "PassPastThePassLimit_IsStopped: no pass runs forever" [ "$elapsed" -lt "$PASS_LIMIT_BOUND_SECONDS" ]
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?; pass_run_ended="$(date +%s)"
+check "PassPastThePassLimit_IsStopped: no pass runs forever" \
+  sh -c "test -s '$work/pass-host.started' && [ \$(( $pass_run_ended - \$(cat '$work/pass-host.started') )) -lt $PASS_LIMIT_BOUND_SECONDS ]"
 check "PassPastThePassLimit_FailsTheRun: a stopped pass is a failed pass" [ "$code" -eq 1 ]
 check "PassPastThePassLimit_StopsTheHostsChildren: nothing the pass started keeps running" sh -c "test -s '$work/pass-child.pid' && ! kill -0 \$(cat '$work/pass-child.pid')"
 check "PassPastThePassLimit_CountsTowardFailuresInARow: it counts toward jobs.comments.max_failures" sh -c "read -r count _ < .flow/log/comments.seen/gh_21.fails && [ \"\$count\" = 1 ]"
