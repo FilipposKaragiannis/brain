@@ -26,7 +26,7 @@ on a usage error. scripts/_pr_refresh.py runs the update path alone, after a lat
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import List, Mapping, Optional, Tuple
 
@@ -162,8 +162,8 @@ def published_without_attachments(publication: Publication, attached: Attachment
     return published(publication, url, (gh_failure(publication.command, upload),), attached.refused + attached.uploadable)
 
 
-def published_in_batches(target: PullRequestTarget, publication: Publication, url: str, attached: Attachments,
-                         gh: GhRunner) -> Outcome:
+def published_in_batches(target: PullRequestTarget, publication: Publication, attached: Attachments, gh: GhRunner) -> Outcome:
+    url = publication.known_url
     if not url:
         return failed(GH_PRINTED_NO_URL % publication.command)
     for batch_start in range(ATTACH_LIMIT, len(attached.uploadable), ATTACH_LIMIT):
@@ -182,7 +182,7 @@ def publish(target: PullRequestTarget, publication: Publication, attached: Attac
     result = gh([*publication.arguments, *attach_arguments(first_batch)], CURRENT_FOLDER)
     printed_url = pull_request_url(result.stdout)
     if result.exit_code == GH_SUCCEEDED_EXIT:
-        return published_in_batches(target, publication, printed_url or publication.known_url, attached, gh)
+        return published_in_batches(target, replace(publication, known_url=printed_url or publication.known_url), attached, gh)
     missing = not_uploaded(first_batch, result.stderr)
     if printed_url:
         return published(publication, printed_url, (gh_failure(publication.command, result),),

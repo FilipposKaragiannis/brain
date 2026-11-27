@@ -179,6 +179,7 @@ echo "more images than gh takes in one call"
 attach_limit="$(pr_publish_constant ATTACH_LIMIT)"
 media_file_count=$((attach_limit + 1))
 file_number_digits=3
+first_media_name="$(printf "shot-%0${file_number_digits}d.png" 1)"
 new_item many "  capture: 'sh $work/capture-many.sh'"
 branch="$(git -C "$worktree" symbolic-ref --short HEAD)"
 { printf "evidence='%s/evidence'\nmedia_file_count='%s'\nfile_number_digits='%s'\n" "$reports" "$media_file_count" "$file_number_digits"
@@ -191,7 +192,7 @@ for file_number in range(1, int(sys.argv[2]) + 1):
 CAPTURE
 } > "$work/capture-many.sh"
 commit_test_command true
-write_proofs '[{"line": 1, "text": "the login screen shows", "grade": "live", "evidence": "evidence/shot-001.png"}]'
+write_proofs '[{"line": 1, "text": "the login screen shows", "grade": "live", "evidence": "evidence/'"$first_media_name"'"}]'
 verify >/dev/null 2>&1
 evidence_media_names() { (cd "$reports/evidence" && LC_ALL=C ls) | grep -F '.png'; }
 reset_fake_gh; write_body
