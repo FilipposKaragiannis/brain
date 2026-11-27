@@ -337,7 +337,7 @@ check_all "ConfiguredWorkersAboveTheCap_StartsNoPass: no pass is addressed on a 
 jobscfg "  comments_workers: $WORKERS_PAST_ANY_SHELL_INTEGER\n"; bump 2026-10-25T03:08:00Z; mark_comments_log; bounded_comments_run; code=$?
 check "ConfiguredWorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
 check_all "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
-jobscfg ''; bump 2026-10-25T03:09:00Z; mark_comments_log; bounded_comments_run --workers "$WORKERS_CAP"
+jobscfg ''; bump 2026-10-25T03:09:00Z; mark_comments_log; "$P/jobs/comments.sh" claude --workers "$WORKERS_CAP" >/dev/null 2>&1
 check "WorkersAtTheCap_AddressesThePrs: the console's top worker count still runs the passes" comments_logged_since_mark 'done: .*addressed: .*gh#21'
 cp "$work/overlap-host" "$work/bin/claude"
 jobscfg '  comments_workers: 02\n'; bump 2026-10-25T03:15:00Z; : > "$work/overlap.log"
