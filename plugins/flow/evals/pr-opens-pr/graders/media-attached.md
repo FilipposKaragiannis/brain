@@ -2,9 +2,9 @@
 type: regex
 target:
   source: file
-  path: .fake-gh/calls.log
-pattern: '^pr create\b.* --attach \S*/evidence/screen\.png'
-flags: "m"
+  path: .fake-gh/issues.json
+pattern: '"assets": \[[^\]]*/evidence/screen\.png"'
+flags: ""
 match: contains
 ---
-The PR is created with the verify capture's screenshot attached, so gh uploads it.
+The fake GitHub holds the verify capture's screenshot as an uploaded asset of the PR.
