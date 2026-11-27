@@ -174,11 +174,11 @@ verify >/dev/null 2>&1
 evidence_media_names() { (cd "$reports/evidence" && LC_ALL=C ls) | grep -F '.png'; }
 reset_fake_gh; write_body
 publish many main
-check "Open_FiftyOneMediaFiles_EveryFileAttached: a file past gh's limit for one call still reaches the pull request" \
+check "Open_MoreMediaFilesThanOneCallTakes_EveryFileAttached: a file past gh's limit for one call still reaches the pull request" \
   '[ -n "$(uploaded_names)" ] && [ "$(uploaded_names)" = "$(evidence_media_names)" ]'
-check "Open_FiftyOneMediaFiles_ExitsZero: gh refuses a call with more files than its limit, so a clean exit says no call carried more" \
+check "Open_MoreMediaFilesThanOneCallTakes_ExitsZero: gh refuses a call with more files than its limit, so a clean exit says no call carried more" \
   '[ "$(publish_code many)" = "$published_exit" ]'
-check "Open_FiftyOneMediaFiles_BodyHasNoLocalReferenceLeft: a later batch must rewrite the references the first call left local" \
+check "Open_MoreMediaFilesThanOneCallTakes_BodyHasNoLocalReferenceLeft: a later batch must rewrite the references the first call left local" \
   'pull_request_field body | grep -qF -e "$asset_reference" && ! pull_request_field body | grep -qF -e "$local_reference"'
 
 echo "a second batch whose first file does not upload"
