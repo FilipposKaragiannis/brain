@@ -6,6 +6,8 @@
 . "$(dirname "$0")/_base_fixture.sh"
 unset FLOW_TRACKER_STATE
 
+# The frontmatter keys the local adapter's strip-state takes off: every state key but size.
+stripped_state_keys() { printf '%s' 'step profile worktree attempts gate last_event pr pr_host touches changes held_by held_reason answered asked answer answered_at answer_pending gate_from base branch'; }
 record() { "$plugin/scripts/state.sh" "$@"; }
 take() { env FLOW_MACHINE="$1" sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "$1"' take "$2"; }
 closed_record() { open_record="$(record path "$1")"; printf '%s/closed/%s' "$(dirname "$open_record")" "$(basename "$open_record")"; }

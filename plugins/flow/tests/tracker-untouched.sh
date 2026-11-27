@@ -92,8 +92,8 @@ check_run_went_through() {
 new_item() { "$plugin/scripts/new.sh" task "Run through every step" --size "$made_size" --body "$body"; }
 
 local_flow_keys() { python3 -B -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import _item
-meta, _ = _item.parse(sys.argv[2]); print(json.dumps({key: meta[key] for key in _item.STRIPPED_KEYS & set(meta)}, sort_keys=True))' \
-  "$local_adapter" "$(item_file "$1")"; }
+meta, _ = _item.parse(sys.argv[2]); print(json.dumps({key: meta[key] for key in set(sys.argv[3].split()) & set(meta)}, sort_keys=True))' \
+  "$local_adapter" "$(item_file "$1")" "$(stripped_state_keys)"; }
 local_size() { python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _item
 meta, _ = _item.parse(sys.argv[2]); print(meta.get("size", ""))' "$local_adapter" "$(item_file "$1")"; }
 local_untouched() { [ -n "$local_keys_made" ] && [ "$(local_flow_keys "$1")" = "$local_keys_made" ] && [ "$(local_size "$1")" = "$made_size" ]; }
@@ -142,7 +142,7 @@ jira_untouched() {
 echo "jira: an item run through every step"
 new_repo jira
 jira_size_field=Size
-jira_state_property="$(sed -n 's/^STATE_PROPERTY = "\(.*\)"$/\1/p' "$plugin/adapters/jira/_jira.py")"
+jira_state_property=flow-state
 mkdir -p "$work/jira" "$work/jirabin" && cp "$plugin/tests/_fake_jira.py" "$work/jira/" && ln -s "$plugin/tests/fake-jira.sh" "$work/jirabin/curl"
 jira_store="$work/jira/jira.json"; printf '{}\n' > "$jira_store"
 PATH="$work/jirabin:$PATH" FAKE_JIRA_DIR="$work/jira" FLOW_JIRA_RETRY_WAIT="0 0" JIRA_API_TOKEN=run-token

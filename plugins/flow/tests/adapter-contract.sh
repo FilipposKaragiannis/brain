@@ -593,11 +593,12 @@ else
   skip "no set_$name or scope_config_$name in this suite to scope a list"
 fi
 
+stripped_state_keys="step profile worktree attempts gate last_event pr pr_host touches changes held_by held_reason answered asked answer answered_at answer_pending gate_from base branch"
 # Each backend's store is read whole, never through read.sh, whose state always carries defaults.
 full_state_gone_local() {
   python3 -B -c 'import sys
 sys.path.insert(0, sys.argv[1]); import _item
-meta, _ = _item.parse(sys.argv[2]); sys.exit(1 if set(meta) & _item.STRIPPED_KEYS else 0)' "$A" "$FLOW_HOME/items/${1#local:}.md"
+meta, _ = _item.parse(sys.argv[2]); sys.exit(1 if set(meta) & set(sys.argv[3].split()) else 0)' "$A" "$FLOW_HOME/items/${1#local:}.md" "$stripped_state_keys"
 }
 full_state_gone_github() {
   python3 -c 'import json,sys

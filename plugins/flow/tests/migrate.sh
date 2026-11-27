@@ -3,7 +3,7 @@
 # The lazy seed of an unrecorded item, state.sh import and its dry run, --strip, a run that fails
 # part way, and which tracker_state the mirror follows, on the local adapter with the state put
 # there by write-state.sh as an older flow left it; then import --strip end to end on the GitHub
-# fake. Messages and prefixes are read from scripts/_state_import.py and _state_schema.py.
+# fake. Messages and the pushed status are read from scripts/_state_import.py and _state_schema.py.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -17,7 +17,7 @@ item_path() { printf '.flow/items/%s.md' "${1#local:}"; }
 frontmatter() { python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _item
 meta, _ = _item.parse(sys.argv[2]); print(meta.get(sys.argv[3], ""))' "$local_adapter" "$(item_path "$1")" "$2"; }
 no_stripped_key_left() { python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _item
-meta, _ = _item.parse(sys.argv[2]); left = sorted(set(meta) & _item.STRIPPED_KEYS); print("\n".join(left)); sys.exit(1 if left else 0)' "$local_adapter" "$(item_path "$1")"; }
+meta, _ = _item.parse(sys.argv[2]); left = sorted(set(meta) & set(sys.argv[3].split())); print("\n".join(left)); sys.exit(1 if left else 0)' "$local_adapter" "$(item_path "$1")" "$(stripped_state_keys)"; }
 scripts_constant() { python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _state_import, _state_schema
 module, name = sys.argv[2].split("."); print(getattr({"import": _state_import, "schema": _state_schema}[module], name))' "$plugin/scripts" "$1"; }
 has_record() { record_path="$(record path "$1")" && [ -f "$record_path" ]; }
@@ -281,9 +281,9 @@ P="$plugin"; . "$here/_github_fixture.sh"
 issue_has_label() { python3 -c 'import json, sys
 issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
 sys.exit(0 if sys.argv[3] in issue["labels"] else 1)' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
-flow_label_count() { python3 -B -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import _state_schema
-issue = [issue for issue in json.load(open(sys.argv[2]))["issues"] if issue["number"] == int(sys.argv[3])][0]
-print(sum(1 for label in issue["labels"] if label.startswith(_state_schema.FLOW_LABEL_PREFIXES)))' "$plugin/scripts" "$FAKE_GH_DIR/issues.json" "$1"; }
+flow_label_count() { python3 -c 'import json, sys
+issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
+print(sum(1 for label in issue["labels"] if label.startswith(("step:", "gate:", "wt:", "flow:"))))' "$FAKE_GH_DIR/issues.json" "$1"; }
 state_comment_count() { python3 -c 'import json, sys
 issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
 print(sum(1 for comment in issue.get("comments", []) if "flow:state" in comment["body"]))' "$FAKE_GH_DIR/issues.json" "$1"; }
