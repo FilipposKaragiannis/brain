@@ -3,8 +3,11 @@
 # open creates one from <reports>/pr-body.md with the Verification section swapped in and every
 # image and video under evidence/ attached, so the body's references become asset URLs; it exits
 # 0 with the URL, a --draft opens a draft, a text capture is never attached, and a base gh would
-# read as an option is refused as a usage error. The report comes from the real verify, on the
-# local adapter in a throwaway repo, and gh is the fake one.
+# read as an option is refused as a usage error. When a file does not upload, the PR is still made
+# with the new section, the script exits 1 and names that file and every later one, and an empty
+# file is named without stopping the rest; its retry edits that same PR. A failed lookup of the
+# open PR makes none. The report comes from the real verify, on the local adapter in a throwaway
+# repo, and gh is the fake one.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 # shellcheck disable=SC2034,SC2154 # the fixtures this sources set and read these names, and check reads them inside its quoted conditions
 . "$(dirname "$0")/_base_fixture.sh"
@@ -18,19 +21,29 @@ ln -s "$plugin/tests/fake-gh.sh" "$work/github/gh"
 PATH="$work/github:$PATH"; export PATH
 
 published_exit=0
+failed_exit=1
 usage_exit=2
 pull_request_title="Image evidence renders inline"
 base_gh_reads_as_an_option="--web"
 local_reference='](./evidence/'
 pr_publish_constant() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _pr_publish; print(getattr(_pr_publish, sys.argv[2]))' "$plugin/scripts" "$1"; }
 created_line="$(pr_publish_constant CREATED_LINE)"
+updated_line="$(pr_publish_constant UPDATED_LINE)"
+not_uploaded_prefix="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _pr_publish as publish; print(publish.PROBLEM_LINE % (publish.NOT_UPLOADED % ""))' "$plugin/scripts")"
 commit_test_command() {
   mkdir -p "$worktree/.standards" && printf '{"test": "%s"}\n' "$1" > "$worktree/.standards/config.json"
   git -C "$worktree" add .standards/config.json && git -C "$worktree" commit -qm "test command"
 }
 write_proofs() { printf '{"head": "%s", "proofs": %s}\n' "$(git -C "$worktree" rev-parse HEAD)" "$1" > "$reports/proofs.json"; }
-# reset_fake_gh: a fake GitHub that holds no pull request and no uploaded file.
-reset_fake_gh() { printf '{"issues": []}\n' > "$FAKE_GH_DIR/issues.json"; : > "$FAKE_GH_DIR/calls.log"; }
+# reset_fake_gh: a fake GitHub that holds no pull request and no uploaded file, and fails nothing.
+reset_fake_gh() { printf '{"issues": []}\n' > "$FAKE_GH_DIR/issues.json"; : > "$FAKE_GH_DIR/calls.log"; rm -f "$FAKE_GH_DIR/fail" "$FAKE_GH_DIR/upload-fails"; }
+# fail_upload_of <name>: the fake GitHub refuses to upload evidence/<name>.
+fail_upload_of() { printf '%s\n' "$1" > "$FAKE_GH_DIR/upload-fails"; }
+# seed_pull_request <body>: the fake GitHub holds an open pull request on the branch with that body.
+seed_pull_request() {
+  python3 -c 'import json,sys; json.dump({"issues": [], "pr": {"number": 91, "state": "OPEN", "isDraft": False, "mergedAt": None, "url": "https://gh/pull/91", "headRefName": sys.argv[2], "baseRefName": "main", "body": sys.argv[3]}}, open(sys.argv[1], "w"))' \
+    "$FAKE_GH_DIR/issues.json" "$branch" "$1"
+}
 # write_body: the body the pr-creator writes, with the line where the Verification section goes.
 write_body() {
   printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n## Merge danger\n\n**Door:** two-way\n\nItem: %s\n' "$item" > "$reports/pr-body.md"
@@ -44,6 +57,8 @@ publish() {
   echo "$?" > "$work/$publish_name.code"
 }
 published() { cat "$work/$1.out"; }
+# not_uploaded <name>: the evidence names the run of publish <name> said were not uploaded, one per line.
+not_uploaded() { grep -F -e "$not_uploaded_prefix" "$work/$1.err" | cut -c "$((${#not_uploaded_prefix} + 1))-"; }
 publish_code() { cat "$work/$1.code"; }
 pull_request_field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pr", {}).get(sys.argv[2], ""))' "$FAKE_GH_DIR/issues.json" "$1"; }
 # uploaded_names: the name under evidence/ of each file the fake GitHub holds, one per line, sorted.
@@ -88,5 +103,67 @@ reset_fake_gh; write_body
 publish option-base "$base_gh_reads_as_an_option"
 check "Open_BaseStartingWithDash_RefusesWithUsageExit: a base that starts with a dash would reach gh as a flag" \
   '[ "$(publish_code option-base)" = "$usage_exit" ]'
+
+echo "a pull request whose second file does not upload"
+new_item partial "  capture: 'sh $work/capture-partial.sh'"
+branch="$(git -C "$worktree" symbolic-ref --short HEAD)"
+{ printf "evidence='%s/evidence'\n" "$reports"
+  cat <<'CAPTURE'
+mkdir -p "$evidence"
+printf 'first png bytes\n' > "$evidence/first.png"
+printf 'second mp4 bytes\n' > "$evidence/second.mp4"
+printf 'third png bytes\n' > "$evidence/third.png"
+CAPTURE
+} > "$work/capture-partial.sh"
+commit_test_command true
+write_proofs '[{"line": 1, "text": "the login screen shows", "grade": "live", "evidence": "evidence/first.png"}]'
+verify >/dev/null 2>&1
+every_partial_name="$(printf 'first.png\nsecond.mp4\nthird.png')"
+later_partial_names="$(printf 'second.mp4\nthird.png')"
+reset_fake_gh; write_body; fail_upload_of second.mp4
+publish second-fails main
+partial_url="$(pull_request_field url)"
+check "Open_SecondFileFails_CreatesThePullRequestAndExitsOne: the pull request exists, but the pr-creator must not go on as if every file showed" \
+  '[ -n "$partial_url" ] && [ "$(publish_code second-fails)" = "$failed_exit" ]'
+check "Open_SecondFileFails_NamesItAndEveryLaterFile: gh stops at the first failure, so the files after it were never sent" \
+  '[ "$(not_uploaded second-fails)" = "$later_partial_names" ]'
+
+echo "the retry after that partial upload"
+rm -f "$FAKE_GH_DIR/upload-fails"
+publish retry main
+check "Open_RetryAfterPartialUpload_EditsTheSamePullRequest: a second pull request on the branch would split the review" \
+  '[ -n "$partial_url" ] && [ "$(published retry)" = "$(printf "$updated_line" "$partial_url")" ]'
+check "Open_RetryAfterPartialUpload_BodyHasNoLocalReferenceLeft: every file the first run missed shows once the retry uploads it" \
+  'pull_request_field body | grep -qF "](https://gh/assets/" && ! pull_request_field body | grep -qF -e "$local_reference"'
+
+echo "a pull request whose first file does not upload"
+reset_fake_gh; write_body; fail_upload_of first.png
+publish first-fails main
+check "Open_FirstFileFails_CreatesThePullRequestWithoutAttachments: gh alone makes no pull request when nothing uploads" \
+  '[ -n "$(pull_request_field url)" ] && [ -z "$(uploaded_names)" ]'
+check "Open_FirstFileFails_NamesEveryFile: no file reached GitHub, so the owner must see each of them" \
+  '[ "$(not_uploaded first-fails)" = "$every_partial_name" ]'
+
+echo "an open pull request whose first file does not upload"
+old_verdict="Verdict: fail at 0000000000000000000000000000000000000000"
+new_verdict="$("$plugin/scripts/pr-report.sh" "$reports" | grep -m 1 -F 'Verdict: ')"
+reset_fake_gh; seed_pull_request "$(printf '## Summary\n\nEvidence shows inline.\n\n## Verification\n\n%s\n\nItem: %s\n' "$old_verdict" "$item")"
+fail_upload_of first.png
+publish existing-first-fails main
+check "Open_ExistingPullRequestFirstFileFails_BodyStillGetsTheNewSection: gh alone leaves the old verdict when nothing uploads" \
+  '[ -n "$new_verdict" ] && pull_request_field body | grep -qF -e "$new_verdict" && ! pull_request_field body | grep -qF -e "$old_verdict"'
+
+echo "an empty image"
+reset_fake_gh; write_body; : > "$reports/evidence/blank.png"
+publish empty-file main
+rm -f "$reports/evidence/blank.png"
+check "Open_EmptyMediaFile_PullRequestCreatedAndFileNamed: gh refuses an empty file before any upload, so it must not hold back the others" \
+  '[ -n "$(pull_request_field url)" ] && not_uploaded empty-file | grep -qxF blank.png'
+
+echo "a lookup of the open pull request that fails"
+reset_fake_gh; write_body; printf '1\nthe lookup is refused\npr list\n' > "$FAKE_GH_DIR/fail"
+publish lookup-fails main
+check "Open_LookupFails_ExitsOneWithoutCreating: a create after a failed lookup could open a second pull request on the branch" \
+  '[ "$(publish_code lookup-fails)" = "$failed_exit" ] && [ -z "$(pull_request_field url)" ]'
 
 if [ "$fails" -eq 0 ]; then echo "pr-publish: ok"; else echo "pr-publish: $fails failed"; exit 1; fi

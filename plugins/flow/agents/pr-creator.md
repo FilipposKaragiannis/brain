@@ -51,15 +51,19 @@ publish script `<plugin>/scripts/pr-publish.sh`, which swaps in the Verification
    `Item: <id>`). Glossary words only. The Verification section is the output of
    `<plugin>/scripts/pr-report.sh <reports>`, never edited: the verdict, the proofs, the Not
    checked list and each image and video under **Evidence**. Write the body to
-   `<reports>/pr-body.md` with a `## Verification` line where the section goes: with a repo
-   template at the template's verification or testing section, else at the end before
-   `Resolves`.
+   `<reports>/pr-body.md` with that output pasted where the section goes: with a repo template at
+   the template's verification or testing section, else at the end before `Resolves`.
    Open the PR with `<plugin>/scripts/pr-publish.sh open <reports> <base> <branch> <item
    title>`, never `gh pr create`: it swaps in the section whole, attaches each image and video so
-   it shows inline, and prints `created <url>`. The PR is a GitHub PR on the origin whatever
-   tracker holds the item; a local or Jira item gets one too, and its tracker only records it
-   (step 6). A pushed branch is no PR: when the script exits non-zero, stop with status `fail`
-   quoting what it printed.
+   it shows inline, and prints `created <url>`. When the branch already has an open PR, from an
+   earlier attempt, it updates that PR instead and prints `updated <url>`; then go on with steps 5
+   to 8 as on a first open. The PR is a GitHub PR on the origin whatever tracker holds the item; a
+   local or Jira item gets one too, and its tracker only records it (step 6). A pushed branch is
+   no PR. On exit 1 with a `created` or `updated` line, the PR exists but some files are not
+   attached: stop with status `fail`, a summary that names the PR URL, each file the script names
+   as not uploaded and gh's error, and the command the owner reruns, the same `pr-publish.sh open`
+   line. On exit 1 with no such line, no PR was made or changed: stop with status `fail` quoting
+   what it printed. A retry is this same step, and the script finds the PR and updates it.
 5. When a quiz exists (`<reports>/quiz.md`): open as a draft (`--draft`, the script's last
    argument) and say in the result that the PR goes ready when the owner passes the quiz in the
    console. Never post the quiz, its answers or a link to it on the PR: the console shows it on
@@ -79,13 +83,15 @@ publish script `<plugin>/scripts/pr-publish.sh`, which swaps in the Verification
 9. Updating an existing PR (the state has `pr`): push, replace the `## Verification` section
    with the script's new output (the section runs from that heading to the next `## ` heading,
    the `Resolves #<n>` or `Item: <id>` line or the end, whichever comes first, so the footer
-   stays), add one comment with what changed since the last push.
+   stays), add one comment with what changed since the last push, only when the push in this run
+   sent new commits, so a retry after a partial upload posts none.
 
 ## Output
 The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
 summary, the base and why, draft or ready, and the reviewers asked; status `done` with no `pr`
 key only when the branch has nothing to merge (step 3), the summary saying why; status `fail`
-when verify is not pass, the base fails step 2 or the push is rejected.
+when verify is not pass, the base fails step 2, the push is rejected or `pr-publish.sh` exits
+non-zero (step 4).
 
 ## Never
 Never open a PR when verify is not pass or `pr-ready.sh` refuses. With `state.base` set, never pick a base other than the

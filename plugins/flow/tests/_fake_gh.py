@@ -16,8 +16,26 @@ def attached_paths(arguments: List[str]) -> List[str]:
 def body_folder(arguments: List[str]) -> str:
     body_file = arguments[arguments.index("--body-file") + 1] if "--body-file" in arguments else STANDARD_INPUT
     return os.getcwd() if body_file == STANDARD_INPUT else os.path.dirname(os.path.abspath(body_file))
-def upload_attachments(body: str, arguments: List[str]) -> str:
-    uploaded = attached_paths(arguments)
+UPLOAD_FAILS = os.path.join(os.path.dirname(db), "upload-fails")
+def failing_names() -> List[str]:
+    if not os.path.exists(UPLOAD_FAILS):
+        return []
+    with open(UPLOAD_FAILS) as failing_stream:
+        return [name for name in failing_stream.read().split("\n") if name]
+def uploaded_paths(attached: List[str]) -> List[str]:
+    failing = [position for position, path in enumerate(attached) if any(path.endswith("/" + name) for name in failing_names())]
+    if failing:
+        print("could not upload %s: the fake refused it" % attached[failing[0]], file=sys.stderr)
+    return attached[:failing[0]] if failing else attached
+def body_argument(arguments: List[str]) -> str:
+    if "--body-file" not in arguments:
+        return arguments[arguments.index("--body") + 1] if "--body" in arguments else ""
+    body_file = arguments[arguments.index("--body-file") + 1]
+    if body_file == STANDARD_INPUT:
+        return sys.stdin.read()
+    with open(body_file) as body_stream:
+        return body_stream.read()
+def upload_attachments(body: str, arguments: List[str], uploaded: List[str]) -> str:
     folder = body_folder(arguments)
     assets = data.setdefault("assets", [])
     asset_urls = {os.path.abspath(path): ASSET_URL % asset for asset, path in enumerate(uploaded, len(assets) + 1)}
@@ -87,22 +105,34 @@ elif args[:2] == ["pr", "edit"]:
     if "--add-reviewer" in args and args[args.index("--add-reviewer") + 1] not in reviewers: reviewers.append(args[args.index("--add-reviewer") + 1])
     if "--title" in args: pr()["title"] = args[args.index("--title") + 1]
     if "--body" in args: pr()["body"] = args[args.index("--body") + 1]
+    attached = attached_paths(args)
+    uploaded = uploaded_paths(attached)
+    if attached and not uploaded:
+        sys.exit("the pull request was not changed")
     if "--body-file" in args:
-        body_file = args[args.index("--body-file") + 1]
-        pr()["body"] = upload_attachments(sys.stdin.read() if body_file == STANDARD_INPUT else open(body_file).read(), args)
+        pr()["body"] = upload_attachments(body_argument(args), args, uploaded)
     save()
+    print(pr()["url"])
+    sys.exit(1 if uploaded != attached else 0)
 elif args[:2] == ["pr", "list"]:
     head = args[args.index("--head") + 1] if "--head" in args else None
     listed_state = args[args.index("--state") + 1].upper() if "--state" in args else "ALL"
     print(json.dumps([pr()] if data.get("pr") and head in (None, pr()["headRefName"]) and listed_state in ("ALL", pr()["state"]) else []))
 elif args[:2] == ["pr", "create"]:
     opt = lambda f, d="": args[args.index(f) + 1] if f in args else d
-    body = sys.stdin.read() if opt("--body-file") == "-" else open(opt("--body-file")).read() if "--body-file" in args else opt("--body")
     head = opt("--head") or os.popen("git symbolic-ref --short HEAD").read().strip()
+    if data.get("pr") and data["pr"]["state"] == "OPEN" and data["pr"]["headRefName"] == head:
+        sys.exit('a pull request for branch "%s" into branch "%s" already exists:\n%s' % (head, data["pr"]["baseRefName"], data["pr"]["url"]))
+    attached = attached_paths(args)
+    uploaded = uploaded_paths(attached)
+    if attached and not uploaded:
+        sys.exit("no pull request was created")
     data["pr"] = {"number": 91, "state": "OPEN", "isDraft": "--draft" in args, "mergedAt": None, "url": "https://gh/pull/91",
                   "headRefName": head, "baseRefName": opt("--base", "main"), "title": opt("--title"),
-                  "body": upload_attachments(body, args)}
-    save(); print(data["pr"]["url"])
+                  "body": upload_attachments(body_argument(args), args, uploaded)}
+    save()
+    print(data["pr"]["url"])
+    sys.exit(1 if uploaded != attached else 0)
 elif args[:2] == ["pr", "comment"]:
     body = sys.stdin.read() if "--body-file" in args else args[args.index("--body") + 1]
     pr().setdefault("comments", []).append(body); save()
