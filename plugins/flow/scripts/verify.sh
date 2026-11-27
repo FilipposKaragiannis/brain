@@ -26,8 +26,10 @@
 # matches a glob; otherwise a skipped check). After the gates, each entry of the `evidence` list in
 # .flow/config.yaml, shaped like a gate, runs as the check `evidence <name>` with
 # FLOW_EVIDENCE_FOLDER set to <reports>/evidence, where it writes its files; no gate sees that
-# variable, and a failed capture fails verify. feel_test is true when a changed file matches
-# feel_test_paths in the flow config. Never edits anything. The report is built from data by
+# variable, and a failed capture fails verify. Then the check `plan proofs` fails when a file the
+# plan names as a proof does not hold (scripts/_verify_plan_proofs.py); a plan that names none
+# adds no check. feel_test is true when a changed file matches feel_test_paths in the flow config.
+# Never edits anything. The report is built from data by
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
@@ -438,6 +440,9 @@ if [ -n "$evidence_entries" ] && ! mkdir -p "$reports/evidence"; then
 fi
 [ -z "$evidence_entries" ] || export FLOW_EVIDENCE_FOLDER="$reports/evidence"
 evidence_checks "$evidence_entries"
+if plan_proofs_output="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_verify_plan_proofs.py" check "$reports" 2>&1)"; then
+  [ -z "$plan_proofs_output" ] || record "plan proofs" pass "" "$plan_proofs_output" 0 ""
+else record "plan proofs" fail "" "$plan_proofs_output" 0 ""; failed "plan proofs"; fi
 feel_test_paths="$(cfg feel_test_paths)"; feel=false
 if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
 elif changed_matches "$feel_test_paths"; then feel=true; fi

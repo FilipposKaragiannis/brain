@@ -20,7 +20,8 @@ characters, terminal colours or terminal hyperlinks (OSC 8: the target goes and 
 stays; one cut short with no terminator goes to the end), cut to 400 characters. <head> is the
 full commit the run checked.
 
-The verifier's proofs.json in the reports folder is graded by scripts/_verify_proofs.py.
+The verifier's proofs.json in the reports folder is graded by scripts/_verify_proofs.py, with the
+proofs the plan names, read by scripts/_verify_plan_proofs.py.
 
 verify.json holds `proven` (the lines graded live or test that hold), `acceptance_lines` (M),
 `proofs` and `not_checked` ({"line", "text", "grade", "reason"} for each line graded build-only,
@@ -38,6 +39,7 @@ from types import MappingProxyType
 from typing import Callable, List, Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _verify_plan_proofs import named_proofs  # noqa: E402
 from _verify_proofs import FILE_LINE, GRADE_ERROR, GRADE_LIVE, GRADE_TEST, graded  # noqa: E402
 from _verify_text import one_line, text  # noqa: E402
 
@@ -195,7 +197,7 @@ def main(argv):
     with open(changed, "rb") as f:
         files = [name for name in text(f.read()).split(NAME_SEPARATOR) if name]
     verdict = VERDICT_LINE % (status, head)
-    graded_proofs = graded(reports, head, report_checks)
+    graded_proofs = graded(reports, head, report_checks, named_proofs(reports))
     report = {
         "status": status,
         "verdict": verdict,

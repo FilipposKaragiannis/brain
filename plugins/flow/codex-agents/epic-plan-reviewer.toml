@@ -28,7 +28,9 @@ promised is in the code, and a closed item the plan still expects work from is a
    shippable and ordered to cut risk; is any acceptance line impossible, vague or untestable;
    are invariants, compatibility, migration and observability covered; do details contradict the
    code, the docs or the architecture; is verification strong enough for the blast radius; are
-   out-of-scope items truly separable.
+   out-of-scope items truly separable. A named proof (a `Proof:` line in the plan's
+   `## Acceptance` section) whose file no phase item and no `evidence` entry in
+   `.flow/config.yaml` writes is a Gap: verify fails on it.
 3. Apply the pragmatism filter: raise only what could change correctness, delivery,
    maintainability, verification or future work. Prefer "change this part of the plan" over
    generic concern. Separate blockers from manageable risks and optional cleanup. If the plan is

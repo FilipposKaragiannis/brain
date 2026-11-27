@@ -132,8 +132,12 @@ changes. A new suite starts with the same two lines as `plugins/flow/tests/core-
   the same test command on the same files, and the report names that run. **build-only**: only
   that it builds. **blocked**: it could not be checked, with why.
 - **proofs file**: `<reports>/proofs.json`, the verifier's grade for each acceptance line,
-  written before the run and graded by verify at its end.
+  written before the run and graded by verify at its end. A named proof overrides the
+  verifier's grade for its line.
+- **named proof**: a `Proof:` line under a numbered acceptance line in the `## Acceptance`
+  section of the plan, `Proof: evidence/<name>.png by <capture>`; verify grades its line live
+  from that file.
 - **error**: what verify reports in place of a grade that does not hold, with why; counted as
-  not proven and listed in the Not checked list.
+  not proven and listed in the Not checked list. A named proof's error also fails verify.
 - **Not checked list**: the report section, always present, of the acceptance lines graded
   build-only, blocked or error, each with its reason, and of a proofs file verify could not read.

@@ -27,8 +27,14 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    `"$P/scripts/verify.sh" <item>`, which runs every check once and writes
    `<reports>/verify.json` and `verify.md`, each check with its seconds and summary line, and
    grades the proofs file into both: a proof that does not hold becomes an error, and every line
-   graded build-only, blocked or error goes to the Not checked list with its reason. No proof
-   changes the status. A build or test command with `paths` in `.standards/config.json` runs only
+   graded build-only, blocked or error goes to the Not checked list with its reason. A named
+   proof, a `Proof:` line under its numbered line in the `## Acceptance` section of
+   `<reports>/plan.md`, is graded live from the plan's file whatever the verifier wrote for its
+   line. After the evidence captures, the `plan proofs` check fails verify when a named file is
+   missing or empty, not a regular file or outside `evidence/`, when a `Proof:` line is
+   malformed, or when a named line is no line of `proofs.json`; the line of a file that does not
+   hold is graded error. No other proof changes the status. A build or test command with
+   `paths` in `.standards/config.json` runs only
    when a changed file is under them, else it is a skipped check that says so. Use `{verify_base}`
    in a build or test command to pass it the merge-base commit. When the base cannot be resolved,
    the command receives `unavailable` and must run all checks: read any value that is not a full

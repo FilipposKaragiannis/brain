@@ -57,6 +57,11 @@ before the slices they block, and verify every blocker edge came back from a `re
    phase's verification names the tests that cover the phase, one test or one group as the
    testing guide runs them. It is never the project's whole test command: verify runs that
    once, scoped to the change, and a phase that asks for it makes every phase pay for it.
+   For each acceptance line that changes what the user sees, write its named proof in the
+   `## Acceptance` section as the template says: the numbered line, then
+   `Proof: evidence/<name>.png by <capture>`. The capture is a test or a replay that exists or
+   that a phase item adds, wired as an `evidence` entry in `.flow/config.yaml` whose `paths`
+   cover the change: a named file no capture writes fails verify. No such line, no section.
 3. Re-estimate the size from the plan. Report it in the result file when it changed.
 4. Write the union of the phase `touches` to the result file so the board can show overlaps,
    and `changes`: the globs among them whose existing behavior the plan changes (additive work
