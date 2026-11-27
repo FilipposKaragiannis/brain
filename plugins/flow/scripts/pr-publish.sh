@@ -30,9 +30,12 @@ set -u
 . "$FLOW_PLUGIN/lib/branch.sh"
 USAGE="usage: pr-publish.sh open <reports> <base> <branch> <title> [--draft], or refresh <reports> <branch>"
 REFRESH_ARGUMENT_COUNT=3
+OPEN_ARGUMENT_COUNT=5
+OPEN_DRAFT_ARGUMENT_COUNT=6
+USAGE_EXIT=2
 if [ "${1:-}" = refresh ]; then
-  [ $# -eq "$REFRESH_ARGUMENT_COUNT" ] || die "$USAGE" 2
-  branch_name_valid "$3" || die "the branch is no safe branch name: $3" 2
+  [ $# -eq "$REFRESH_ARGUMENT_COUNT" ] || die "$USAGE" "$USAGE_EXIT"
+  branch_name_valid "$3" || die "the branch is no safe branch name: $3" "$USAGE_EXIT"
   report="$2/verify.json"
   [ -f "$report" ] || die "no verify report at $report: run verify first"
   report_head="$(json_get "$(cat "$report")" head)"
@@ -47,13 +50,13 @@ if [ "${1:-}" = refresh ]; then
   cached_python3 -I "$FLOW_PLUGIN/scripts/_pr_refresh.py" "$2" "$3" "$(cfg github.repo)"
   exit
 fi
-[ $# -eq 5 ] || [ $# -eq 6 ] || die "$USAGE" 2
-[ "$1" = open ] || die "$USAGE" 2
+[ $# -eq "$OPEN_ARGUMENT_COUNT" ] || [ $# -eq "$OPEN_DRAFT_ARGUMENT_COUNT" ] || die "$USAGE" "$USAGE_EXIT"
+[ "$1" = open ] || die "$USAGE" "$USAGE_EXIT"
 readiness=ready
-if [ $# -eq 6 ]; then
-  [ "$6" = --draft ] || die "$USAGE" 2
+if [ $# -eq "$OPEN_DRAFT_ARGUMENT_COUNT" ]; then
+  [ "$6" = --draft ] || die "$USAGE" "$USAGE_EXIT"
   readiness=draft
 fi
-branch_name_valid "$3" || die "the base is no safe branch name: $3" 2
-branch_name_valid "$4" || die "the branch is no safe branch name: $4" 2
+branch_name_valid "$3" || die "the base is no safe branch name: $3" "$USAGE_EXIT"
+branch_name_valid "$4" || die "the branch is no safe branch name: $4" "$USAGE_EXIT"
 cached_python3 -I "$FLOW_PLUGIN/scripts/_pr_publish.py" open "$2" "$3" "$4" "$5" "$readiness" "$(cfg github.repo)"

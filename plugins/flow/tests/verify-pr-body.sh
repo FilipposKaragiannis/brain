@@ -112,8 +112,10 @@ check "Render_PassingReport_FirstLinesAreHeadingVerdictAndCount: the section ope
   '[ "$(rendered every-grade | head -n "$first_section_lines")" = "$(first_lines_expected)" ]'
 check "Render_ReportWithProofs_HasOneRowPerAcceptanceLine: a reviewer sees each graded line once" \
   '[ -n "$(json_proof_lines)" ] && [ "$(section_row_lines every-grade)" = "$(json_proof_lines)" ]'
-check "Render_LiveProof_NamesTheFileWithoutALink: the cell names the file, and the file itself shows under Evidence, not behind a link" \
-  'section_row every-grade 2 | grep -qF "\`login-error.png\`" && ! section_row every-grade 2 | grep -qF "]("'
+check "Render_LiveProof_CellNamesTheFile: a reviewer sees which capture proves the line" \
+  'section_row every-grade 2 | grep -qF "\`login-error.png\`"'
+check "Render_LiveProof_CellHoldsNoLink: the cell carries no link a reviewer would have to follow to see the capture" \
+  '[ -n "$(section_row every-grade 2)" ] && ! section_row every-grade 2 | grep -qF "]("'
 check "Render_TestProof_NamesTheTest: a reviewer finds the test that proves the line" \
   'section_row every-grade 1 | grep -qF "\`$test_name\`"'
 check "Render_BuildOnlyAndBlockedLines_ListedUnderNotChecked: a reviewer sees what was left out and why" \
