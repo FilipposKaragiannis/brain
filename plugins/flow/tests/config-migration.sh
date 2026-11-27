@@ -8,8 +8,9 @@
 # worktree and a linked one, the two ready keys moving under ready as ready_rules reads them, and
 # jobs.model and jobs.effort spread into each host's map as host_jobs_pair reads them, each with
 # the fallback that still reads them unmoved, the comments around moved keys, an old label with
-# nothing pending, --check on a refused file, and a second migration after a plugin update. Takes no argument. Exit 0 when every check passes, 1
-# on any failure.
+# nothing pending, --check on a refused file, a second migration after a plugin update, and a
+# config another writer changes while init migrates it. Takes no argument. Exit 0 when every
+# check passes, 1 on any failure.
 # shellcheck disable=SC2154 # _base_fixture.sh and _init_fixture.sh set plugin, work, here, plugin_copy, init and fails
 # shellcheck disable=SC2034 # the check conditions read these names, through eval in _base_fixture.sh's check
 . "$(dirname "$0")/_base_fixture.sh"
@@ -297,6 +298,27 @@ check "Init_SecondMigration_BackupNamedAfterTheLabelTheFirstWrote: the backup ca
 check "Init_SecondMigration_LabelBecomesTheUpdatedVersion: the label moves to the updated plugin's version, because the next backup is named after it" '[ "$(project_cfg config_version)" = "$updated_version" ]'
 check "SessionStart_AfterASecondMigration_PrintsTheNewChange: the second report prints, because each new report is shown once" 'grep -qF -- "$(change_line github.ready_needs)" "$work/second-migration.start"'
 check "SessionStart_AfterASecondMigration_LeavesOutTheEarlierChange: the first report is not shown again, because it was printed already" '! grep -qF -- "$(change_line retro.commit)" "$work/second-migration.start"'
+
+echo "a config that changes while init migrates it"
+helper="$plugin_copy/scripts/_config_migration.py"
+cp "$helper" "$work/shipped-helper.py"
+cp "$helper" "$plugin_copy/scripts/_config_migration_shipped.py"
+cat > "$helper" <<EOF_CHANGING_HELPER
+import subprocess, sys
+code = subprocess.run([sys.executable, "-I", "$plugin_copy/scripts/_config_migration_shipped.py", *sys.argv[1:]]).returncode
+if sys.argv[1] == "apply":
+    open(sys.argv[3], "a").write("pool_entry_added: meanwhile\\n")
+sys.exit(code)
+EOF_CHANGING_HELPER
+new_project changed-meanwhile "${config_body}retro:\n  commit: false\n"
+{ cat .flow/config.yaml; printf 'pool_entry_added: meanwhile\n'; } > "$work/changed-meanwhile.expected"
+run_init > "$work/changed-meanwhile.out" 2>&1
+cp "$work/shipped-helper.py" "$helper"
+check "Init_ConfigChangedWhileMigrating_KeepsTheOtherWritersChange: the config holds what the other writer wrote, because a migration from a stale read would drop a new pool entry" 'cmp -s "$work/changed-meanwhile.expected" .flow/config.yaml'
+check "Init_ConfigChangedWhileMigrating_WritesNoBackupOrReport: no migrations folder appears, because a backup and report lines for a refused migration would claim a change that never happened" '[ ! -e .flow/migrations ]'
+check "Init_ConfigChangedWhileMigrating_NotesToRunInitAgain: the output names the config and asks for another init, because the owner must learn it is not migrated" 'grep -qF ".flow/config.yaml changed while init migrated it" "$work/changed-meanwhile.out"'
+run_init >/dev/null 2>&1
+check "Init_AfterARefusedMigration_RunAgainMigrates: the next init migrates the changed config, because the refusal must leave nothing that blocks a retry" '[ -n "$(change_line retro.commit)" ]'
 
 [ "$fails" -eq 0 ] && { echo "config-migration: ok"; exit 0; }
 echo "config-migration: $fails failed"; exit 1

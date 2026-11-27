@@ -9,8 +9,9 @@
 # saved to <config dir>/migrations/<config name>.<label found>.bak (a name taken by other content
 # gets .2, .3, ...), replaced by the migrated file, and the changes are appended to
 # migrations/report.txt and to migrations/report.unseen, which the session-start hook prints once.
-# The folder holds a .gitignore of *, so none of it is tracked. A config the helper cannot migrate
-# is named in a note and left as it is. A missing config has nothing to migrate.
+# The folder holds a .gitignore of *, so none of it is tracked. A config the helper cannot migrate,
+# or one that changed after the helper read it, is named in a note and left as it is, with no
+# backup and no report. A missing config has nothing to migrate.
 # config_migration_report_once <plugin name> <config dir> prints <config dir>/migrations/
 # report.unseen under a framing line and removes it, so each report shows in one session only. It
 # claims the file with mv first, so of two sessions starting at once one prints it. It needs
@@ -29,6 +30,9 @@ config_migrate() {
     return 0
   fi
   config_migrate_out="$scratch/config-migration.out"; config_migrate_lines="$scratch/config-migration.lines"
+  config_migrate_read="$scratch/config-migration.read"
+  cp "$config_migrate_config" "$config_migrate_read" ||
+    { echo "init: note: cannot read $config_migrate_config; it is not migrated"; return 0; }
   python3 -I "$config_migrate_helper" apply "$config_migrate_steps" "$config_migrate_config" "$version" "$config_migrate_out" \
     > "$config_migrate_lines" 2> "$scratch/config-migration.err"; config_migrate_code=$?
   [ "$config_migrate_code" -eq 0 ] && return 0
@@ -36,6 +40,8 @@ config_migrate() {
     echo "init: note: $(cat "$scratch/config-migration.err"); fix it and run init again"
     return 0
   fi
+  cmp -s "$config_migrate_read" "$config_migrate_config" ||
+    { echo "init: note: $config_migrate_config changed while init migrated it, so it is not migrated; run init again"; return 0; }
   config_migration_record "$config_migrate_plugin" "$config_migrate_config" "$config_migrate_out" "$config_migrate_lines"
 }
 

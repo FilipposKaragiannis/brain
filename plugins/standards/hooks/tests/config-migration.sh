@@ -5,8 +5,9 @@
 # comments, the report's change lines, the backup named after the version found, the version
 # label, a config with nothing to migrate left byte for byte, --check as drift that changes
 # nothing, a second run, git status in a project that commits .standards/, the file's indent and
-# non-ASCII text, and the session-start hook printing the report once. Takes no argument. Exit 0
-# when every check passes, 1 on any failure. tools/test.sh runs it.
+# non-ASCII text, the session-start hook printing the report once, and a config another writer
+# changes while init migrates it. Takes no argument. Exit 0 when every check passes, 1 on any
+# failure. tools/test.sh runs it.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 hooks="$here/.."
@@ -169,5 +170,24 @@ check "Init_FourSpaceIndent_KeptAsWritten: the four-space indent stays, because 
 text = open(".standards/config.json", encoding="utf-8").read()
 sys.exit(text != json.dumps(json.loads(text), indent=int(sys.argv[1]), ensure_ascii=False) + "\n")' "$layout_indent"
 check "Init_UnicodeText_KeptAsWritten: non-ASCII text stays readable, because escaped text is not what the owner wrote" grep -qF -- '"_readme": "Réglages du projet"' .standards/config.json
+
+echo "init: a config that changes while init migrates it"
+helper="$plugin_copy/skills/init/scripts/config_migration.py"
+cp "$helper" "$work/shipped-helper.py"
+cp "$helper" "$plugin_copy/skills/init/scripts/config_migration_shipped.py"
+cat > "$helper" <<EOF_CHANGING_HELPER
+import subprocess, sys
+code = subprocess.run([sys.executable, "-I", "$plugin_copy/skills/init/scripts/config_migration_shipped.py", *sys.argv[1:]]).returncode
+if sys.argv[1] == "apply":
+    open(sys.argv[3], "a").write(" ")
+sys.exit(code)
+EOF_CHANGING_HELPER
+new_project changed-meanwhile
+write_config
+{ cat .standards/config.json; printf ' '; } > "$work/changed-meanwhile.expected"
+"$init" > "$work/changed-meanwhile.init.out" 2>&1
+cp "$work/shipped-helper.py" "$helper"
+check "Init_ConfigChangedWhileMigrating_KeepsTheOtherWritersChange: the config holds what the other writer wrote, because a migration from a stale read would drop it" cmp -s "$work/changed-meanwhile.expected" .standards/config.json
+check "Init_ConfigChangedWhileMigrating_WritesNoBackupOrReport: no migrations folder appears, because a backup and report lines for a refused migration would claim a change that never happened" [ ! -e "$migrations" ]
 
 [ "$fails" -eq 0 ] && echo "config-migration: ok" || { echo "config-migration: $fails failed"; exit 1; }
