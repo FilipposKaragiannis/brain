@@ -1,6 +1,7 @@
 #!/bin/sh
 # epic-pr.sh <epic> <reports> [<summary>]: the pull request that brings an epic's work into the
-# branch the epic started from. Prints its URL and records it on the epic (link-pr).
+# branch the epic started from. Prints its URL, links it on the epic's tracker and records it, with
+# this session's host, in the epic's flow record (lib/pull_request.sh).
 # The PR is a GitHub PR on the origin, from the epic branch (epic/<n>) into the epic's start
 # (fetch_epic_start in lib/base.sh: an epic branch above it, a base: line in its body, else the
 # config base), whatever tracker holds the epic. An open PR from that branch is taken as it is.
@@ -14,6 +15,7 @@
 # bad argument.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/pull_request.sh"
 [ $# -ge 2 ] || die "usage: epic-pr.sh <epic> <reports> [<summary>]" 2
 epic="$1"; reports="$2"; summary="${3:-}"
 repository="$(flow_repository)"
@@ -72,6 +74,5 @@ ahead="$(git -C "$repository" rev-list --count "refs/remotes/origin/$target_bran
 pull_request="$(open_pull_request "$head_branch")"
 [ -n "$pull_request" ] || pull_request="$(new_pull_request "$head_branch" "$target_branch")"
 [ -n "$pull_request" ] || die "$epic: gh could not open the pull request: gh pr create --base $target_branch --head $head_branch"
-if adapter link-pr "$epic" "$pull_request" >/dev/null; then record_linked_pr "$epic" >/dev/null || echo "epic-pr: could not write state for $epic" >&2
-else echo "epic-pr: could not record $pull_request on $epic" >&2; fi
+link_and_record_pull_request "$epic" "$pull_request" "$(host_name)" || echo "epic-pr: could not write state for $epic" >&2
 printf '%s\n' "$pull_request"

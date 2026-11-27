@@ -102,11 +102,15 @@ plugins/flow/tests/lost-result.sh	SC2034	2
 plugins/flow/tests/lost-result.sh	SC2154	4
 plugins/flow/tests/main-worktree-once.sh	SC2034	2
 plugins/flow/tests/main-worktree-once.sh	SC2154	4
+plugins/flow/tests/migrate.sh	SC2034	14
+plugins/flow/tests/migrate.sh	SC2154	6
 plugins/flow/tests/pick.sh	SC1010	1
 plugins/flow/tests/pick.sh	SC2034	12
 plugins/flow/tests/pick.sh	SC2154	2
 plugins/flow/tests/pick.sh	SC2164	3
 plugins/flow/tests/pr-without-pull-request.sh	SC2154	5
+plugins/flow/tests/profile-pin.sh	SC2034	12
+plugins/flow/tests/profile-pin.sh	SC2154	5
 plugins/flow/tests/prune-sweep.sh	SC2034	1
 plugins/flow/tests/prune-sweep.sh	SC2154	2
 plugins/flow/tests/prune-sweep.sh	SC2164	1
@@ -118,7 +122,7 @@ plugins/flow/tests/sessions.sh	SC2034	1
 plugins/flow/tests/sessions.sh	SC2154	3
 plugins/flow/tests/state-disk.sh	SC2034	4
 plugins/flow/tests/state-disk.sh	SC2154	4
-plugins/flow/tests/state-join.sh	SC2034	6
+plugins/flow/tests/state-join.sh	SC2034	4
 plugins/flow/tests/state-join.sh	SC2154	6
 plugins/flow/tests/state-readers.sh	SC2034	1
 plugins/flow/tests/state-readers.sh	SC2154	6
@@ -126,6 +130,8 @@ plugins/flow/tests/state-views.sh	SC2034	2
 plugins/flow/tests/state-views.sh	SC2154	7
 plugins/flow/tests/state.sh	SC2034	7
 plugins/flow/tests/state.sh	SC2154	4
+plugins/flow/tests/tracker-untouched.sh	SC2034	3
+plugins/flow/tests/tracker-untouched.sh	SC2154	6
 plugins/flow/tests/unattended.sh	SC2034	3
 plugins/flow/tests/unattended.sh	SC2154	2
 plugins/flow/tests/verify-base-command.sh	SC2034	3

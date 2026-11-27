@@ -2,9 +2,9 @@
 lists the state dir and the view folders, opens files through the readers _state.py hands it, and
 prints; _state_join.py lays the rows and items out, _state_views.py names the view folders.
 
-  _state.py join --state-dir D --flow-home H --tracker-state labels|none
-  _state.py list --state-dir D --flow-home H --tracker-state labels|none --kind runs|gates [--item I]
-  _state.py row  --state-dir D --flow-home H --tracker-state labels|none --kind runs|gates --item I
+  _state.py join --state-dir D --flow-home H
+  _state.py list --state-dir D --flow-home H --kind runs|gates [--item I]
+  _state.py row  --state-dir D --flow-home H --kind runs|gates --item I
 
 join reads an item, or an array of items, on stdin and prints the same shape joined; an item whose
 id has no slug shape is unrecorded. list prints one compact row per line, by slug, of every open
@@ -40,11 +40,11 @@ def record_path(options, item):
 def joined(item, options, edge):
     item_id = item.get(ID_FIELD)
     if not (isinstance(item_id, str) and schema.item_slug_shaped(item_id)):
-        return Joined(join.joined_item(item, join.NO_RECORD, options.tracker_state), schema.DONE)
+        return Joined(join.joined_item(item, join.NO_RECORD), schema.DONE)
     stored = edge.read_record(record_path(options, item_id))
     if stored.outcome.code:
         return Joined(NO_ITEM, stored.outcome)
-    return Joined(join.joined_item(item, stored.record, options.tracker_state), schema.DONE)
+    return Joined(join.joined_item(item, stored.record), schema.DONE)
 
 
 def joined_items(items, options, edge):
@@ -91,7 +91,7 @@ def slug_row(slug, options, edge):
     if stored.record is not join.NO_RECORD:
         return Row(join.record_row(stored.record, options.kind), schema.DONE)
     view = edge.read_view("%s/%s%s" % (views.view_folder(options.flow_home, options.kind), slug, FILE_SUFFIX))
-    return Row(views.unrecorded_row(view, options.tracker_state), schema.DONE)
+    return Row(views.unrecorded_row(view), schema.DONE)
 
 
 def listed_slugs(options):

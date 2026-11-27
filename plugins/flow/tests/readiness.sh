@@ -3,7 +3,7 @@
 # ready.assignee and ready.categories read with their defaults, as one value or a list, and a bad
 # value exits 2 naming its key; an item a person holds (assigned to someone else, or in progress
 # on its tracker) is not ready and is noted why; an item the flow holds (a record claim, or a
-# tracker step with no record under tracker_state labels) is judged by its record; a record another
+# tracker step with no record under either tracker_state) is judged by its record; a record another
 # machine claimed is never ready, noted elsewhere; a failing me stands for no one, said once, and
 # an automatic pick says it too; and next.sh checks the policy again on a named item and on a pick
 # from an older ready list.
@@ -125,9 +125,10 @@ check "HeldItemAtDesignStep_StaysReadyThoughInProgress: a record claim with no w
 seeded="$(new_task "Step on the tracker, no record")"
 "$local_adapter/write-state.sh" "$seeded" step=design >/dev/null 2>&1
 write_frontmatter "$seeded" assignee bob
+config_with_lines 'tracker_state: labels'
 check "TrackerStepWithNoRecordUnderLabels_CountsAsHeld: a tracker step with no record is the flow's item, because under labels the tracker's state seeds the record" 'is_ready "$seeded"'
 config_with_lines 'tracker_state: none'
-check "TrackerStepWithNoRecordUnderNone_IsJudgedAsUnheld: a tracker step is no hold under none, because the tracker's state is not the flow's there" '! is_ready "$seeded"'
+check "TrackerStepWithNoRecordUnderNone_CountsAsHeld: a tracker step with no record is the flow's item under none too, because the tracker's state seeds the record in both modes" 'is_ready "$seeded"'
 config_with_lines ''
 
 echo "readiness: a record another machine holds"

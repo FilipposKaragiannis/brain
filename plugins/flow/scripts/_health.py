@@ -19,6 +19,7 @@
   _health.py review <state json> <review rows file> [<record path>]
   _health.py holders <items file>
   _health.py holds <items file> <reads file> <claims file> <runs file> <events.log> <old seconds>
+  _health.py labelled <items file>
 
 procs prints one line per process: pid, working directory (agents and verify runs only) and
 command, tab separated, and fails when ps lists nothing, so a missing ps never reads as every run
@@ -72,6 +73,10 @@ changes sharing no path with the item's; in a cycle the newest hold, by its last
 events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
 than the old seconds (seconds a dash when no `held` line dates it, which counts as old).
 
+labelled prints how many open items of the items file carry a flow label (step:, gate:, wt: or
+flow:), which only the tracker_state labels mirror writes, for the health line that names
+state.sh import --strip.
+
 bounded runs the command as the leader of its own session, with this process's stdin, stdout and
 stderr, and exits with its code. A command still running after the seconds gets TERM, sent to its
 whole process group, then KILL to what is left after the grace seconds, and the exit is 124. A
@@ -88,9 +93,12 @@ a silent log, say the loop was ended from outside: a loop that ends by itself pr
 session's text and how advance.sh ended, so a new result with lines after it is said as it is
 (advance.sh may have read it and failed, as when it cannot read the tracker)."""
 import calendar, json, os, re, signal, subprocess, sys, time
+from types import MappingProxyType
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _process  # noqa: E402
+import _state_schema as state_schema  # noqa: E402
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
 # A host's own servers, never an agent: the subcommand, the first word after the executable that is
@@ -718,52 +726,69 @@ def holds(items_path, reads_path, claims_path, runs_path, events, old):
         print("old\t%s\t%s\t%s\t%s" % (item_id, kept[item_id], now - since if since else "-", reason))
 
 
-def main():
-    command, args = sys.argv[1], sys.argv[2:]
-    if command == "procs":
-        procs()
-    elif command == "alive":
-        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "",
-                    idle_after=int(args[4]) if len(args) > 4 else None))
-    elif command == "present":
-        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "", skip_self=False))
-    elif command == "session":
-        print(session_line(snapshot(args[0]), args[1]))
-    elif command == "sessions":
-        sessions(snapshot(args[0]), int(args[1]), args[2:])
-    elif command == "owner":
-        print(owner())
-    elif command == "activity":
-        print(activity(*args))
-    elif command == "runs":
-        runs(sys.stdin if args[0] == "-" else open(args[0]), args[1], int(args[2]))
-    elif command == "last-next":
-        last_next(args[0])
-    elif command == "next-streaks":
-        next_streaks(args[0])
-    elif command == "works-in":
-        sys.exit(0 if works_in(args[0], args[1]) else 1)
-    elif command == "epoch":
-        print(epoch(args[0]))
-    elif command == "seconds":
-        print(seconds(*args))
-    elif command == "ago":
-        print(ago(int(args[0])))
-    elif command == "review":
-        rows = [json.loads(line) for line in open(args[1]) if line.strip()]
-        review(json.loads(args[0]), rows, args[2] if len(args) > 2 else None)
-    elif command == "holders":
-        holders(args[0])
-    elif command == "holds":
-        holds(args[0], args[1], args[2], args[3], args[4], int(args[5]))
-    elif command == "died":
-        died(*args[:5])
-    elif command == "spawn":
-        spawn(args[0], args[1:])
-    elif command == "bounded":
-        sys.exit(bounded(int(args[0]), int(args[1]), args[2:], time.monotonic))
-    else:
+def labelled(items: dict) -> int:
+    return sum(1 for item in items.values()
+               if any(isinstance(label, str) and label.startswith(state_schema.FLOW_LABEL_PREFIXES) for label in item.get("labels") or []))
+
+
+COMMAND_ARGUMENT = 1
+LABELLED_COMMAND = "labelled"
+PID_SLOT, IDLE_SECONDS_SLOT = 3, 4
+REVIEW_RECORD_SLOT = 2
+HOLDS_OLD_SECONDS_SLOT = 5
+DIED_ARGUMENT_COUNT = 5
+
+
+def optional_argument(arguments: list, slot: int) -> Optional[str]:
+    return arguments[slot] if len(arguments) > slot else None
+
+
+def alive_command(arguments: list) -> None:
+    idle_seconds = optional_argument(arguments, IDLE_SECONDS_SLOT)
+    print(alive(snapshot(arguments[0]), arguments[1], arguments[2], optional_argument(arguments, PID_SLOT) or "",
+                idle_after=None if idle_seconds is None else int(idle_seconds)))
+
+
+def present_command(arguments: list) -> None:
+    print(alive(snapshot(arguments[0]), arguments[1], arguments[2], optional_argument(arguments, PID_SLOT) or "", skip_self=False))
+
+
+def review_command(arguments: list) -> None:
+    rows = [json.loads(line) for line in open(arguments[1]) if line.strip()]
+    review(json.loads(arguments[0]), rows, optional_argument(arguments, REVIEW_RECORD_SLOT))
+
+
+COMMANDS = MappingProxyType({
+    "procs": lambda arguments: procs(),
+    "alive": alive_command,
+    "present": present_command,
+    "session": lambda arguments: print(session_line(snapshot(arguments[0]), arguments[1])),
+    "sessions": lambda arguments: sessions(snapshot(arguments[0]), int(arguments[1]), arguments[2:]),
+    "owner": lambda arguments: print(owner()),
+    "activity": lambda arguments: print(activity(*arguments)),
+    "runs": lambda arguments: runs(sys.stdin if arguments[0] == "-" else open(arguments[0]), arguments[1], int(arguments[2])),
+    "last-next": lambda arguments: last_next(arguments[0]),
+    "next-streaks": lambda arguments: next_streaks(arguments[0]),
+    "works-in": lambda arguments: sys.exit(0 if works_in(arguments[0], arguments[1]) else 1),
+    "epoch": lambda arguments: print(epoch(arguments[0])),
+    "seconds": lambda arguments: print(seconds(*arguments)),
+    "ago": lambda arguments: print(ago(int(arguments[0]))),
+    "review": review_command,
+    "holders": lambda arguments: holders(arguments[0]),
+    "holds": lambda arguments: holds(*arguments[:HOLDS_OLD_SECONDS_SLOT], int(arguments[HOLDS_OLD_SECONDS_SLOT])),
+    LABELLED_COMMAND: lambda arguments: print(labelled(open_items(arguments[0]))),
+    "died": lambda arguments: died(*arguments[:DIED_ARGUMENT_COUNT]),
+    "spawn": lambda arguments: spawn(arguments[0], arguments[1:]),
+    "bounded": lambda arguments: sys.exit(bounded(int(arguments[0]), int(arguments[1]), arguments[2:], time.monotonic)),
+})
+
+
+def main() -> None:
+    command, arguments = sys.argv[COMMAND_ARGUMENT], sys.argv[COMMAND_ARGUMENT + 1:]
+    handler = COMMANDS.get(command)
+    if handler is None:
         sys.exit("flow: unknown command %s" % command)
+    handler(arguments)
 
 
 main()

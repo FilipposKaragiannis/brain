@@ -1,24 +1,34 @@
 """Issues as raw adapter input, through GraphQL. See list.sh and read.sh.
 
-  _query.py list <repo> <marker> <open|all> <limit>   (narrowed by FLOW_SCOPE_* and FLOW_PICK_*, see matches)
-  _query.py read <repo> <marker> <number>
-  _query.py in-scope <repo> <marker> <number> <limit> (exit 0 inside FLOW_SCOPE_*, 1 outside, 3 when the search fails)
+  _query.py list <repository> <marker> <open|all> <limit> <logins>   (narrowed by FLOW_SCOPE_* and FLOW_PICK_*, see matches)
+  _query.py read <repository> <marker> <number> <logins>
+  _query.py in-scope <repository> <marker> <number> <limit> (exit 0 inside FLOW_SCOPE_*, 1 outside, 3 when the search fails)
 
 One paged query returns each issue with its labels, type, native parent, blockers, open sub-issue
 count, issue field
 values and project items, so a list costs one call per page, not one per issue. The field values
 are asked for only when GH_SIZE_FIELD, GH_PRIORITY_FIELD or GH_AREA_FIELD is set, and the project items only when
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
-comment is read for a single issue, and in a list only for issues that carry a flow label: an
-unstarted item keeps the last gate's answer there with no label. Prints one JSON object per
+comment is read for a single issue, and in a list only for issues that carry a flow label, or for
+every issue with FLOW_LIST_EVERY_STATE set (state.sh import): an unstarted item keeps the last
+gate's answer there with no label. The state comment is the first one that starts with the marker
+and that one of the logins wrote (_state_comment.py); empty logins, the ones trusted_logins in
+_gh.sh could not find, fail each comment read. Prints one JSON object per
 line. FLOW_GH_PAGE sets the page size (tests). The limit counts the issues the scope and the pick
 keep, their kinds too, so issues they leave out never use it up. A list cut at the limit says so
 and exits 0, or 1 with FLOW_LIST_WHOLE set, for a caller that needs every item (a board graph). A call GitHub fails with a 5xx is tried again
 (_call.py); a call that still fails ends the read with a message, never with half an item."""
-import json, os, re, sys
+import json
+import os
+import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+FLOW_SCRIPTS_FOLDER = "scripts"
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, FLOW_SCRIPTS_FOLDER))
 import _call  # noqa: E402
+import _state_comment  # noqa: E402
+import _state_schema  # noqa: E402
 
 WANT_FIELDS = bool(os.environ.get("GH_SIZE_FIELD") or os.environ.get("GH_PRIORITY_FIELD") or os.environ.get("GH_AREA_FIELD"))
 WANT_PROJECT = bool(os.environ.get("GH_PROJECT"))
@@ -87,7 +97,15 @@ SCOPE_RULES = filter_rules("FLOW_SCOPE_", scope_assignee())
 SCOPE_QUERY = os.environ.get("FLOW_SCOPE_QUERY", "").strip()
 ISSUE_STATES = {"open", "closed"}
 PAGE_SIZE = int(os.environ.get("FLOW_GH_PAGE", "50"))
+SINGLE_READ, EVERY_ISSUE, LABELLED_ISSUES = "single read", "every issue", "labelled issues"
+LIST_COMMENTS = EVERY_ISSUE if os.environ.get("FLOW_LIST_EVERY_STATE") else LABELLED_ISSUES
+LABEL_KEY_SEPARATOR = ":"
+FLOW_LABEL_KEYS = tuple(prefix.rstrip(LABEL_KEY_SEPARATOR) for prefix in _state_schema.FLOW_LABEL_PREFIXES)
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
+REST_PAGE_SIZE = 100
+MODE_ARGUMENT, REPOSITORY_ARGUMENT, MARKER_ARGUMENT = 1, 2, 3
+READ_LOGINS_ARGUMENT, LIST_LOGINS_ARGUMENT = 5, 6
+OWNER_SEPARATOR, OWNER_SPLIT_LIMIT = "/", 1
 
 
 def kind_of(node):
@@ -201,29 +219,35 @@ def graphql(query, **variables):
     return gh(*args)
 
 
-def state_comment(repo, issue, marker, always=False):
-    if not always and not any(l["name"].split(":")[0] in ("step", "gate", "wt", "flow") for l in issue["labels"]):
+def carries_flow_label(issue: dict) -> bool:
+    return any(label["name"].split(LABEL_KEY_SEPARATOR)[0] in FLOW_LABEL_KEYS for label in issue["labels"])
+
+
+def refuse_unread_state(reading: str, why: str) -> None:
+    """Without the comment the item would read as unstarted, with no attempts, no PR and no
+    touches: a wrong answer, so no answer. A read ends; a list leaves the issue out, so it is not
+    picked, shown or synced this round, and goes on."""
+    if reading == SINGLE_READ:
+        sys.exit("flow: %s" % why)
+    sys.stderr.write("flow: %s, so the list leaves it out\n" % why)
+    return None
+
+
+def state_comment(repository: str, issue: dict, rule: _state_comment.StateCommentRule, reading: str) -> Optional[dict]:
+    if reading == LABELLED_ISSUES and not carries_flow_label(issue):
         return {}
-    pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
+    number = issue["number"]
+    if not rule.logins:
+        return refuse_unread_state(reading, "cannot tell whose state comments count on gh#%d (set github.answer_from, "
+                                             "or log in with gh auth login)" % number)
+    pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=%d" % (repository, number, REST_PAGE_SIZE))
     if pages is None:
-        # Without the comment the item would read as unstarted, with no attempts, no PR and no
-        # touches: a wrong answer, so no answer. A read ends; a list leaves the issue out, so it
-        # is not picked, shown or synced this round, and goes on.
-        if always:
-            sys.exit("flow: cannot read the comments of gh#%d" % issue["number"])
-        sys.stderr.write("flow: cannot read the comments of gh#%d, so the list leaves it out\n" % issue["number"])
-        return None
-    for c in [c for page in pages for c in page]:
-        if marker in c.get("body", ""):
-            m = re.search(r"```json\n(.*?)\n```", c["body"], re.S)
-            try:
-                return json.loads(m.group(1)) if m else {}
-            except ValueError:
-                return {}
-    return {}
+        return refuse_unread_state(reading, "cannot read the comments of gh#%d" % number)
+    found = _state_comment.state_comments(rule, pages)
+    return _state_comment.state_of(found[0]) if found else {}
 
 
-def raw(repo, node, marker, always=False):
+def raw(repository: str, node: dict, rule: _state_comment.StateCommentRule, reading: str) -> Optional[dict]:
     fields = {}
     for v in (node.get("issueFieldValues") or {}).get("nodes", []):
         name = (v.get("field") or {}).get("name")
@@ -243,13 +267,13 @@ def raw(repo, node, marker, always=False):
                            "status": (p.get("fieldValueByName") or {}).get("name", "")}
                           for p in (node.get("projectItems") or {}).get("nodes", [])],
     }
-    issue["state_comment"] = state_comment(repo, issue, marker, always)
+    issue["state_comment"] = state_comment(repository, issue, rule, reading)
     return None if issue["state_comment"] is None else issue
 
 
 def main():
-    mode, repo, marker = sys.argv[1], sys.argv[2], sys.argv[3]
-    owner, name = repo.split("/", 1)
+    mode, repository, marker = sys.argv[MODE_ARGUMENT], sys.argv[REPOSITORY_ARGUMENT], sys.argv[MARKER_ARGUMENT]
+    owner, name = repository.split(OWNER_SEPARATOR, OWNER_SPLIT_LIMIT)
     if mode == "in-scope":
         sys.exit(in_scope(owner, name, int(sys.argv[4]), int(sys.argv[5])))
     if mode == "read":
@@ -257,18 +281,19 @@ def main():
         node = data and data["data"]["repository"]["issue"]
         if not node:
             sys.exit(1)
-        print(json.dumps(raw(repo, node, marker, always=True)))
+        print(json.dumps(raw(repository, node, _state_comment.rule_of(marker, sys.argv[READ_LOGINS_ARGUMENT]), SINGLE_READ)))
         return
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"
     limit, after, seen = int(sys.argv[5]), None, 0
+    rule = _state_comment.rule_of(marker, sys.argv[LIST_LOGINS_ARGUMENT])
     while True:
         issues = issue_page(owner, name, states, PAGE_SIZE, after)
         if not issues:
             sys.exit(1)
         kept = [node for node in issues["nodes"] if matches(node, SCOPE_RULES) and matches(node, PICK_RULES)]
         for node in kept[:limit - seen]:
-            issue = raw(repo, node, marker)
+            issue = raw(repository, node, rule, LIST_COMMENTS)
             if issue is not None:
                 print(json.dumps(issue))
         seen += len(kept)

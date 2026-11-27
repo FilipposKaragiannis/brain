@@ -4,9 +4,7 @@ plugins/flow/adapters/github/_call.py	S603	1
 plugins/flow/adapters/github/_call.py	S607	1
 plugins/flow/adapters/github/_mutate.py	E401	1
 plugins/flow/adapters/github/_mutate.py	I001	1
-plugins/flow/adapters/github/_query.py	E401	1
-plugins/flow/adapters/github/_query.py	E741	2
-plugins/flow/adapters/github/_query.py	I001	1
+plugins/flow/adapters/github/_query.py	E741	1
 plugins/flow/adapters/jira/_http.py	S603	1
 plugins/flow/adapters/jira/_jira.py	E741	5
 plugins/flow/adapters/local/_item.py	E702	10

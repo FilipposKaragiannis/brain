@@ -123,6 +123,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/branch.sh"
+. "$FLOW_PLUGIN/lib/pull_request.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
@@ -911,11 +912,9 @@ read_pull_request_state() {
   pull_request_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pull_request_view" state 2>/dev/null
 }
 
-# link_pr <item> <pr>: the PR on the tracker (adapter link-pr), then in the item's flow record with
-# the pr_host the tracker took (record_linked_pr).
+# The sweep runs no step, so no host is known: comments.sh author_host reads it from the PR body.
 link_pr() {
-  adapter link-pr "$1" "$2" >/dev/null || { echo "flow: could not record $2 on $1" >&2; return 1; }
-  record_linked_pr "$1" >/dev/null || echo "flow: could not write state for $1" >&2
+  link_and_record_pull_request "$1" "$2" "" || echo "flow: could not write state for $1" >&2
 }
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.
@@ -1579,13 +1578,26 @@ health_epic_branches() {
 
 # health_list: every tracker's open items, one JSON list per line, in $health_items, which
 # health_splits, health_epic_branches and health_holds read; the trackers whose list failed go in
-# $health_list_failed.
+# $health_list_failed. FLOW_LIST_STATE_WHOLE fails a list that cannot tell whose stored state to
+# trust, as it would leave items out, so their holders read skip and not gone.
 health_list() {
   health_items="$home/health/.items.$$"; health_list_failed=""
   for a in $health_trackers; do
-    if hl_out="$(items_listed "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
+    if hl_out="$(FLOW_LIST_STATE_WHOLE=1 items_listed "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
     else health_list_failed="$health_list_failed $a "; fi
   done > "$health_items"
+}
+
+# Under tracker_state labels the mirror writes these labels, and while a tracker's list failed
+# the count is partial: either way the count last said stands.
+health_flow_labels() {
+  health_flow_labels_mode="$(tracker_state)" || return 0
+  [ "$health_flow_labels_mode" = labels ] && return 0
+  [ -z "$health_list_failed" ] || return 0
+  health_flow_labels_count="$(hpy labelled "$health_items")"
+  if [ "$health_flow_labels_count" -eq 0 ]; then health_cleared flow-labels; return 0; fi
+  health_changed flow-labels "$health_flow_labels_count" || return 0
+  health_say pool "$health_flow_labels_count open item(s) still carry flow labels (step:, gate:, wt: or flow:), which the flow no longer writes; state.sh import --strip records their state and takes the labels off"
 }
 
 # health_holds: a planned hold (state.held_by and held_reason) that is stale or wrong is cleared,
@@ -1808,6 +1820,7 @@ cmd_health() {
   fi
   health_gates
   health_list
+  health_flow_labels
   health_splits
   health_epic_branches
   health_holds

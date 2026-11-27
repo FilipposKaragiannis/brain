@@ -8,6 +8,11 @@
 # A plan step also records its changes and, done with a hold, holds the item behind another
 # (hold.sh set; skills/plan/holds.md); done without one, it lifts a hold an earlier plan set.
 # A plan step that ends in tracker-tasks mode with children open splits the item (steward.sh split).
+# A re-size that raises no gate writes the record's size_estimate (the tracker's size only under
+# tracker_state labels, which mirrors every write) and posts one plain comment with the old and the
+# new size, and the profile when the new size selects another.
+# A pr step links the PR its result names on the tracker (adapter link-pr) and records it, with the
+# host the run started on, unless the record already holds it (lib/pull_request.sh).
 # A pr step done with no PR recorded looks for one on the task branch, as the sweep does: one found
 # is recorded and the merge gate raised; with none and nothing to merge (a clean tree and no diff
 # against the claim's base) the item closes and its worktree is released, no merge gate raised;
@@ -69,13 +74,13 @@ data="$(item_read "$item")" || die "cannot read $item"
 attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; 0*) attempts="${attempts#"${attempts%%[!0]*}"}"; attempts="${attempts:-0}" ;; esac
 size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
 kind="$(json_get "$data" kind)"
-# The worker's link-pr writes only the tracker: the record takes the PR the tracker holds. The
-# pr step's worker may be unable to record its PR (a local item file lies outside its sandbox):
-# the URL its result names is linked here when the tracker holds none.
+# The pr step's worker cannot write the record (state.dir lies outside its sandbox), so it reports
+# its PR in the result. The record check keeps a retry from linking the same PR twice.
 if [ "$step" = pr ]; then
-  if linked="$(record_linked_pr "$item")" && [ -z "$linked" ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ]; then
-    adapter link-pr "$item" "$pr_url" >/dev/null || echo "advance: could not record $pr_url on $item" >&2
-    record_linked_pr "$item" >/dev/null
+  result_pull_request="$(json_get "$result" pr)"
+  if [ -n "$result_pull_request" ] && [ "$(record_get "$item" pr)" != "$result_pull_request" ]; then
+    link_and_record_pull_request "$item" "$result_pull_request" "$(json_get "$run" host)" \
+      || echo "advance: could not write $result_pull_request into the flow record of $item" >&2
   fi
   data="$(item_read "$item")" || die "cannot read $item"
 fi
@@ -187,8 +192,8 @@ ${summary:-$step done.}" ${resized:+--} ${resized:+"$resized"} ${resized:+"profi
 }
 
 link_branch_pull_request() {
-  adapter link-pr "$item" "$1" >/dev/null || echo "advance: could not record $1 on $item" >&2
-  record_linked_pr "$item" >/dev/null || echo "advance: could not copy $1 into the flow record of $item" >&2
+  link_and_record_pull_request "$item" "$1" "$(json_get "$run" host)" \
+    || echo "advance: could not write $1 into the flow record of $item" >&2
 }
 
 # settle_unrecorded_pull_request: for a pr step done with no PR in its result or on the item, records
@@ -331,7 +336,7 @@ rm -f "$asked_file"
 feel_test=0
 [ "$step" = "$(json_get "$profiles" feel_test_step)" ] && [ "$(json_get "$result" feel_test)" = "true" ] && feel_test=1
 # re-size at the step boundary, then move on. An epic has no size: every size selects the one
-# epic profile and next.sh clears the size it starts with, so a size its step names re-sizes nothing.
+# epic profile, so a size its step names re-sizes nothing.
 next_profile="$profile"
 if [ "$kind" != epic ] && [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   old_i="$(size_index "$size")"; new_i="$(size_index "$new_size")"
@@ -344,9 +349,10 @@ ${summary:-No summary.}" -- "size=$new_size" "step=$step" "profile=$(profile_sel
     size="$new_size"; report 4 "" plan-approval
   fi
   resized="size=$new_size"
-  size="$new_size"
   next_profile="$(profile_select "$kind" "$new_size")"
-  [ "$next_profile" = "$profile" ] || adapter comment "$item" --body "Re-sized $size: profile $profile -> $next_profile, continuing with the added depth." >/dev/null
+  profile_change=""; [ "$next_profile" = "$profile" ] || profile_change=" Profile $profile -> $next_profile."
+  adapter comment "$item" --body "Re-sized $size -> $new_size at step $step.$profile_change" >/dev/null
+  size="$new_size"
 fi
 following="$(profile_steps "$next_profile" | awk -v s="$step" 'f {print; exit} $0 == s {f = 1}')"
 if [ -z "$following" ] && [ "$next_profile" != "$profile" ]; then

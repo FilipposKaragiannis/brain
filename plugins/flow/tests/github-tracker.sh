@@ -14,18 +14,18 @@ trap 'sandbox_close $?' EXIT
 echo "github blips (fake gh)"
 # $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.
 export FLOW_GH_RETRY_WAIT="0 0"
-printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+printf '1\ngh: HTTP 502\napi graphql\n' > "$FAKE_GH_DIR/fail"
 check_all "gh read survives one 502 and says so" '[ "$("$P/adapters/github/read.sh" "gh#10" 2>"$work/gh-err" | jget title)" = "Epic" ] && grep -q "flow: gh: gh: HTTP 502; trying again in 0s" "$work/gh-err"'
-printf '1\ngh: HTTP 404: Not Found\n' > "$FAKE_GH_DIR/fail"
+printf '1\ngh: HTTP 404: Not Found\napi graphql\n' > "$FAKE_GH_DIR/fail"
 check_all "gh read: a 404 is final at once" '! "$P/adapters/github/read.sh" "gh#10" >/dev/null 2>"$work/gh-err" && ! grep -q "trying again" "$work/gh-err" && grep -q "cannot read gh#10" "$work/gh-err"'
-printf '9\ngh: HTTP 504: 504 Gateway Timeout\n' > "$FAKE_GH_DIR/fail"; : > "$FAKE_GH_DIR/calls.log"
+printf '9\ngh: HTTP 504: 504 Gateway Timeout\napi graphql\n' > "$FAKE_GH_DIR/fail"; : > "$FAKE_GH_DIR/calls.log"
 check_all "gh read: three 5xx end it with a word, not a traceback" '! "$P/adapters/github/read.sh" "gh#10" >/dev/null 2>"$work/gh-err" && grep -q "cannot read gh#10" "$work/gh-err" && ! grep -q Traceback "$work/gh-err" && [ "$(grep -c "^api graphql" "$FAKE_GH_DIR/calls.log")" -eq 3 ]'
 printf '1\ngh: HTTP 503\n' > "$FAKE_GH_DIR/fail"
 "$P/adapters/github/comment.sh" 'gh#10' --body "after the blip" 2>"$work/gh-err"
 check_all "gh comment: a body from stdin survives a retry, once" 'grep -q "trying again" "$work/gh-err" && python3 -c "import json; cs=[c[\"body\"] for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][0].get(\"comments\",[])]; assert cs.count(\"after the blip\") == 1, cs"'
-printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+printf '1\ngh: HTTP 502\nissues/10/comments\n' > "$FAKE_GH_DIR/fail"
 check_all "gh write-state: only the good try'\''s stdout is read (the 502 body is not)" '"$P/adapters/github/write-state.sh" "gh#10" step=design attempts=2 2>"$work/gh-err" && grep -q "trying again" "$work/gh-err" && [ "$("$P/adapters/github/read.sh" "gh#10" | jget state.attempts)" = "2" ]'
-printf '3\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+printf '3\ngh: HTTP 502\nissues/10/comments\n' > "$FAKE_GH_DIR/fail"
 check_all "gh write-state: an unreadable state comment stops the write, so no second comment starts from nothing" '! "$P/adapters/github/write-state.sh" "gh#10" step=implement >/dev/null 2>"$work/gh-err" && grep -q "cannot read the comments of gh#10" "$work/gh-err"'
 rm -f "$FAKE_GH_DIR/fail"
 item="$("$P/adapters/github/read.sh" 'gh#10')"
@@ -100,12 +100,12 @@ check "gh a Parent: line with a colon names the parent" [ "$("$P/adapters/github
 check "gh an unstarted item lists the fields it lacks" sh -c "grep -qx 'gh#33 task S - priority' '$work/ghlist' && grep -qx 'gh#34 task - P1 size' '$work/ghlist'"
 check "gh an epic needs no size" grep -qx 'gh#30 epic - P1 -' "$work/ghlist"
 check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghlist"
-mirror_on "no step or gate is read from the tracker's labels" check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
+check "ReadyList_OmitsUnfitItemsAndOrdersByPriority: an item with missing fields, an open blocker, a gate or open sub-issues is left out and priority orders the rest, because only an item an agent can start now is ready" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
 check_all "graph: a GitHub epic's children come from the item list, native parent or Parent: line" '[ "$("$P/scripts/board.sh" --graph gh#39 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#40'\'']" ] && [ "$("$P/scripts/board.sh" --graph gh#30 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#31'\'']" ]'
 sed -i.bak 's/^  priority_order: .*/  priority_order: [P2, P0, P1, P3]/' .flow/config.yaml
 check_all "graph priorities: GitHub columns follow ready.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
 mv .flow/config.yaml.bak .flow/config.yaml
-printf '1\ngh: HTTP 401: Bad credentials\n' > "$FAKE_GH_DIR/fail"
+printf '1\ngh: HTTP 401: Bad credentials\napi graphql\n' > "$FAKE_GH_DIR/fail"
 check_all "graph: a failed adapter list stops the graph and shows the error" '! "$P/scripts/board.sh" --graph gh#39 >/dev/null 2>"$work/graph.err" && grep -q "Bad credentials" "$work/graph.err" && grep -q "no graph" "$work/graph.err" && ! grep -q "not an open item" "$work/graph.err"'
 cp .flow/config.yaml .flow/config.yaml.bak && awk '{ print } /^  project: 1$/ { print "  limit: 3" }' .flow/config.yaml.bak > .flow/config.yaml
 check_all "graph: a GitHub list cut at github.limit stops the graph and says so" '! "$P/scripts/board.sh" --graph priorities >"$work/graph.out" 2>"$work/graph.err" && [ ! -s "$work/graph.out" ] && grep -q "stopped at github.limit 3" "$work/graph.err" && grep -q "no graph" "$work/graph.err"'
@@ -353,8 +353,6 @@ https://chatgpt.com/codex/tasks/task_e_6a1f"; "$P/scripts/comments.sh" request-r
 check "request-review: a PR whose body says Codex wrote it asks the codex list" [ "$(asked)" = "mona" ]
 pr_as flow/x "Adds the slide."; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: a PR whose author host is unknown asks the default list" [ "$(asked)" = "hubot" ]
-env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
-check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
 record set 'gh#21' pr=https://gh/pull/91 pr_host=codex >/dev/null
 pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]
@@ -428,6 +426,135 @@ check "chase: a Copilot re-ask that left no timeline event still counts toward m
 python3 -c "import json,time; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['reviews']=[{'user': {'login': 'copilot-pull-request-reviewer[bot]', 'type': 'Bot'}, 'submitted_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}]; json.dump(d, open(p,'w'))"
 check "reviews: a Copilot review after the request answers" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"reviewer\": \"copilot\".*\"answered\": true'"
 cp "$work/config.reviews" .flow/config.yaml
+
+echo "github state comment authors (fake gh)"
+cp "$FAKE_GH_DIR/issues.json" "$work/issues.authors"; cp .flow/config.yaml "$work/config.authors"
+state_marker="$(github_state_marker)" || exit 1
+gh_user="$(gh api user -q .login)"
+forger=mallory; teammate=teammate
+python3 - "$FAKE_GH_DIR/issues.json" "$state_marker" "$gh_user" "$forger" "$teammate" <<'PY'
+import json, sys
+path, marker, gh_user, forger, teammate = sys.argv[1:]
+def state(login, comment_id, fields):
+    return {"id": comment_id, "body": "%s\n```json\n%s\n```\n" % (marker, json.dumps(fields)), "user": {"login": login}}
+def issue(number, labels, comments):
+    return {"number": number, "title": "Authors %d" % number, "body": "", "state": "OPEN", "labels": labels,
+            "url": "https://gh/%d" % number, "comments": comments}
+json.dump({"issues": [
+    issue(50, ["step:plan"], [state(forger, 5001, {"step": "pr", "profile": "task-S"})]),
+    issue(51, ["step:plan"], [state(forger, 5101, {"profile": "task-S"}), state(gh_user, 5102, {"profile": "task-L"})]),
+    issue(52, ["step:plan"], [state(teammate, 5201, {"profile": "task-M"})]),
+    issue(53, [], []),
+    issue(54, ["step:plan"], [dict(state(gh_user, 5401, {"profile": "task-S"}), body="> " + state(gh_user, 5401, {"profile": "task-S"})["body"])]),
+    issue(55, ["step:plan"], [dict(state(gh_user, 5501, {"profile": "task-S"}), user=None), state(gh_user, 5502, {"profile": "task-L"})]),
+    issue(56, ["step:plan"], [{key: value for key, value in state(gh_user, 5601, {"profile": "task-S"}).items() if key != "user"}, state(gh_user, 5602, {"profile": "task-L"})]),
+]}, open(path, "w"))
+PY
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nnotify:\n  desktop: false\n' > .flow/config.yaml
+authored_states() { python3 -c 'import json, re, sys
+issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
+for comment in issue.get("comments", []):
+    if comment["body"].startswith(sys.argv[4]) and (comment.get("user") or {}).get("login") == sys.argv[3]:
+        print(json.dumps(json.loads(re.search(r"```json\n(.*?)\n```", comment["body"], re.S).group(1)), sort_keys=True))' \
+  "$FAKE_GH_DIR/issues.json" "$1" "$2" "$state_marker"; }
+marker_comment_count() { authored_states "$1" "$2" | grep -c .; }
+listed_profile() { "$P/adapters/github/list.sh" | python3 -c 'import json, sys
+print(next((item["state"]["profile"] for item in json.load(sys.stdin) if item["id"] == sys.argv[1]), "not listed"))' "$1"; }
+listed_ids() { "$P/adapters/github/list.sh" 2>/dev/null | python3 -c 'import json, sys; print(" ".join(item["id"] for item in json.load(sys.stdin)))'; }
+code_of() { "$@" >/dev/null 2>&1; echo $?; }
+issue_keeps_comment() { python3 -c 'import json, sys
+issue = [issue for issue in json.load(open(sys.argv[1]))["issues"] if issue["number"] == int(sys.argv[2])][0]
+sys.exit(0 if any(comment["id"] == int(sys.argv[3]) for comment in issue.get("comments", [])) else 1)' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
+check "ReadOfAMarkerCommentByAnotherLogin_GivesNoProfile: a state comment the gh user did not write sets nothing, because anyone can comment on a public issue" \
+  [ -z "$("$P/adapters/github/read.sh" 'gh#50' | jget state.profile)" ]
+check "ListOfAMarkerCommentByAnotherLogin_GivesNoProfile: the list reads no state from a comment the gh user did not write, because anyone can comment on a public issue" \
+  [ -z "$(listed_profile 'gh#50')" ]
+check "ReadOfAReplyThatQuotesTheMarker_GivesNoProfile: a comment that quotes the marker is no state comment, because only one the flow wrote starts with it" \
+  [ -z "$("$P/adapters/github/read.sh" 'gh#54' | jget state.profile)" ]
+check "ReadPastAMarkerCommentByAnotherLogin_TakesTheGhUsersComment: a forged comment before the flow's own hides nothing, because the read keeps looking for a trusted one" \
+  [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.profile)" = task-L ]
+for authorless in 'null author:gh#55' 'no author key:gh#56'; do
+  check "ReadPastAMarkerCommentWithNoAuthor_TakesTheGhUsersComment (${authorless%%:*}): a comment whose author is missing is passed over, because only a known trusted login writes state" \
+    [ "$("$P/adapters/github/read.sh" "${authorless#*:}" | jget state.profile)" = task-L ]
+done
+authorless_comment_id=5501
+"$P/adapters/github/strip-state.sh" 'gh#55' >/dev/null 2>&1
+check "StripStatePastAMarkerCommentWithNoAuthor_DeletesTheGhUsersComment: the gh user's state comment is gone, because it is the issue's state comment" \
+  [ "$(marker_comment_count 55 "$gh_user")" = 0 ]
+check "StripStatePastAMarkerCommentWithNoAuthor_KeepsIt: the comment whose author is missing is still on the issue, because the flow deletes only what a trusted login wrote" \
+  issue_keeps_comment 55 "$authorless_comment_id"
+# shellcheck disable=SC2034 # the check's condition reads it
+forged_state="$(authored_states 50 "$forger")"
+"$P/adapters/github/write-state.sh" 'gh#50' attempts=3 >/dev/null 2>&1
+check_all "WriteStateBesideOnlyAForgedComment_LeavesItAsItWas: the forged comment is not patched, because the flow writes only its own" \
+  '[ -n "$forged_state" ] && [ "$(authored_states 50 "$forger")" = "$forged_state" ]'
+check "WriteStateBesideOnlyAForgedComment_PostsItsOwn: the gh user's state comment now holds the write, because a forged one is no state comment" \
+  [ "$(authored_states 50 "$gh_user" | jget attempts)" = 3 ]
+"$P/adapters/github/write-state.sh" 'gh#51' attempts=4 >/dev/null 2>&1
+check "WriteStatePastAForgedComment_PatchesTheTrustedOne: the gh user's comment after the forged one holds the write, because it is the issue's state comment" \
+  [ "$(authored_states 51 "$gh_user" | jget attempts)" = 4 ]
+check "WriteStatePastAForgedComment_PostsNoSecond: the issue keeps one state comment by the gh user, because the trusted one was found" \
+  [ "$(marker_comment_count 51 "$gh_user")" = 1 ]
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  answer_from: [%s]\nnotify:\n  desktop: false\n' "$teammate" > .flow/config.yaml
+check "AnswerFromListingALogin_TrustsItsStateComment: a state comment by a login in github.answer_from is read, because a team lists every login its machines write under" \
+  [ "$("$P/adapters/github/read.sh" 'gh#52' | jget state.profile)" = task-M ]
+check "AnswerFromLeavingOutTheGhUser_IgnoresItsStateComment: the gh user's state comment is not read when github.answer_from leaves it out, because the list names everyone trusted" \
+  [ -z "$("$P/adapters/github/read.sh" 'gh#51' | jget state.profile)" ]
+check "ListWithAnswerFromListingALogin_TrustsItsStateComment: the list takes the profile from a state comment by a login in github.answer_from, because the list reads the comments apart from read.sh" \
+  [ "$(listed_profile 'gh#52')" = task-M ]
+check "ListWithAnswerFromLeavingOutTheGhUser_IgnoresItsStateComment: the list reads no profile from the gh user's state comment when github.answer_from leaves it out, because the list names everyone trusted" \
+  [ -z "$(listed_profile 'gh#51')" ]
+write_state_code="$(code_of "$P/adapters/github/write-state.sh" 'gh#53' attempts=1)"
+check "WriteStateWithTheGhUserOutsideAnswerFrom_Refuses: a first state comment the readers would ignore is refused, because the next write would post one more" \
+  [ "$write_state_code" -ne 0 ]
+check "WriteStateWithTheGhUserOutsideAnswerFrom_PostsNoComment: the issue gets no state comment, because the gh user's would be ignored" \
+  [ "$(marker_comment_count 53 "$gh_user")" = 0 ]
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  answer_from: [%s, %s]\nnotify:\n  desktop: false\n' "$teammate" "$gh_user" > .flow/config.yaml
+"$P/adapters/github/write-state.sh" 'gh#52' attempts=5 >/dev/null 2>&1
+check "WriteStateBesideATeammatesStateComment_PatchesIt: the teammate's comment holds the write, because a login github.answer_from lists writes the issue's state comment" \
+  [ "$(authored_states 52 "$teammate" | jget attempts)" = 5 ]
+check "WriteStateBesideATeammatesStateComment_PostsNoSecond: the gh user posts no state comment of its own, because a second one would split the state" \
+  [ "$(marker_comment_count 52 "$gh_user")" = 0 ]
+"$P/adapters/github/strip-state.sh" 'gh#52' >/dev/null 2>&1
+check "StripStateOfATeammatesStateComment_DeletesIt: the teammate's state comment is gone, because a login github.answer_from lists wrote it for the flow" \
+  [ "$(marker_comment_count 52 "$teammate")" = 0 ]
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nnotify:\n  desktop: false\n' > .flow/config.yaml
+gh_user_lookups_failing=99
+printf '%s\ngh: HTTP 401: Bad credentials\napi user\n' "$gh_user_lookups_failing" > "$FAKE_GH_DIR/fail"
+check "ReadWithNoTrustedLogin_Stops: a read that cannot tell whose state comment counts fails, because no answer beats a wrong one" \
+  [ "$(code_of "$P/adapters/github/read.sh" 'gh#51')" -ne 0 ]
+# shellcheck disable=SC2034 # the check's condition reads it
+ids_listed_without_login=" $(listed_ids) "
+check_all "ListWithNoTrustedLogin_LeavesOutAnIssueWhoseCommentItReads: a labelled issue drops out of the list, because its state cannot be told" \
+  'case "$ids_listed_without_login" in *" gh#51 "*) false ;; *) true ;; esac'
+check_all "ListWithNoTrustedLogin_KeepsAnIssueWhoseCommentItSkips: an unlabelled issue still lists, because the list reads no comment for it" \
+  'case "$ids_listed_without_login" in *" gh#53 "*) true ;; *) false ;; esac'
+check "WriteStateWithNoTrustedLogin_Fails: a write that cannot tell whose state comment counts stops, because it would take none for no comment" \
+  [ "$(code_of "$P/adapters/github/write-state.sh" 'gh#53' attempts=1)" -ne 0 ]
+check "WriteStateWithNoTrustedLogin_PostsNoComment: the issue gets no state comment, because a second one beside the real one would split the state" \
+  [ "$(marker_comment_count 53 "$gh_user")" = 0 ]
+check "StripStateWithNoTrustedLogin_Fails: a strip that cannot tell whose state comment counts stops, because it deletes only the flow's own" \
+  [ "$(code_of "$P/adapters/github/strip-state.sh" 'gh#51')" -ne 0 ]
+check "StripStateWithNoTrustedLogin_KeepsTheStateComment: the gh user's state comment is still there, because the strip stopped before it" \
+  [ "$(marker_comment_count 51 "$gh_user")" = 1 ]
+rm -f "$FAKE_GH_DIR/fail"
+commented_profile=task-M
+python3 - "$FAKE_GH_DIR/issues.json" "$state_marker" "$gh_user" "$commented_profile" <<'PY'
+import json, sys
+path, marker, gh_user, profile = sys.argv[1:]
+data = json.load(open(path))
+for number, label in ((60, "step:plan"), (61, "gate:ambiguity"), (62, "wt:wt-1"), (63, "flow:task-L")):
+    data["issues"].append({"number": number, "title": "Label kind %d" % number, "body": "", "state": "OPEN",
+                           "labels": [label], "url": "https://gh/%d" % number,
+                           "comments": [{"id": number * 100, "body": "%s\n```json\n%s\n```\n" % (marker, json.dumps({"profile": profile})),
+                                         "user": {"login": gh_user}}]})
+json.dump(data, open(path, "w"))
+PY
+for label_kind in 'step:gh#60' 'gate:gh#61' 'wt:gh#62' 'flow:gh#63'; do
+  check "ListOfAnIssueWithOneFlowLabel_ReadsItsStateComment (${label_kind%%:*}): the list takes the profile from the state comment, because every flow label kind marks an issue the flow holds state for" \
+    [ "$(listed_profile "${label_kind#*:}")" = "$commented_profile" ]
+done
+cp "$work/issues.authors" "$FAKE_GH_DIR/issues.json"; cp "$work/config.authors" .flow/config.yaml
 
 [ "$fails" -eq 0 ] && { echo "github-tracker: ok"; exit 0; }
 echo "github-tracker: $fails failed"; exit 1

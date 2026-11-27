@@ -109,7 +109,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    here. `reviews.reviewers` in `.flow/config.yaml` is one list for every PR, or a map: `claude`
    lists the reviewers of a PR Claude wrote, `codex` of one Codex wrote, `default` of a PR whose
    author host is unknown or has no list (unset, codex and claude). The author host is the
-   item's `pr_host`, recorded by `link-pr`, else the PR body's footer.
+   item's `pr_host`, recorded by the orchestrator from the host the pr step ran on, else the PR
+   body's footer.
 9. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
    to, and the interrupted work is committed or named in a reply.
 10. End with one report: the owner's answer carried out or raised again, the conflict merge, the checks

@@ -1,7 +1,27 @@
-# What a pr step done with no PR recorded leaves on its task branch, one word for the caller to act
-# on: found <url> (a PR whose head is the branch), nothing-to-merge, unopened (changes and no PR) or
-# unanswered (changes, and gh could not say whether a PR exists). Sourced after lib/flow.sh by
-# scripts/advance.sh.
+# The PR of an item (a PR URL or #<n>, any other text refused): linked on its tracker and written
+# to its record by the one function the orchestrator scripts call, and what a pr step done with no
+# PR recorded leaves on its task branch,
+# one word for the caller to act on: found <url> (a PR whose head is the branch), nothing-to-merge,
+# unopened (changes and no PR) or unanswered (changes, and gh could not say whether a PR exists).
+# Sourced after lib/flow.sh by scripts/advance.sh, scripts/epic-pr.sh and scripts/steward.sh.
+
+link_and_record_pull_request() (
+  [ $# -eq 3 ] || die "usage: link_and_record_pull_request <item> <url> <host>" "$EXIT_USAGE"
+  pull_request_shaped "$2" || die "$2 is no PR URL or #<n>, so $1 links no PR" "$EXIT_USAGE"
+  adapter link-pr "$1" "$2" </dev/null >/dev/null || echo "flow: the tracker of $1 did not take $2" >&2
+  case "$3" in claude|codex) link_and_record_host="$3" ;; *) link_and_record_host="" ;; esac
+  record_set "$1" "pr=$2" "pr_host=$link_and_record_host" </dev/null
+)
+
+pull_request_shaped() {
+  case "$1" in
+    "#"*) pull_request_shaped_number="${1#"#"}" ;;
+    https://*/pull/*) pull_request_shaped_number="${1##*/pull/}" ;;
+    *) return 1 ;;
+  esac
+  case "$1" in *[!A-Za-z0-9./:#_-]*) return 1 ;; esac
+  case "$pull_request_shaped_number" in ""|*[!0-9]*) return 1 ;; esac
+}
 
 # pull_request_on_branch <home> <branch>: the URL of a PR whose head is the branch, or nothing; fails
 # when gh cannot answer. The same lookup as the sweep's.

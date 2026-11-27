@@ -6,6 +6,8 @@
 . "$(dirname "$0")/_base_fixture.sh"
 unset FLOW_TRACKER_STATE
 
+# Spelt here, not read from _item.py, so a key the strip stops taking off fails the check.
+stripped_state_keys() { printf '%s' 'step profile worktree attempts gate last_event pr pr_host touches changes held_by held_reason answered asked answer answered_at answer_pending gate_from base branch'; }
 record() { "$plugin/scripts/state.sh" "$@"; }
 take() { env FLOW_MACHINE="$1" sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "$1"' take "$2"; }
 closed_record() { open_record="$(record path "$1")"; printf '%s/closed/%s' "$(dirname "$open_record")" "$(basename "$open_record")"; }
@@ -21,8 +23,9 @@ canonical() { python3 -c 'import json,sys
 text=sys.stdin.read().rstrip("\n")
 try: print(json.dumps(json.loads(text), sort_keys=True))
 except ValueError: print(text)'; }
+# Size is left out: a record seeded by a write that is no start holds no size, the tracker's own.
 first_key_differing_from_tracker() {
-  tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["state"]))')"
+  tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(key for key in json.load(sys.stdin)["state"] if key != "size"))')"
   [ -n "$tracker_keys" ] && for key in $tracker_keys; do
     [ "$(record get "$1" "$key" | canonical)" = "$(tracker "$1" "$key" | canonical)" ] || { echo "$key differs"; return 1; }
   done

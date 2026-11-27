@@ -160,7 +160,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  # scope:                      # every list keeps only these: assignee, status, labels, kinds, or query alone"
         echo "  # project: 1                  # the project whose Status follows the flow state"
         echo "  # claim_label: in-progress    # without a project, the label an item in progress carries (off)"
-        echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
+        echo "  # answer_from: [login]        # whose /answer comments clear a gate and whose state comments count (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
         echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
       echo "# Jira Cloud as a tracker: set adapters.default (or adapters.<kind>) to jira. The API token"

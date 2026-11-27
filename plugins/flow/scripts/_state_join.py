@@ -3,10 +3,11 @@ Pure: no file, clock or environment is read here.
 
 A joined item is the adapter's item with `state` replaced and `state_from` and `claim` stamped.
 From a record: all twenty-one state keys, text "" when unset, attempts a number, touches and changes
-lists, gate none when clear (state_from record). With no record: the tracker's state as the adapter gave it while
-tracker_state is labels, the empty state when it gave none (state_from tracker); the empty state
-under none (state_from none). A record wins whole, never merged per key. `claim` is the record's
-claim object, null with no record or no claim: the ready filter tells held and held elsewhere by it.
+lists, gate none when clear (state_from record). With no record: the tracker's state as the adapter
+gave it, the empty state when it gave none (state_from tracker), whatever tracker_state is, since
+the mode switches the mirror only. A record wins whole, never merged per key. `claim` is the
+record's claim object, null with no record or no claim: the ready filter tells held and held
+elsewhere by it.
 A run row is {"item", ...the run}; a gate row {"gate", "item", ...the gate's record}, only for a
 gate that carries notify.sh's record, its time. A gate named alone has no row.
 """
@@ -20,9 +21,7 @@ NO_ROW = MappingProxyType({})
 STATE_FIELD = "state"
 STATE_FROM_FIELD = "state_from"
 CLAIM_FIELD = "claim"
-FROM_RECORD, FROM_TRACKER, FROM_NONE = "record", "tracker", "none"
-TRACKER_LABELS, TRACKER_NONE = "labels", "none"
-TRACKER_STATES = (TRACKER_LABELS, TRACKER_NONE)
+FROM_RECORD, FROM_TRACKER = "record", "tracker"
 RUN_ROWS, GATE_ROWS = "runs", "gates"
 ROW_KINDS = (RUN_ROWS, GATE_ROWS)
 GATE_RECORD_NAME, GATE_RECORD_FROM, GATE_RECORD_TIME = "name", "from", "time"
@@ -52,22 +51,18 @@ def record_state(record):
     return {key: record_value(record, state_key) for key, state_key in schema.STATE_KEYS.items()}
 
 
-def unrecorded_state(item, tracker_state):
+def unrecorded_state(item: dict) -> dict:
     given = item.get(STATE_FIELD)
-    if tracker_state == TRACKER_LABELS and isinstance(given, dict):
-        return given
-    return empty_state()
+    return given if isinstance(given, dict) else empty_state()
 
 
-def state_source(record, tracker_state):
-    if record is not NO_RECORD:
-        return FROM_RECORD
-    return FROM_TRACKER if tracker_state == TRACKER_LABELS else FROM_NONE
+def state_source(record: Mapping) -> str:
+    return FROM_RECORD if record is not NO_RECORD else FROM_TRACKER
 
 
-def joined_item(item: dict, record: Mapping, tracker_state: str) -> dict:
-    state = record_state(record) if record is not NO_RECORD else unrecorded_state(item, tracker_state)
-    return dict(item, **{STATE_FIELD: state, STATE_FROM_FIELD: state_source(record, tracker_state),
+def joined_item(item: dict, record: Mapping) -> dict:
+    state = record_state(record) if record is not NO_RECORD else unrecorded_state(item)
+    return dict(item, **{STATE_FIELD: state, STATE_FROM_FIELD: state_source(record),
                          CLAIM_FIELD: record.get(CLAIM_FIELD)})
 
 

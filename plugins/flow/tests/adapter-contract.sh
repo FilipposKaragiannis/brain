@@ -101,7 +101,7 @@ comments_github() {
   python3 -c 'import json,sys; [print(c["body"]) for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2]) for c in i.get("comments", [])]' \
     "$FAKE_GH_DIR/issues.json" "${1#gh#}"
 }
-blip_github() { printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"; }
+blip_github() { printf '1\ngh: HTTP 502\napi graphql\n' > "$FAKE_GH_DIR/fail"; }
 
 setup_jira() {
   export FAKE_JIRA_DIR="$work/jira"; mkdir -p "$FAKE_JIRA_DIR"; cp "$here/_fake_jira.py" "$FAKE_JIRA_DIR/"
@@ -119,6 +119,10 @@ comments_jira() {
 def text(node): return node.get("text", "") + "".join(text(c) for c in node.get("content", []))
 [print(text(c["body"])) for c in json.load(open(sys.argv[1]))["issues"][sys.argv[2]]["comments"]]' "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
 }
+remote_links_jira() {
+  python3 -c 'import json,sys; [print(remote_link["object"]["url"]) for remote_link in json.load(open(sys.argv[1]))["issues"][sys.argv[2]].get("remotelinks", [])]' \
+    "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
+}
 blip_jira() { printf '1\n503\n' > "$FAKE_JIRA_DIR/fail"; }
 
 type "setup_$name" >/dev/null 2>&1 || { echo "adapter-contract: no backend setup for $name in $0" >&2; exit 2; }
@@ -134,7 +138,7 @@ echo "contract: $name"
 echo " the folder"
 prefix="$(head -n 1 "$A/prefix" 2>/dev/null)"
 check "the prefix file holds one non-empty line" '[ -n "$prefix" ] && [ "$(wc -l < "$A/prefix" | tr -d " ")" = 1 ]'
-for op in list list-ready read in-scope create close comment link-pr write-state me set-status assign; do
+for op in list list-ready read in-scope create close comment link-pr write-state strip-state me set-status assign; do
   check "$op.sh is there and executable" '[ -x "$A/$op.sh" ]'
 done
 for op in vocabulary answers; do
@@ -147,7 +151,7 @@ check "no other adapter's prefix starts this one or is started by it" '! for f i
 done | grep -q clash'
 
 echo " usage"
-for op in read create close comment link-pr write-state set-status assign; do
+for op in read create close comment link-pr write-state strip-state set-status assign; do
   check "$op with no arguments exits 2" '[ "$(code_of "$A/$op.sh")" = 2 ]'
 done
 check "list with an unknown option exits 2" '[ "$(code_of "$A/list.sh" --no-such-option)" = 2 ]'
@@ -234,11 +238,14 @@ echo " comment, link-pr, close"
 printf 'contract comment from stdin\n' | "$A/comment.sh" "$t1" >/dev/null 2>&1
 check "comment --body lands on the item" '"comments_$name" "$t1" | grep -q "contract comment from --body"'
 check "comment from stdin lands on the item" '"comments_$name" "$t1" | grep -q "contract comment from stdin"'
-"$A/link-pr.sh" "$t2" https://example.test/pull/7 >/dev/null 2>&1
-check "link-pr records the PR in the state" '[ "$(field "$t2" state.pr)" = https://example.test/pull/7 ]'
-check "link-pr says the PR in a comment" '"comments_$name" "$t2" | grep -q "https://example.test/pull/7"'
-env -u CLAUDECODE CODEX_THREAD_ID=t "$A/link-pr.sh" "$t2" https://example.test/pull/8 >/dev/null 2>&1
-check "link-pr records the host that wrote the PR as pr_host" '[ "$(field "$t2" state.pr_host)" = codex ]'
+env -u CLAUDECODE CODEX_THREAD_ID=t "$A/link-pr.sh" "$t2" https://example.test/pull/7 >/dev/null 2>&1
+check "LinkPr_LeavesTrackerStateEmpty: the tracker holds no pr, because the flow record is where the PR is recorded" '[ -z "$(field "$t2" state.pr)" ]'
+check "LinkPrFromACodexSession_LeavesNoPrHost: the tracker holds no pr_host, because the flow records the host from the run" '[ -z "$(field "$t2" state.pr_host)" ]'
+check "LinkPr_SaysThePrInAComment: the PR is named on the item, because that comment is how the tracker learns of it" '"comments_$name" "$t2" | grep -q "https://example.test/pull/7"'
+if [ "$name" = jira ]; then
+  check "LinkPrOnJira_AddsTheRemoteLink: the issue links the PR, because Jira shows a PR through its remote links" \
+    '[ "$(remote_links_jira "$t2")" = https://example.test/pull/7 ]'
+fi
 "$A/close.sh" "$t1" --comment "closed by the contract" >/dev/null 2>&1
 check "close makes the item closed" '[ "$(field "$t1" status)" = closed ]'
 check "ClosedItem_ReadsCategoryDone: a closed item is in the done category, because closed work is never to do" '[ "$(field "$t1" category)" = done ]'
@@ -272,7 +279,8 @@ if [ -x "$A/answers.sh" ]; then
   "$A/comment.sh" "$t2" --body "/answer the long way" >/dev/null 2>&1
   "$A/answers.sh" "$t2" > "$work/answers.out" 2>/dev/null
   check "answers prints the id of the item it cleared" 'grep -qx "$t2" "$work/answers.out"'
-  check "answers clears the gate with the answer" '[ "$(field "$t2" state.gate)" = none ] && [ "$(field "$t2" state.answer)" = "the long way" ]'
+  check "AnswersOfAGatedItem_ClearsTheGateInTheRecord: answers clears the gate it found answered, because the record is where the flow keeps it" '[ "$(record_get "$t2" gate)" = none ]'
+  check "AnswersOfAGatedItem_RecordsTheAnswer: answers keeps the owner's answer, because the next step reads it from the record" '[ "$(record_get "$t2" answer)" = "the long way" ]'
   check "AnswersWithNoIds_PrintsNothing: answers with no ids prints nothing, because it reads only the items it is given" '[ -z "$("$A/answers.sh" 2>&1)" ]'
   check "AnswersWithNoIds_ExitsZero: answers with no ids exits 0, because no gated item is no failure" '[ "$(code_of "$A/answers.sh")" = 0 ]'
   check "AnswersOfAMalformedId_ExitsTwo: answers of an id not of the adapter's shape exits 2, because a bad id is refused before the tracker is read" '[ "$(code_of "$A/answers.sh" "${prefix}not an id")" = 2 ]'
@@ -584,6 +592,43 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
 else
   skip "no set_$name or scope_config_$name in this suite to scope a list"
 fi
+
+stripped_state_keys="step profile worktree attempts gate last_event pr pr_host touches changes held_by held_reason answered asked answer answered_at answer_pending gate_from base branch"
+# Each backend's store is read whole, never through read.sh, whose state always carries defaults.
+full_state_gone_local() {
+  python3 -B -c 'import sys
+sys.path.insert(0, sys.argv[1]); import _item
+meta, _ = _item.parse(sys.argv[2]); sys.exit(1 if set(meta) & set(sys.argv[3].split()) else 0)' "$A" "$FLOW_HOME/items/${1#local:}.md" "$stripped_state_keys"
+}
+full_state_gone_github() {
+  python3 -c 'import json,sys
+issue = [i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2])][0]
+sys.exit(1 if [c for c in issue.get("comments", []) if c["body"].startswith("<!-- flow:state -->")] else 0)' "$FAKE_GH_DIR/issues.json" "${1#gh#}"
+}
+full_state_gone_jira() {
+  python3 -c 'import json,sys; sys.exit(1 if "flow-state" in json.load(open(sys.argv[1]))["issues"][sys.argv[2]]["properties"] else 0)' \
+    "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
+}
+no_flow_label() {
+  field "$1" labels | python3 -c 'import json,sys; sys.exit(1 if [l for l in json.load(sys.stdin) if l.startswith(("step:", "gate:", "wt:", "flow:"))] else 0)'
+}
+echo " strip-state"
+stripped="$("$A/create.sh" task "Strip: state an older flow wrote" --size S)"
+"$A/write-state.sh" "$stripped" step=implement gate=plan-approval worktree=wt-3 profile=task-S size=M >/dev/null 2>&1
+"$A/comment.sh" "$stripped" --body "a comment strip-state keeps" >/dev/null 2>&1
+"$A/comment.sh" "$stripped" --body "$(printf '> <!-- flow:state -->\na reply that quotes the state marker')" >/dev/null 2>&1
+check "StripStateForeignId_ExitsTwo: strip-state of an id another adapter owns exits 2, because the adapter strips only its own items" '[ "$(code_of "$A/strip-state.sh" "nobody:1")" = 2 ]'
+check "StripStateMissingItem_ExitsOne: strip-state of an id that names no item exits 1, because the tracker has nothing to strip" '[ "$(code_of "$A/strip-state.sh" "$missing")" = 1 ]'
+"$A/strip-state.sh" "$stripped" > "$work/strip-state.out" 2>/dev/null
+check "StripStateOfAnItemWithState_PrintsItsId: strip-state prints the id of an item it took state off, because import says each item it stripped" '[ "$(cat "$work/strip-state.out")" = "$stripped" ]'
+check "StripState_LeavesNoFlowLabel: no step:, gate:, wt: or flow: label is left, because the tracker no longer mirrors the flow" 'no_flow_label "$stripped"'
+check "StripState_LeavesNoFullState: the store no longer holds the state write-state kept, because a frozen state would be read for an item with no record" '"full_state_gone_$name" "$stripped"'
+check "StripState_ClearsTheStep: the step reads back empty, because neither the label nor the full state is left to read it from" '[ -z "$(field "$stripped" state.step)" ]'
+check "StripState_KeepsTheSize: the size write-state wrote still reads back, because the size is the item's own" '[ "$(field "$stripped" size)" = M ]'
+check "StripState_KeepsOtherComments: a comment that holds no state is still on the item, because strip-state takes only the flow's own" '"comments_$name" "$stripped" | grep -q "a comment strip-state keeps"'
+check "StripState_KeepsACommentThatQuotesTheMarker: a reply that quotes the state marker is still on the item, because only a comment the flow wrote starts with it" '"comments_$name" "$stripped" | grep -q "a reply that quotes the state marker"'
+check "StripStateOfACleanItem_PrintsNothing: a second strip-state prints nothing, because nothing was left to take" '[ -z "$("$A/strip-state.sh" "$stripped" 2>/dev/null)" ]'
+check "StripStateOfACleanItem_ExitsZero: a second strip-state exits 0, because a clean item is no failure" '[ "$(code_of "$A/strip-state.sh" "$stripped")" = 0 ]'
 
 echo "contract $name: $checks checks, $fails failed"
 [ "$fails" -eq 0 ]

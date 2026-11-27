@@ -13,3 +13,10 @@ JSON
 mkdir -p "$work/bin" && ln -s "$P/tests/fake-gh.sh" "$work/bin/gh"
 export PATH="$work/bin:$PATH"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+github_state_marker() {
+  github_state_marker_found="$(python3 -c 'import re, sys
+found = re.search(r"^STATE_MARKER=\"(.*)\"$", open(sys.argv[1]).read(), re.M)
+print(found.group(1) if found else "")' "$P/adapters/github/_gh.sh")"
+  [ -n "$github_state_marker_found" ] || { echo "_github_fixture: no STATE_MARKER in $P/adapters/github/_gh.sh" >&2; return 1; }
+  printf '%s\n' "$github_state_marker_found"
+}

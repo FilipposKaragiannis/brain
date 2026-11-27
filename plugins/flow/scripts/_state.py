@@ -1,5 +1,5 @@
 """The flow record of an item on disk: read, locked, written and archived here.
-lib/state.sh is its one caller; see there.
+lib/state.sh and lib/migrate.sh (import) are its callers; see there.
 
   _state.py set     --state-dir D --flow-home H --item I --now T --machine M --host N
                     --claim-file F --seed stdin|none -- <pair>...
@@ -9,6 +9,9 @@ lib/state.sh is its one caller; see there.
   _state.py status  --state-dir D --flow-home H --item I
   _state.py archive --state-dir D --flow-home H --item I --machine M
   _state.py join|list|row ...  the record laid onto items, and its run and gate rows: _state_reads.py
+  _state.py import  --state-dir D --flow-home H --now T --machine M --effect plan|write
+                    --shaped-items S -- <pool entry>...
+  _state.py listed
 
 The record is <state dir>/<slug>.json, archived to <state dir>/closed/<slug>.json; its lock is
 <flow home>/locks/<slug>.lock, and set, take and archive exit 75 when it stays busy. With no record
@@ -19,6 +22,14 @@ above this one is refused, exit 1. A refused pair writes nothing, exit 2.
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
 status prints the tracker status the record stands for (_state_schema.pushed_status), nothing with
 no record or no claim.
+import reads the trackers' lists on stdin, one line per tracker (its id prefix, a tab, a JSON array),
+and the claim.json of each pool entry (a relative one under the flow home's parent), keeps the
+listed items --shaped-items names, and prints
+the rows _state_import.py gives, tab separated, with a stand-in for what the locale cannot spell.
+Under write it first seeds the record of each item it imports, under the item's lock, as set seeds
+one; an item whose record stays busy is skipped. It exits 1 when a listed
+item's record does not parse or one stays busy. listed prints the id of each item those lists
+hold, one per line, for the caller to put through the adapters' slug.sed.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
 import fcntl
@@ -27,10 +38,12 @@ import os
 import sys
 import time
 from collections import namedtuple
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _state_arguments as command_line  # noqa: E402
+import _state_import as importing  # noqa: E402
 import _state_join as join  # noqa: E402
 import _state_reads as reads  # noqa: E402
 import _state_schema as schema  # noqa: E402
@@ -39,9 +52,15 @@ import _state_views as views  # noqa: E402
 NO_RECORD = join.NO_RECORD
 NO_OBJECT = MappingProxyType({})
 StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
+RecordedSlugs = namedtuple("RecordedSlugs", ("recorded", "unreadable"))
+Reply = namedtuple("Reply", ("outcome", "output"))
+NO_OUTPUT = ""
+IMPORT_COMMAND = command_line.POOL_COMMAND
+LISTED_COMMAND = "listed"
 NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 NEW_FILE_MODE = 0o666
 TEMPORARY_NAME_RANDOM_BYTES = 8
+CLAIM_PATH = ".flow/claim.json"
 
 
 def read_record(path):
@@ -229,6 +248,75 @@ def command_status(options):
     return stored.outcome
 
 
+def claimed_items(options: command_line.Options) -> frozenset:
+    main_worktree = os.path.dirname(options.flow_home)
+    claims = (read_object(os.path.join(main_worktree, entry, CLAIM_PATH)) for entry in options.pool)
+    return frozenset(item for item in (importing.claimed_item(claim) for claim in claims) if item)
+
+
+def stored_records(options: command_line.Options, listed: tuple) -> dict:
+    return {item.id: read_record(schema.record_paths(options.state_dir, options.flow_home, item.id).record)
+            for item in listed if schema.item_slug_shaped(item.id)}
+
+
+def seed_imported_record(options: command_line.Options, item: importing.ListedItem,
+                         random_bytes: Callable[[int], bytes]) -> schema.Outcome:
+    item_options = options._replace(item=item.id)
+
+    def seed(record: Mapping) -> schema.Outcome:
+        if record is NO_RECORD:
+            write_record(item_paths(item_options).record, starting_record(record, item_options, item.state), random_bytes)
+        return schema.DONE
+
+    try:
+        return under_lock(item_paths(item_options), seed)
+    except OSError as error:
+        return schema.Outcome(schema.EXIT_UNREADABLE, str(error))
+
+
+def seed_imports(options: command_line.Options, rows: tuple, listed: tuple,
+                 random_bytes: Callable[[int], bytes]) -> frozenset:
+    if options.effect != command_line.WRITE_EFFECT:
+        return frozenset()
+    importing_now = {row.item for row in rows if row.kind == importing.IMPORT_ROW}
+    unseeded = set()
+    for item in (item for item in listed if item.id in importing_now):
+        outcome = seed_imported_record(options, item, random_bytes)
+        if outcome.code:
+            warn("%s: %s" % (item.id, outcome.message))
+            unseeded.add(item.id)
+    return frozenset(unseeded)
+
+
+def recorded_slugs_warning_unreadable(options: command_line.Options, listed: tuple) -> RecordedSlugs:
+    stored = stored_records(options, listed)
+    for stored_record in stored.values():
+        if stored_record.outcome.code:
+            warn(stored_record.outcome.message)
+    return RecordedSlugs(
+        frozenset(schema.item_slug(item) for item, stored_record in stored.items() if stored_record.record is not NO_RECORD),
+        frozenset(schema.item_slug(item) for item, stored_record in stored.items() if stored_record.outcome.code))
+
+
+def command_import(options: command_line.Options, random_bytes: Callable[[int], bytes]) -> Reply:
+    listing = importing.parsed_lists(sys.stdin.read())
+    if listing.problem:
+        return Reply(schema.Outcome(schema.EXIT_USAGE, listing.problem), NO_OUTPUT)
+    listed = importing.items_of_shape(listing.items, options.shaped_items)
+    slugs = recorded_slugs_warning_unreadable(options, listed)
+    rows = importing.import_rows(listed, slugs.recorded, slugs.unreadable, claimed_items(options))
+    unseeded = seed_imports(options, rows, listed, random_bytes)
+    output = "".join(importing.row_text(row) + "\n" for row in importing.rows_after_writes(rows, unseeded))
+    return Reply(schema.Outcome(schema.EXIT_UNREADABLE if slugs.unreadable or unseeded else schema.EXIT_DONE, ""), output)
+
+
+def command_listed() -> Reply:
+    listing = importing.parsed_lists(sys.stdin.read())
+    if listing.problem:
+        return Reply(schema.Outcome(schema.EXIT_USAGE, listing.problem), NO_OUTPUT)
+    return Reply(schema.DONE, importing.listed_ids_text(listing.items))
+
+
 def warn(message):
     sys.stderr.write("flow: %s\n" % message)
 
@@ -242,13 +330,29 @@ def commands(random_bytes):
                                  **reads.commands(edge)))
 
 
+def command_reply(parsed: command_line.CommandLine, random_bytes: Callable[[int], bytes]) -> Reply:
+    if parsed.outcome.code:
+        return Reply(parsed.outcome, NO_OUTPUT)
+    if parsed.options.command == IMPORT_COMMAND:
+        return command_import(parsed.options, random_bytes)
+    if parsed.options.command == LISTED_COMMAND:
+        return command_listed()
+    return Reply(commands(random_bytes)[parsed.options.command](parsed.options), NO_OUTPUT)
+
+
 def main(arguments, random_bytes):
     parsed = command_line.parsed(arguments)
     options = parsed.options
     try:
-        outcome = commands(random_bytes)[options.command](options) if not parsed.outcome.code else parsed.outcome
+        reply = command_reply(parsed, random_bytes)
     except OSError as error:
-        outcome = schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error))
+        reply = Reply(schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error)), NO_OUTPUT)
+    outcome = reply.outcome
+    if reply.output:
+        # The records are written by now, so tracker text the locale cannot spell gets a stand-in
+        # rather than stopping the rows the caller still acts on.
+        sys.stdout.reconfigure(errors="replace")
+        sys.stdout.write(reply.output)
     if outcome.message:
         sys.stderr.write("flow: %s\n" % outcome.message)
     return outcome.code

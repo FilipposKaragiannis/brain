@@ -12,7 +12,7 @@ fake backend, and `tests/run.sh` runs it for every adapter.
 |---|---|---|
 | `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`, `jira:`) |
 | `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
-| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh`, `me.sh`, `set-status.sh`, `assign.sh` | yes | the operations below, executable |
+| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh`, `strip-state.sh`, `me.sh`, `set-status.sh`, `assign.sh` | yes | the operations below, executable |
 | `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
 
 Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for `die`, `cfg`,
@@ -54,8 +54,9 @@ prefix.
 | `create` | `<kind> <title> [--size S\|M\|L] [--priority NAME] [--area NAME] [--type NAME] [--blocked-by id,id] [--parent id] [--body TEXT]` | the new id, one line |
 | `close` | `<id> [--comment TEXT]` | nothing; the item reads `closed` and the comment lands |
 | `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
-| `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, `state.pr_host` the host that ran it (claude or codex, else unset), and a comment names it |
+| `link-pr` | `<id> <url>` | nothing; a comment names the url, and Jira adds it as a remote link too. It writes no state: only orchestrator scripts call it, through `link_and_record_pull_request` in `lib/pull_request.sh`, which then records `pr` and `pr_host` |
 | `write-state` | `<id> key=value...` | nothing; each key reads back (below) |
+| `strip-state` | `<id>` | temporary, for `state.sh import --strip`, and goes with `write-state`: `<id>` when it took flow state off the item, nothing when the item was clean. GitHub and Jira remove the `step:`, `gate:`, `wt:` and `flow:` labels and the state comment or `flow-state` property (GitHub deletes only the state comments its readers trust, below, and leaves one by any other login); local removes the frontmatter state keys. Each leaves the size, its field or label, and everything else |
 | `me` | | the names `me` stands for in a pick filter, a tracker scope and `ready.assignee`, one per line: GitHub the `gh` login; Jira the token user's account id, then `jira.email`; local the git `user.email`, then `user.name`, lower case, and nothing (exit 0) when git has neither. Exit 1 when the tracker cannot say |
 | `set-status` | `<id> <backlog\|ready\|in-progress\|needs-you\|in-review>` | `<id> <native name>` when it moved the item to the status, the tracker's own name for it; nothing when the item is there already or the tracker has no place for a status. Any other name exits 2. Local writes the item file's `workflow`, which its `category` reads |
 | `assign` | `<id> <me\|none>` | `<id> <name>` when it changed the item: `me` adds the first name `me` prints beside any other assignee, `none` takes that name off and leaves any other; nothing when the item already says so. Any other target exits 2, and so does an id another adapter owns; local keeps an `[a, b]` list a list |
@@ -67,7 +68,10 @@ and says so on stderr (`--type` on a tracker without types);
 it never fails for one. `--blocked-by` may name items of other adapters. A tracker scope bounds
 the list first (Tracker scope, below), and a tracker limit caps what is left. A `list` cut short by
 a tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
-every item).
+every item). With `FLOW_LIST_EVERY_STATE` set, a `list` gives each item the state the tracker
+holds for it, even where a cheaper list would leave it out (`state.sh import`). With
+`FLOW_LIST_STATE_WHOLE` set, a `list` that cannot tell whose stored state to trust fails rather than
+leave items out (the health job, which would read a left-out holder as gone).
 
 Exit codes, for every script:
 
@@ -123,8 +127,10 @@ the gate, `size` sets the item's size too. A key outside the twenty-one exits 2 
 No flow script calls `write-state` itself: each writes through `record_set` in `lib/state.sh`
 (`scripts/state.sh set` on the command line), which keeps the item's flow record and, while
 `tracker_state` is `labels`, sends the same pairs to `write-state` first and records them only
-when the tracker took them (ADR 0004). `link-pr` still writes `pr` and `pr_host` to the tracker;
-the sweep and the pr step copy both from the tracker into the record.
+when the tracker took them (ADR 0004). Under the default, `none`, no state reaches the tracker
+(ADR 0005). `link-pr` writes no state either: the pr step, the sweep and `epic-pr.sh` call it and then
+record `pr` and `pr_host`, the host the run started on (the one that opened the PR for
+`epic-pr.sh`, none for the sweep).
 
 No flow script calls `set-status` or `assign` but `lib/push.sh`. `tracker_push` sets the status the
 item's flow record stands for: `in-progress` while the flow works it, `needs-you` at a gate,
@@ -138,8 +144,9 @@ No flow script reads `state` from an adapter either. A script reads one item wit
 (`scripts/state.sh read`) and a list with `items_join` or `items_listed`, which join the item's
 flow record on as `state` (all twenty-one keys; the record wins whole), stamp the record's `claim`
 (`null` with no record or no claim) and stamp `state_from`:
-`record`; `tracker` for an item with no record while `tracker_state` is `labels`, its state then
-the tracker's; `none` under `none`, its state empty. `state_get` and `state_list` in
+`record`; `tracker` for an item with no record, its state then the tracker's, whatever
+`tracker_state` says (ADR 0005). The item's first write seeds its record from that state, `size`
+left out, and `state.sh import` seeds every open item at once. `state_get` and `state_list` in
 `lib/flow.sh` refuse an item with no `state_from`, so an adapter's own read never stands in.
 
 A gate's own data is not tracker state: the options it offers, who raised it, who carries the
@@ -160,8 +167,10 @@ config: it comes from the environment, and an adapter without one refuses with a
 
 The flow records live under `state.dir` (default `<flow home>/state`; a relative path is under
 the main worktree), one JSON file per item; `closed/` holds a closed item's record once its
-worktree is released. `tracker_state` is `labels` (the default), which sends each state write to the tracker
-too, or `none`, which keeps it in the record only; another value exits 2.
+worktree is released. `tracker_state` is `none` (the default), which keeps each state write in the
+record only, or `labels`, which sends it to the tracker too, for an older flow that reads it there;
+another value exits 2. It switches that mirror only: the read of an item with no record is the same
+in both.
 
 Readiness is tracker-neutral: `ready.needs` lists the fields, of `priority` and `size`, an
 unstarted item must have before it is ready, and `ready.priority_order` ranks the priority names.
@@ -174,9 +183,9 @@ from the first two and maps the fields to its own:
 
 | Adapter | priority | size | state |
 |---|---|---|---|
-| `github` | the issue field `github.fields.priority`, else the `priority:<name>` label (of two, the one earlier in `ready.priority_order`; the board says so); with the field set the label is ignored | the issue field `github.fields.size`, else the `size:<S>` label | labels `step:<step>`, `gate:<gate>`, `wt:<worktree>`, `flow:<profile>`, `size:<size>` (not with a size field), and the whole state as JSON in one issue comment marked `<!-- flow:state -->`; a label wins over the comment on read; an empty value or `gate=none` removes the label |
-| `local` | the item file's `priority` | the item file's `size` | the item file's frontmatter, one key each |
-| `jira` | Jira's own priority field | the field `jira.fields.size` (an id or a name), else the `size:<S>` label | the same labels as `github`, and the whole state as JSON in the issue property `flow-state`; a label wins over the property on read |
+| `github` | the issue field `github.fields.priority`, else the `priority:<name>` label (of two, the one earlier in `ready.priority_order`; the board says so); with the field set the label is ignored | the issue field `github.fields.size`, else the `size:<S>` label | labels `step:<step>`, `gate:<gate>`, `wt:<worktree>`, `flow:<profile>`, `size:<size>` (not with a size field), and the whole state as JSON in one issue comment that starts with `<!-- flow:state -->`; only a comment by a login in `github.answer_from`, else by the `gh` user, counts, so a marker comment by anyone else is never read, patched or stripped, and a forged one first hides nothing. When those logins cannot be found, a read fails, a list leaves out an issue whose comment it reads, and `write-state` and `strip-state` stop; with `github.answer_from` set and the `gh` user outside it, `write-state` refuses to post a first state comment its readers would ignore. A label wins over the comment on read, but `profile` is read from the comment alone; an empty value or `gate=none` removes the label. Written only under `tracker_state: labels` |
+| `local` | the item file's `priority` | the item file's `size` | the item file's frontmatter, one key each; written only under `tracker_state: labels` |
+| `jira` | Jira's own priority field | the field `jira.fields.size` (an id or a name), else the `size:<S>` label | the same labels as `github`, and the whole state as JSON in the issue property `flow-state`; a label wins over the property on read, but `profile` is read from the property alone. Written only under `tracker_state: labels` |
 
 Until `ready_rules` and `trackers` land in `lib/flow.sh`, the GitHub adapter reads only
 `github.ready_needs` and `github.priority_order`, the local adapter fills no `rank` or `needs`,

@@ -1,16 +1,21 @@
 #!/bin/sh
-# next.sh [item] [--json] [--embed-agent] [--pick <name>]: prepare the next step of one item. Without an item,
+# next.sh [item] [--json] [--embed-agent] [--pick <name>] [--profile <name>]: prepare the next step of one item. Without an item,
 # picks the first ready item, by rank (ready.priority_order) and among equals the lowest item number
 # (the oldest), from every tracker read that no run holds.
 # Items whose touches overlap may run side by side: the plan step puts an item behind another
 # (state.held_by), and a held item is not ready (filter-ready.sh). --pick narrows the items read
 # to the filter pick.<name> in .flow/config.yaml (pick_trackers in lib/flow.sh) before
 # readiness, blockers, gates and the order apply; an unknown name exits 2.
-# Reads the state, selects the profile, claims a pool worktree when the step needs one,
+# Reads the state, takes the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
+# The profile is the one --profile names, else the record's, else the one kind and size select
+# (profiles.json select); the start writes it to the record, so the first start pins it. The size
+# is the record's estimate (a re-size in advance.sh), else the tracker's, else default_size, and a
+# start writes none. --profile takes a named item only, and refuses, before any write, a name that
+# is no profile in profiles.json or a started item whose step that profile does not have.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
+# Exit codes: 0 step ready · 2 the config refuses: a bad --pick or --profile, a stored profile profiles.json does not have, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate (on the tracker, or in a gate record on this host the tracker does not show), held behind an open item, blocked by
 # an open item (blocked_by), held on another machine, outside the ready: policy (its tracker category or its assignees, scripts/_ready_policy.py), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
@@ -32,18 +37,22 @@ home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 EXIT_AT_GATE=4
 EXIT_HELD_BACK=4
-item=""; as_json=0; embed=0; pick=""
+EXIT_PROFILE_REFUSED=2
+item=""; as_json=0; embed=0; pick=""; asked_profile=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) as_json=1; shift ;;
     --embed-agent) embed=1; shift ;;
     --pick) [ $# -ge 2 ] || die "--pick takes a filter name from pick in .flow/config.yaml" 2; pick="$2"; shift 2 ;;
+    --profile) { [ $# -ge 2 ] && [ -n "$2" ]; } || die "--profile takes a profile name from profiles.json" "$EXIT_PROFILE_REFUSED"; asked_profile="$2"; shift 2 ;;
     -*) die "unknown option $1" 2 ;;
     *) item="$1"; shift ;;
   esac
 done
 named="$item"
 [ -z "$pick" ] || [ -z "$item" ] || die "--pick narrows the ready list a pick reads; $item is named, so drop one of them" 2
+[ -z "$asked_profile" ] || [ -n "$item" ] || die "--profile pins the profile of one item: name it" "$EXIT_PROFILE_REFUSED"
+[ -z "$asked_profile" ] || { refusal="$(profile_refusal "$asked_profile" "")"; [ -z "$refusal" ] || die "$refusal" "$EXIT_PROFILE_REFUSED"; }
 ready_cache="$home/tmp/.ready.$$"
 if [ "${FLOW_NEXT_PID:-}" != "$$" ]; then FLOW_NEXT_SKIP=""; FLOW_NEXT_FULL=""; rm -f "$ready_cache"; fi
 mkdir -p "$home/tmp"
@@ -132,7 +141,16 @@ case "$policy_why" in
 esac
 kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"
 [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
-profile="$(state_get "$data" profile)"
+# The step check comes before the gate, done and split pass-overs: a done or split item is at no
+# step of any profile, so --profile on it is refused, not passed over.
+[ -z "$asked_profile" ] || { refusal="$(profile_refusal "$asked_profile" "$(state_get "$data" step)")"; [ -z "$refusal" ] || die "$refusal" "$EXIT_PROFILE_REFUSED"; }
+profile="$asked_profile"
+[ -n "$profile" ] || profile="$(state_get "$data" profile)"
+# A stored profile can come from the tracker (the lazy seed), and one profiles.json does not have
+# gives no steps, so the run would end after one. Only the name is checked: a done or split item is
+# at no step of any profile.
+[ -n "$asked_profile" ] || [ -z "$profile" ] || { refusal="$(profile_refusal "$profile" "")"; [ -z "$refusal" ] \
+  || pass_over "$item cannot run: its state's profile $refusal. Pin one: next.sh $item --profile <name>" "$EXIT_PROFILE_REFUSED"; }
 [ -n "$profile" ] || profile="$(profile_select "$kind" "$size")"
 [ -n "$profile" ] || die "no profile for kind $kind size $size"
 gate="$(state_get "$data" gate)"
@@ -223,10 +241,9 @@ case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; o
 take_item "$item"
 record_set_with_claim "$claim_path" "$item" "run:=$(json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches")"
-sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 # The run takes the answer to the last gate (answer_pending, gate.sh clear): its brief carries it.
 taken=""; [ -z "$(state_get "$data" answer_pending)" ] || taken="answer_pending="
-record_set_with_claim "$claim_path" "$item" "step=$step" "profile=$profile" "$sized" ${taken:+"$taken"} "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+record_set_with_claim "$claim_path" "$item" "step=$step" "profile=$profile" ${taken:+"$taken"} "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
 
 # Verify runs on the code the PR merges: a clean task branch behind its base gets the base merged

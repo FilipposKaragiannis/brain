@@ -12,7 +12,8 @@
 # re-size or the step done keeps the run, and the retry applies the step as the first try would
 # have. A failing notifier or comment leaves the gate standing and says so. next.sh runs no step
 # for an item with a gate record on this host that its tracker does not show. Under tracker_state
-# none a failed record write raises nothing, whatever gate the tracker's labels show.
+# none a failed record write raises nothing, whatever gate the tracker's labels show. Every repo
+# whose tracker refuses or fails a write sets tracker_state labels, the one mode that writes it.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -102,9 +103,11 @@ advance() { "$stubbed/scripts/advance.sh" "$1" > "$work/advance.out" 2> "$work/a
 # advance_refusing <pair prefix> <item>: advance.sh on the item while the tracker refuses any write
 # with a pair that starts with the prefix.
 advance_refusing() { printf '%s' "$1" > "$REFUSED_PAIR"; advance "$2"; refused_code=$?; rm -f "$REFUSED_PAIR"; return "$refused_code"; }
+# Under tracker_state labels the flow's state writes reach the tracker and its refusals reach the flow.
+mirrored_repo() { new_repo "$1" && printf 'tracker_state: labels\n' >> .flow/config.yaml; }
 
 echo "gate transition: the tracker refuses the gate write"
-new_repo refused
+mirrored_repo refused
 refused="$(planned_task "Refused gate")"; refused_reports="$(reports_of "$refused")"
 echo refused > "$GATE_WRITE_MODE"
 advance "$refused"; refused_code=$?
@@ -163,7 +166,7 @@ check "RefusedGateWriteWithItsRunGone_NextRunsThePlanAgain: the tracker state al
   '[ "$(state "$orphaned" run.step)" = plan ]'
 
 echo "gate transition: the gate write dies"
-new_repo killed
+mirrored_repo killed
 killed="$(planned_task "Killed gate")"; killed_reports="$(reports_of "$killed")"
 echo killed > "$GATE_WRITE_MODE"
 advance "$killed"; killed_code=$?
@@ -273,14 +276,14 @@ check "FailingGateComment_IsReported: the owner learns the comment is missing" \
   'grep "plan-approval" "$work/advance.err" | grep -qi "comment"'
 
 echo "state write: a refused step write after a re-size"
-new_repo resized
+mirrored_repo resized
 shrunk="$(task_at "Smaller than planned" design)"
 result_of "$shrunk" design '{"status":"done","summary":"Design: one file.","size":"S"}'
 advance_refusing step=implement "$shrunk"
 check "RefusedStepWriteAfterAResize_KeepsTheRun: advance.sh run again applies the re-size" \
   '[ -n "$(state "$shrunk" run)" ]'
-check "RefusedStepWriteAfterAResize_KeepsTheOldSize: no reader sees the new size with the old profile" \
-  '[ "$(state "$shrunk" size)" = M ]'
+check "RefusedStepWriteAfterAResize_RecordsNoSize: no reader sees the new size with the old profile, and a start records none" \
+  '[ -z "$(state "$shrunk" size)" ]'
 advance "$shrunk"
 check "RetryAfterARefusedStepWriteOnAResize_MovesToTheFirstStepOfTheSmallerProfile: the retry runs the profile the re-size chose" \
   '[ "$(state "$shrunk" step)" = implement ]'
@@ -383,7 +386,7 @@ check "RetryAfterARefusedDoneWriteAfterAClosedEpic_RecordsTheEpicDone: the state
   '[ "$(state "$closed_epic" step)" = done ]'
 
 echo "state write: a refused write of the step done with nothing to merge"
-new_repo signed-off
+mirrored_repo signed-off
 signed_off="$("$local_adapter/create.sh" bug "Owner sign-off with no code" --size S --body "$body")"
 "$local_adapter/write-state.sh" "$signed_off" step=pr profile=bugfix
 "$stubbed/scripts/next.sh" "$signed_off" >/dev/null 2>&1
@@ -398,7 +401,7 @@ check "RetryAfterARefusedDoneWriteWithNothingToMerge_ReleasesTheWorktree: a clos
   '[ -z "$("$stubbed/scripts/steward.sh" find "$signed_off")" ]'
 
 echo "state write: an auto-approved gate whose step write is refused"
-new_repo auto
+mirrored_repo auto
 printf 'auto_gates:\n  plan-approval: M\n' >> .flow/config.yaml
 auto="$(planned_task "Auto approved")"
 advance_refusing step=implement "$auto"
@@ -449,7 +452,7 @@ check "FailedRecordWriteWithAStaleGateLabelUnderNone_PostsNoGateComment: the own
   '[ "$(gate_comments "$stale")" -eq 0 ]'
 
 echo "gate transition: GitHub refuses the gate labels"
-new_repo github
+mirrored_repo github
 sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
 printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
@@ -509,7 +512,7 @@ check "GitHubFailingGateComment_IsReported: the owner learns the comment is miss
   'grep "plan-approval" "$work/advance.err" | grep -qi "comment"'
 
 echo "gate transition: Jira refuses the gate labels, then takes them and refuses the state"
-new_repo jira
+mirrored_repo jira
 mkdir -p "$work/jira" "$work/jirabin" && cp "$plugin/tests/_fake_jira.py" "$work/jira/"
 ln -s "$plugin/tests/fake-jira.sh" "$work/jirabin/curl"
 printf '{}\n' > "$work/jira/jira.json"

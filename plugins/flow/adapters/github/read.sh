@@ -3,5 +3,7 @@
 . "$(dirname "$0")/_gh.sh"
 ready_rules
 [ $# -ge 1 ] || die "usage: read <id>" 2
-repo="$(gh_repo)"; n="$(issue_number "$1")" || exit 2
-cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" read "$repo" "$STATE_MARKER" "$n" | issue_to_item || die "cannot read $1"
+repository="$(gh_repo)"; issue="$(issue_number "$1")" || exit 2
+# An empty list is safe here: _query.py fails the read when no login is trusted.
+state_authors="$(trusted_logins)" || state_authors=""
+cached_python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" read "$repository" "$STATE_MARKER" "$issue" "$state_authors" | issue_to_item || die "cannot read $1"

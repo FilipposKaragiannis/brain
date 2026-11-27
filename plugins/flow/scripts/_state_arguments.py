@@ -3,11 +3,13 @@ Pure: it reads only the words it is given.
 
 A command, then each of its options as `--name value`, every one required but the --item of list
 (given twice, the last counts), then `--` and the command's words: the pairs of set, the one key of
-get, none for the others. --seed is stdin or none, --tracker-state labels or none, --kind runs or
-gates. --item, where a command takes one, is an id whose slug holds only letters, digits, _ and -,
-as the slug of every adapter's id shape does, so no item names a path. A line outside this grammar
-is refused with the command's usage, exit 2. Hand-written rather than argparse, whose import was a
-large share of every write's start.
+get, the pool entries of import, none for the others. --seed is stdin or none, --kind runs or
+gates, --effect plan or write. --shaped-items is the listed ids, one per line, that their
+adapter's slug.sed gives back, maybe none. --item, where a command
+takes one, is an id whose slug holds only letters, digits, _ and -, as the slug of every adapter's
+id shape does, so no item names a path. A line outside this grammar is refused with the command's
+usage, exit 2. Hand-written rather than argparse, whose import was a large share of every write's
+start.
 """
 from collections import namedtuple
 from types import MappingProxyType
@@ -21,11 +23,12 @@ END_OF_OPTIONS = "--"
 WORDS_PER_OPTION = 2
 SEED_OPTION = "seed"
 ITEM_OPTION = "item"
-TRACKER_STATE_OPTION = "tracker-state"
 KIND_OPTION = "kind"
+EFFECT_OPTION = "effect"
 SEED_SOURCES = ("stdin", "none")
-OPTION_CHOICES = MappingProxyType({SEED_OPTION: SEED_SOURCES, TRACKER_STATE_OPTION: join.TRACKER_STATES,
-                                   KIND_OPTION: join.ROW_KINDS})
+PLAN_EFFECT, WRITE_EFFECT = "plan", "write"
+OPTION_CHOICES = MappingProxyType({SEED_OPTION: SEED_SOURCES, KIND_OPTION: join.ROW_KINDS,
+                                   EFFECT_OPTION: (PLAN_EFFECT, WRITE_EFFECT)})
 COMMAND_OPTIONS = MappingProxyType({
     "set": ("state-dir", "flow-home", "item", "now", "machine", "host", "claim-file", "seed"),
     "take": ("state-dir", "flow-home", "item", "now", "machine", "host", "seed"),
@@ -33,21 +36,25 @@ COMMAND_OPTIONS = MappingProxyType({
     "show": ("state-dir", "flow-home", "item"),
     "status": ("state-dir", "flow-home", "item"),
     "archive": ("state-dir", "flow-home", "item", "machine"),
-    "join": ("state-dir", "flow-home", "tracker-state"),
-    "list": ("state-dir", "flow-home", "tracker-state", "kind"),
-    "row": ("state-dir", "flow-home", "tracker-state", "kind", "item"),
+    "join": ("state-dir", "flow-home"),
+    "list": ("state-dir", "flow-home", "kind"),
+    "row": ("state-dir", "flow-home", "kind", "item"),
+    "import": ("state-dir", "flow-home", "now", "machine", "effect", "shaped-items"),
+    "listed": (),
 })
 OPTIONAL_OPTIONS = MappingProxyType({"list": (ITEM_OPTION,)})
 PAIRS_COMMAND = "set"
 KEY_COMMAND = "get"
-WORDS_USAGE = MappingProxyType({PAIRS_COMMAND: "-- <pair>...", KEY_COMMAND: "-- <key>"})
+POOL_COMMAND = "import"
+WORDS_USAGE = MappingProxyType({PAIRS_COMMAND: "-- <pair>...", KEY_COMMAND: "-- <key>",
+                                POOL_COMMAND: "-- <pool entry>..."})
 WORD_COUNTS = MappingProxyType({KEY_COMMAND: 1, "take": 0, "show": 0, "status": 0, "archive": 0, "join": 0, "list": 0,
-                                 "row": 0})
-OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed", "tracker_state",
-                 "kind")
+                                 "row": 0, "listed": 0})
+OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed", "kind", "effect",
+                 "shaped_items")
 UNSET_OPTIONS = MappingProxyType(dict.fromkeys(OPTION_FIELDS, ""))
-Options = namedtuple("Options", ("command",) + OPTION_FIELDS + ("pairs", "key"))
-NO_OPTIONS = Options(command="", pairs=(), key="", **UNSET_OPTIONS)
+Options = namedtuple("Options", ("command",) + OPTION_FIELDS + ("pairs", "key", "pool"))
+NO_OPTIONS = Options(command="", pairs=(), key="", pool=(), **UNSET_OPTIONS)
 CommandLine = namedtuple("CommandLine", ("options", "outcome"))
 
 
@@ -129,7 +136,8 @@ def assembled_options(command, option_words, words):
     fields = dict(UNSET_OPTIONS, **{option_field(name): value for name, value in given_options(option_words).items()})
     pairs = words if command == PAIRS_COMMAND else ()
     key = words[0] if command == KEY_COMMAND else ""
-    return Options(command=command, pairs=pairs, key=key, **fields)
+    pool = words if command == POOL_COMMAND else ()
+    return Options(command=command, pairs=pairs, key=key, pool=pool, **fields)
 
 
 def parsed(arguments):
