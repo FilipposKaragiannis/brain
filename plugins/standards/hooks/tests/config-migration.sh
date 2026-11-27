@@ -33,6 +33,7 @@ print(json.dumps(next(step["value"] for step in steps if step["name"] == "doc-in
 old_label=1.4.1
 change_fields=4
 written_key=languages.0.comments.doc_inside
+layout_indent=4
 migrations=.standards/migrations
 
 new_project() {
@@ -77,11 +78,19 @@ installed_with_doc_inside_removed() {
   # installed_with_doc_inside_removed: installs on the current config, then takes the C# doc_inside
   # out again, as in a project whose config predates the key.
   "$init" > /dev/null 2>&1
-  python3 -I -c 'import json
+  python3 -I -c 'import json, sys
 path = ".standards/config.json"
 config = json.load(open(path))
 del config["languages"][0]["comments"]["doc_inside"]
-config["version"] = "'"$old_label"'"
+config["version"] = sys.argv[1]
+open(path, "w").write(json.dumps(config, indent=2) + "\n")' "$old_label"
+}
+with_owner_doc_inside() {
+  # with_owner_doc_inside: gives the C# language a doc_inside of the owner's own, so no step applies.
+  python3 -I -c 'import json
+path = ".standards/config.json"
+config = json.load(open(path))
+config["languages"][0]["comments"]["doc_inside"] = ["interface", "class"]
 open(path, "w").write(json.dumps(config, indent=2) + "\n")'
 }
 
@@ -109,8 +118,7 @@ check "SessionStart_SecondStart_PrintsNothing" [ -z "$second_start" ]
 echo "init: a config with nothing to migrate"
 new_project current
 write_config
-installed_with_doc_inside_removed
-"$init" > /dev/null 2>&1
+with_owner_doc_inside
 cp .standards/config.json "$work/current.before"
 "$init" > "$work/current.init.out" 2>&1
 check "Init_NothingToMigrate_ConfigBytesUnchanged" cmp -s "$work/current.before" .standards/config.json
@@ -157,7 +165,7 @@ JSON
 check "Init_FourSpaceIndentAndUnicode_IsMigrated" value_is "$written_key" "$default_doc_inside"
 check "Init_FourSpaceIndent_KeptAsWritten" python3 -I -c 'import json, sys
 text = open(".standards/config.json", encoding="utf-8").read()
-sys.exit(text != json.dumps(json.loads(text), indent=4, ensure_ascii=False) + "\n")'
+sys.exit(text != json.dumps(json.loads(text), indent=int(sys.argv[1]), ensure_ascii=False) + "\n")' "$layout_indent"
 check "Init_UnicodeText_KeptAsWritten" grep -qF -- '"_readme": "Réglages du projet"' .standards/config.json
 
 [ "$fails" -eq 0 ] && echo "config-migration: ok" || { echo "config-migration: $fails failed"; exit 1; }
