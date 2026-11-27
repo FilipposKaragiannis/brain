@@ -1,0 +1,8 @@
+{
+  "steps": [
+    {"name": "ready-needs", "op": "move", "from": "github.ready_needs", "to": "ready.needs", "reason": "the ready fields apply to every tracker"},
+    {"name": "ready-priority-order", "op": "move", "from": "github.priority_order", "to": "ready.priority_order", "reason": "the priority order applies to every tracker"},
+    {"name": "verify-timeout-deeper", "op": "move", "from": "verify.timeout", "to": "verify.limits.timeout", "reason": "the limits have their own map"},
+    {"name": "retro-schedule-shallower", "op": "move", "from": "jobs.retro.schedule", "to": "retro_schedule", "reason": "the schedule is top-level"}
+  ]
+}

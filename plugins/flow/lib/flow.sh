@@ -85,11 +85,14 @@ gh_blip() { grep -Eqi 'HTTP 5[0-9][0-9]|connection reset|connection refused|erro
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 
 # The install set of plugin <root>: every file whose content init copies into a project, plus
-# init.sh (it shapes the wrappers). Not the manifest: a version bump alone changes no installed
-# file. init stamps its hash; the session-start hook compares.
+# init.sh (it shapes the wrappers) and the config migration's step list and helpers (they shape
+# .flow/config.yaml). Not the manifest: a version bump alone changes no installed file. init
+# stamps its hash; the session-start hook compares.
 flow_install_set() {
-  for f in "$1"/skills/init/scripts/init.sh "$1"/templates/* \
-           "$1"/codex-agents/*.toml; do [ -f "$f" ] && echo "$f"; done | sort
+  for flow_install_set_file in "$1"/skills/init/scripts/init.sh "$1"/skills/init/migrations.json \
+           "$1"/scripts/_config_*.py "$1"/templates/* "$1"/codex-agents/*.toml; do
+    [ -f "$flow_install_set_file" ] && echo "$flow_install_set_file"
+  done | sort
 }
 flow_source_hash() { hash_files $(flow_install_set "$1"); }
 
@@ -298,10 +301,11 @@ trackers_unread() {
 
 # ready_rules: the readiness rules of every tracker, exported comma-separated: READY_NEEDS, the
 # fields an unstarted item must have before it is ready (ready.needs), and READY_PRIORITY_ORDER,
-# the priorities from most to least urgent (ready.priority_order). The deprecated
-# github.ready_needs and github.priority_order stand in for a key the file leaves out (an empty
-# list written there is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it
-# starts quiet). A field no adapter knows is refused, exit 2.
+# the priorities from most to least urgent (ready.priority_order). The old github.ready_needs and
+# github.priority_order, which init moves and whose fallback entries are in
+# skills/init/migrations.json, stand in for a key the file leaves out (an empty list written there
+# is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it starts quiet). A field
+# no adapter knows is refused, exit 2.
 READY_FIELDS="priority size"
 ready_rules() {
   _needs_key=ready.needs; _old=""; _new=""

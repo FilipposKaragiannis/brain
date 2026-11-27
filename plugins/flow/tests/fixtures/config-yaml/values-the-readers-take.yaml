@@ -1,0 +1,17 @@
+base: main
+worktree_create: workspace new "$(dirname "{path}")" --from {base}
+notify:
+  slack_webhook: ""   # Slack incoming webhook URL
+  site: https://example.org/a#b
+jobs:
+  workers: {claude: 1, codex: 2}
+      # a comment indented deeper than any key
+pool:
+  - ../app-wt-1
+  - "../app wt 2"
+ready:
+  needs: [priority]
+
+retro:
+  commit: false
+config_version: 1.40.0

@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "name": "retro-commit",
+      "op": "remove",
+      "key": "retro.commit",
+      "reason": "the retro job commits nothing: its lessons stay on this machine under .flow/"
+    },
+    {
+      "name": "ready-needs",
+      "op": "move",
+      "from": "github.ready_needs",
+      "to": "ready.needs",
+      "reason": "the fields an item needs before it is ready apply to every tracker, not only GitHub",
+      "fallback": {"after": "1.52.0", "files": ["lib/flow.sh"]}
+    },
+    {
+      "name": "ready-priority-order",
+      "op": "move",
+      "from": "github.priority_order",
+      "to": "ready.priority_order",
+      "reason": "the order ready items run in applies to every tracker, not only GitHub",
+      "fallback": {"after": "1.52.0", "files": ["lib/flow.sh"]}
+    },
+    {
+      "name": "jobs-per-host",
+      "op": "spread",
+      "from": "jobs",
+      "keys": ["model", "effort"],
+      "to": ["jobs.claude", "jobs.codex"],
+      "values": {"jobs.codex.model": {"sonnet": "gpt-6.1-terra", "opus": "gpt-6.1-sol", "fable": "gpt-6-astra", "haiku": "gpt-6-luna"}},
+      "reason": "each host has its own model and effort, passed to it as is",
+      "fallback": {"after": "1.52.0", "files": ["lib/host.sh", "jobs/_job.sh"]}
+    }
+  ]
+}

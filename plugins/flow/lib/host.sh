@@ -138,8 +138,9 @@ print(json.dumps({"item": item, "step": step, "host": host, "model": model, "eff
 
 # The jobs' model and effort, per host, from .flow/config.yaml: jobs.<host>.model and
 # jobs.<host>.effort, passed to the host as is; empty is the host's own default (no flag). A
-# config with no jobs.<host> map falls back to jobs.model and jobs.effort (deprecated in 1.20.0,
-# read for one release), whose roster names host_codex_model maps for Codex.
+# config with no jobs.<host> map falls back to jobs.model and jobs.effort, whose roster names
+# host_codex_model maps for Codex: init moves them, and the step's fallback entry in
+# skills/init/migrations.json says how long they are read.
 host_efforts() { case "$1" in claude) printf 'low medium high xhigh max' ;; codex) printf 'low medium high xhigh' ;; esac; }
 host_efforts_said() { case "$1" in claude) printf 'low, medium, high, xhigh or max' ;; codex) printf 'low, medium, high or xhigh' ;; esac; }
 host_jobs_has_pair() { yaml_keys "$(config_file)" jobs | grep -qx "$1"; }

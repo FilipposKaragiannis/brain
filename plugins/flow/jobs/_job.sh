@@ -113,9 +113,10 @@ job_lock() {
 job_end() { rm -rf "$d"; [ -z "${job_shared:-}" ] || rm -rf "$job_shared"; job_record "$1"; }
 # job_start <host> [model]: checks the host and jobs.host (a bad one ends the run here, exit 2),
 # then the pause, the lock and the log. With model, the job starts host sessions: their model and
-# effort are read once, from jobs.<host>, or from the deprecated jobs.model and jobs.effort with
-# one warning; an effort the host does not take ends the run, exit 2, recorded in runs.jsonl and
-# the job log so status shows it. Jobs without model never read the pair here: next's unattended
+# effort are read once, from jobs.<host>, or with one warning from the old jobs.model and
+# jobs.effort, which init moves (their fallback entry is in skills/init/migrations.json); an
+# effort the host does not take ends the run, exit 2, recorded in runs.jsonl and the job log so
+# status shows it. Jobs without model never read the pair here: next's unattended
 # loop reads it for the steps with no agent and stops on a bad effort before it claims an item,
 # and health hands it to the run it resumes.
 # --model and --effort win over the pair; an --effort the host does not take ends any job the same way,

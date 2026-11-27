@@ -2,8 +2,10 @@
 # SessionStart hook: a few milliseconds to say whether the project's installed copies of the
 # standards are behind this plugin. Compares the install set's hash with the first line of
 # .standards/stamp (written by init). Silent when the project does not use the plugin, when the
-# stamp matches, and never looks at hand edits (that is `init --check`). Prints on stdout, which
-# the host adds to the session's context.
+# stamp matches, and never looks at hand edits (that is `init --check`). Before the stamp
+# comparison it prints a config migration report init left unseen, once (config_migration.sh):
+# the init that wrote it refreshed the stamp, so the comparison exits. Prints on stdout, which the
+# host adds to the session's context.
 . "$(dirname "$0")/lib.sh"
 use_working_git
 read_payload >/dev/null
@@ -16,6 +18,8 @@ if [ ! -f "$stamp" ]; then
   echo "standards: note for the owner, not a task: this project has no install stamp (installed before standards 0.2.0). /standards:init writes .standards/stamp on its next run."
   exit 0
 fi
+. "$(dirname "$0")/config_migration.sh"
+config_migration_report_once standards "$root/.standards"
 [ "$(stamp_source "$stamp")" = "$(standards_source_hash "$plugin")" ] && exit 0
 version="$(json_get "$(cat "$plugin/.claude-plugin/plugin.json")" "version")"
 report="$("$init" --root "$root" --check 2>&1)"

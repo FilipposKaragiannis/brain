@@ -24,11 +24,14 @@ repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 
 # The install set of plugin <root>: every file whose content init copies into a project, plus
 # init's scripts (they shape the rules files and the git wiring), relaxed_rules.py, appendices.py,
-# the rule index and the appendix list (they shape the rules files) and the manifest (the version
-# in the block header). init stamps its hash; the session-start hook compares.
+# the rule index and the appendix list (they shape the rules files), the config migration's step
+# list and helpers (they shape .standards/config.json) and the manifest (the version in the block
+# header). init stamps its hash; the session-start hook compares.
 standards_install_set() {
   for f in "$1"/.claude-plugin/plugin.json "$1"/skills/init/scripts/*.sh \
            "$1"/skills/init/scripts/relaxed_rules.py "$1"/skills/init/scripts/appendices.py \
+           "$1"/skills/init/migrations.json "$1"/skills/init/scripts/config_migration.py \
+           "$1"/skills/init/scripts/config_migration_steps.py \
            "$1"/rules/*.md "$1"/rules/*.json "$1"/rules/common/*.md "$1"/codex-agents/*.toml \
            "$1"/hooks/*.sh "$1"/hooks/git/* "$1"/templates/evals/*; do [ -f "$f" ] && echo "$f"; done | sort
 }

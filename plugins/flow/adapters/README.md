@@ -135,7 +135,8 @@ Readiness is tracker-neutral: `ready.needs` lists the fields, of `priority` and 
 unstarted item must have before it is ready, and `ready.priority_order` ranks the priority names.
 `list` and `read` call `ready_rules` from `lib/flow.sh` before they build items; it exports them
 comma-separated as `READY_NEEDS` and `READY_PRIORITY_ORDER` (the deprecated `github.ready_needs`
-and `github.priority_order` stand in for an unset key) and refuses a field it does not know, exit
+and `github.priority_order`, which init moves to `ready.*`, stand in for an unset key for this
+release only) and refuses a field it does not know, exit
 2. The adapter fills `rank` and `needs` from those two and maps the fields to its own:
 
 | Adapter | priority | size | state |
@@ -145,8 +146,9 @@ and `github.priority_order` stand in for an unset key) and refuses a field it do
 | `jira` | Jira's own priority field | the field `jira.fields.size` (an id or a name), else the `size:<S>` label | the same labels as `github`, and the whole state as JSON in the issue property `flow-state`; a label wins over the property on read |
 
 Until `ready_rules` and `trackers` land in `lib/flow.sh`, the GitHub adapter reads only
-`github.ready_needs` and `github.priority_order`, the local adapter fills no `rank` or `needs`,
-and the flow reads every adapter named under `adapters.*`. The contract suite follows
+`github.ready_needs` and `github.priority_order` (which a migrated config no longer holds), the
+local adapter fills no `rank` or `needs`, and the flow reads every adapter named under
+`adapters.*`. The contract suite follows
 `lib/flow.sh`: with `ready_rules` there, `rank` and `needs` are required and every adapter must
 pass the readiness checks; without it, an adapter whose items carry no `needs` skips them.
 

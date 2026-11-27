@@ -1,0 +1,4 @@
+base: main
+ready:
+  needs: [priority]
+config_version: 9.9.9  # the flow version that last migrated this file; init keeps it

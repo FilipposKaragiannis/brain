@@ -1,0 +1,193 @@
+#!/bin/sh
+# config-migration.sh: init brings an existing .standards/config.json to the plugin's migration
+# steps, on a copy of the plugin in throwaway repos: comments.doc_inside written where a language
+# has doc comments and no such key, left alone where it is an empty list or the language has no
+# comments, the report's change lines, the backup named after the version found, the version
+# label, a config with nothing to migrate left byte for byte, --check as drift that changes
+# nothing, a second run, git status in a project that commits .standards/, the file's indent and
+# non-ASCII text, the session-start hook printing the report once, and a config another writer
+# changes while init migrates it. Takes no argument. Exit 0 when every check passes, 1 on any
+# failure. tools/test.sh runs it.
+set -u
+here="$(cd "$(dirname "$0")" && pwd)"
+hooks="$here/.."
+work="$(mktemp -d)"
+. "$hooks/../../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$hooks/.."
+trap 'sandbox_close $?' EXIT
+mkdir -p "$work/offline"
+for tool in curl wget gh osascript notify-send claude codex; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
+  chmod +x "$work/offline/$tool"
+done
+PATH="$work/offline:$PATH"; export PATH
+fails=0
+pass() { echo "  ok   $1"; }
+fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
+check() { check_name="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$check_name"; else fail "$check_name"; fi; }
+
+plugin_copy="$work/plugin"; cp -R "$hooks/.." "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
+init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
+copy_version="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$plugin_copy/.claude-plugin/plugin.json")"
+default_doc_inside="$(python3 -I -c 'import json, sys
+steps = json.load(open(sys.argv[1]))["steps"]
+print(json.dumps(next(step["value"] for step in steps if step["name"] == "doc-inside-default")))' "$plugin_copy/skills/init/migrations.json")"
+old_label=1.4.1
+change_fields=4
+drift_exit=1
+written_key=languages.0.comments.doc_inside
+layout_indent=4
+migrations=.standards/migrations
+
+new_project() {
+  # new_project <name>: an empty git repository at $work/<name>, entered.
+  mkdir -p "$work/$1" && cd "$work/$1" && git init -q -b main && git config user.email t@t && git config user.name t
+}
+write_config() {
+  # write_config: a config at the old label with a C# language that has doc comments and no
+  # doc_inside, a Go one whose doc_inside is an empty list and a shell one with no comments.
+  mkdir -p .standards && cat > .standards/config.json <<JSON
+{
+  "version": "$old_label",
+  "languages": [
+    { "name": "csharp", "extensions": [".cs"], "format": [], "comments": { "line": "//", "doc": "///", "public": "public" } },
+    { "name": "go", "extensions": [".go"], "format": [], "comments": { "line": "//", "doc": "//", "doc_inside": [] } },
+    { "name": "sh", "extensions": [".sh"], "format": [] }
+  ],
+  "build": "true",
+  "test": "true"
+}
+JSON
+}
+config_value() {
+  # config_value <dotted path>: the JSON of the config's value there, list indexes as numbers, or "absent".
+  python3 -I -c 'import json, sys
+node = json.load(open(".standards/config.json"))
+for part in sys.argv[1].split("."):
+    found = isinstance(node, list) and part.isdigit() and int(part) < len(node)
+    found = found or (isinstance(node, dict) and part in node)
+    if not found:
+        print("absent"); sys.exit()
+    node = node[int(part)] if isinstance(node, list) else node[part]
+print(json.dumps(node))' "$1"
+}
+value_is() { [ "$(config_value "$1")" = "$2" ]; }
+# change_field_count <new key>: how many tab-split fields the report line naming the new key has.
+change_field_count() { awk -F'\t' -v key="$1" 'NF > 1 && $2 == key { print NF }' "$migrations/report.txt"; }
+# tree_digest: a checksum line per file of the project outside .git, sorted.
+tree_digest() { find . -path ./.git -prune -o -type f -exec cksum {} + | sort; }
+same_tree() { tree_digest | cmp -s "$1" -; }
+installed_with_doc_inside_removed() {
+  # installed_with_doc_inside_removed: installs on the current config, then takes the C# doc_inside
+  # out again, as in a project whose config predates the key.
+  "$init" > /dev/null 2>&1
+  python3 -I -c 'import json, sys
+path = ".standards/config.json"
+config = json.load(open(path))
+del config["languages"][0]["comments"]["doc_inside"]
+config["version"] = sys.argv[1]
+open(path, "w").write(json.dumps(config, indent=2) + "\n")' "$old_label"
+}
+with_owner_doc_inside() {
+  # with_owner_doc_inside: gives the C# language a doc_inside of the owner's own, so no step applies.
+  python3 -I -c 'import json
+path = ".standards/config.json"
+config = json.load(open(path))
+config["languages"][0]["comments"]["doc_inside"] = ["interface", "class"]
+open(path, "w").write(json.dumps(config, indent=2) + "\n")'
+}
+
+echo "init: a config whose C# language has no doc_inside"
+new_project migrated
+write_config
+cp .standards/config.json "$work/migrated.before"
+"$init" > "$work/migrated.init.out" 2>&1
+check "Init_LanguageWithDocAndNoDocInside_WritesTheDefault: the C# language gets the default, because the doc-comment rule needs the key to know where docs go" value_is "$written_key" "$default_doc_inside"
+check "Init_DocInsideEmptyList_LeavesItAlone: an empty list stays, because the owner chose it" value_is languages.1.comments.doc_inside "[]"
+check "Init_LanguageWithoutComments_GetsNoKey: shell gets no comments map, because a language with no doc comments has nothing to set" value_is languages.2.comments absent
+check "Init_DocInsideWritten_ReportLineHasFourTabSeparatedFields: the line splits into old key, new key, value and reason, because the hook and the owner read it field by field" [ "$(change_field_count "$written_key")" = "$change_fields" ]
+check "Init_DocInsideWritten_BackupNamedAfterTheVersionFound: the backup carries the old version, because the owner restores by the version they had" cmp -s "$work/migrated.before" "$migrations/config.json.$old_label.bak"
+check "Init_DocInsideWritten_VersionBecomesTheManifestVersion: the label is the plugin version that migrated, because the next backup is named after it" value_is version "\"$copy_version\""
+tree_digest > "$work/migrated.first"
+"$init" > "$work/migrated.second.out" 2>&1
+check "Init_RunTwice_SecondRunChangesNothing: a second init changes no file, because init runs again on every update" same_tree "$work/migrated.first"
+
+echo "session start after a migrating init"
+first_start="$(echo '{}' | "$start" 2>&1)"
+second_start="$(echo '{}' | "$start" 2>&1)"
+check "SessionStart_AfterAMigratingInit_PrintsTheChange: the first session shows the change, because the owner must learn their config changed" sh -c 'printf "%s" "$1" | grep -qF -- "$2"' _ "$first_start" "$written_key"
+check "SessionStart_SecondStart_PrintsNothing: the report shows once, because the same lines every session would be noise" [ -z "$second_start" ]
+
+echo "init: a config with nothing to migrate"
+new_project current
+write_config
+with_owner_doc_inside
+cp .standards/config.json "$work/current.before"
+"$init" > "$work/current.init.out" 2>&1
+check "Init_NothingToMigrate_ConfigBytesUnchanged: an up-to-date config stays byte for byte, because a rewrite would show as a change the owner did not make" cmp -s "$work/current.before" .standards/config.json
+
+echo "init --check: a step is pending"
+new_project pending
+write_config
+installed_with_doc_inside_removed
+tree_digest > "$work/pending.before"
+"$init" --check > "$work/pending.check.out" 2>&1; pending_exit=$?
+check "InitCheck_PendingStep_NamesItAsDrift: --check lists the pending step, because the owner sees what init would change before it does" grep -qF -- "drift: .standards/config.json: pending migration: -	$written_key" "$work/pending.check.out"
+check "InitCheck_PendingStep_ChangesNothing: no file changes, because --check only reports" same_tree "$work/pending.before"
+check "InitCheck_PendingStep_ExitsOne: a pending step is drift, because a caller reads the exit code, not the text" [ "$pending_exit" = "$drift_exit" ]
+
+echo "init: a project that commits .standards/"
+new_project committed
+write_config
+installed_with_doc_inside_removed
+git add -A && git commit -qm "chore: install the standards [config]"
+"$init" > "$work/committed.init.out" 2>&1
+check "Init_CommittedStandardsFolder_IsMigrated: a committed config still migrates, because many projects commit .standards/" value_is "$written_key" "$default_doc_inside"
+check "Init_CommittedStandardsFolder_GitStatusShowsOnlyTheConfig: only the config shows as changed, because backups and the report must not end up in a commit" [ "$(git status --porcelain)" = " M .standards/config.json" ]
+
+echo "init: a config indented by four spaces, with non-ASCII text"
+new_project layout
+mkdir -p .standards && cat > .standards/config.json <<JSON
+{
+    "version": "$old_label",
+    "_readme": "Réglages du projet",
+    "languages": [
+        {
+            "name": "csharp",
+            "extensions": [".cs"],
+            "format": [],
+            "comments": {
+                "doc": "///"
+            }
+        }
+    ],
+    "build": "true",
+    "test": "true"
+}
+JSON
+"$init" > "$work/layout.init.out" 2>&1
+check "Init_FourSpaceIndentAndUnicode_IsMigrated: the file migrates, because the layout checks below mean nothing on an untouched file" value_is "$written_key" "$default_doc_inside"
+check "Init_FourSpaceIndent_KeptAsWritten: the four-space indent stays, because a reindent shows the whole file as changed" python3 -I -c 'import json, sys
+text = open(".standards/config.json", encoding="utf-8").read()
+sys.exit(text != json.dumps(json.loads(text), indent=int(sys.argv[1]), ensure_ascii=False) + "\n")' "$layout_indent"
+check "Init_UnicodeText_KeptAsWritten: non-ASCII text stays readable, because escaped text is not what the owner wrote" grep -qF -- '"_readme": "Réglages du projet"' .standards/config.json
+
+echo "init: a config that changes while init migrates it"
+helper="$plugin_copy/skills/init/scripts/config_migration.py"
+cp "$helper" "$work/shipped-helper.py"
+cp "$helper" "$plugin_copy/skills/init/scripts/config_migration_shipped.py"
+cat > "$helper" <<EOF_CHANGING_HELPER
+import subprocess, sys
+code = subprocess.run([sys.executable, "-I", "$plugin_copy/skills/init/scripts/config_migration_shipped.py", *sys.argv[1:]]).returncode
+if sys.argv[1] == "apply":
+    open(sys.argv[3], "a").write(" ")
+sys.exit(code)
+EOF_CHANGING_HELPER
+new_project changed-meanwhile
+write_config
+{ cat .standards/config.json; printf ' '; } > "$work/changed-meanwhile.expected"
+"$init" > "$work/changed-meanwhile.init.out" 2>&1
+cp "$work/shipped-helper.py" "$helper"
+check "Init_ConfigChangedWhileMigrating_KeepsTheOtherWritersChange: the config holds what the other writer wrote, because a migration from a stale read would drop it" cmp -s "$work/changed-meanwhile.expected" .standards/config.json
+check "Init_ConfigChangedWhileMigrating_WritesNoBackupOrReport: no migrations folder appears, because a backup and report lines for a refused migration would claim a change that never happened" [ ! -e "$migrations" ]
+
+[ "$fails" -eq 0 ] && echo "config-migration: ok" || { echo "config-migration: $fails failed"; exit 1; }

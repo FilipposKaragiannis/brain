@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "name": "colour-default",
+      "op": "add_in_each",
+      "list": "languages",
+      "when": "comments.doc",
+      "key": "colour",
+      "value": "blue",
+      "reason": "every language with doc comments gets a colour"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+base: main
+ready:
+  needs: [priority]
+config_version: 9.9.9  # the owner's note on the label

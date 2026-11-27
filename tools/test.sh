@@ -67,6 +67,7 @@ for part in $parts; do
       clean plugins/standards/hooks/tests/files-placeholder.sh || status=1
       clean plugins/standards/hooks/tests/testing-guide.sh || status=1
       clean plugins/standards/hooks/tests/appendices.sh || status=1
+      clean plugins/standards/hooks/tests/config-migration.sh || status=1
       ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
@@ -80,6 +81,7 @@ for part in $parts; do
       clean sh tools/tests/named-parts.sh || status=1
       clean sh tools/tests/build-workflow.sh || status=1
       clean sh tools/tests/fragments-needed.sh || status=1
+      clean sh tools/tests/migration-steps.sh || status=1
       clean tools/tests/suite-parity.sh || status=1
       ;;
     console-app) console_app || status=1 ;;

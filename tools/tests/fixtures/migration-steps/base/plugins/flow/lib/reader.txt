@@ -1,0 +1,1 @@
+reads old.mode while new.mode is unset

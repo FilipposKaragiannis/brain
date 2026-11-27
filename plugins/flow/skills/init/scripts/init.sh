@@ -1,10 +1,11 @@
 #!/bin/sh
 # Install or refresh the flow plugin in a repository.
 #   init.sh [--root <repo>] [--check] [--force] [--user-codex] [--source-hash]
-# Writes: .flow/config.yaml (once), .flow/plugin.sh (finds the installed plugin when a wrapper
-# runs), .flow/notify.sh, .flow/build-passed.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and
-# .flow/hooks/*.sh (wrappers, always replaced; they hold no path or version, so a plugin update
-# leaves them as they are), the
+# Writes: .flow/config.yaml (once; later runs first migrate it to the plugin's settings, with a
+# backup and a report in .flow/migrations/, see lib/config_migration.sh), .flow/plugin.sh (finds
+# the installed plugin when a wrapper runs), .flow/notify.sh, .flow/build-passed.sh,
+# .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers, always replaced; they
+# hold no path or version, so a plugin update leaves them as they are), the
 # Codex rules/flow.rules and agents/<flow agents>.toml (replaced, unless edited by hand since: then
 # refused, exit 1, --force replaces), the Claude worktree hook entries in
 # .claude/settings.local.json (merged, every other key kept), a marked block in .git/info/exclude
@@ -13,8 +14,9 @@
 # commits or edits the index.
 # The Codex files go to the repo's .codex/ when it has one, else to the user's ~/.codex
 # ($CODEX_HOME); --user-codex picks ~/.codex, and a later run keeps the place the stamp records.
-# --check reports drift and hand edits and writes nothing (exit 1 on either). --source-hash
-# prints the hash of the plugin's install set and exits (the session-start hook).
+# --check reports drift (a pending migration step too) and hand edits and writes nothing (exit 1
+# on either). --source-hash prints the hash of the plugin's install set and exits (the
+# session-start hook).
 set -u
 plugin="$(cd "$(dirname "$0")/../../.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -36,6 +38,7 @@ FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/base.sh"
 . "$plugin/lib/branch.sh"
 . "$plugin/lib/worktree_command.sh"
+. "$plugin/lib/config_migration.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -118,6 +121,9 @@ write_stamp() {
   if [ ! -f "$shared_stamp" ] || ! cmp -s "$scratch/shared-stamp" "$shared_stamp"; then cp "$scratch/shared-stamp" "$shared_stamp" && note "$shared_stamp"; fi
 }
 
+# Before any copy, so every section below reads the migrated config.
+config_migrate flow "$plugin/scripts/_config_migration.py" "$plugin/skills/init/migrations.json" .flow/config.yaml
+
 # 1. Project config, written once.
 if [ ! -f .flow/config.yaml ]; then
   if [ "$check" -eq 1 ]; then drifted ".flow/config.yaml is missing"; else
@@ -134,6 +140,7 @@ if [ ! -f .flow/config.yaml ]; then
     {
       echo "# flow configuration. Read by every flow script on both hosts. Keep it flat: key: value,"
       echo "# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings."
+      echo "config_version: $version  # the flow version that last migrated this file; init keeps it"
       echo "adapters:"
       if [ -n "$repo" ]; then echo "  default: github"; echo "  # bug: local    # keep bugs out of GitHub"; else echo "  default: local"; fi
       echo "# trackers: [github, local]   # the trackers board, next and health read; unset, every one above and local"
@@ -402,8 +409,7 @@ EOF_TRACKERS
   while IFS= read -r branch_problem; do [ -z "$branch_problem" ] || gap ".flow/config.yaml: $branch_problem"; done <<EOF_BRANCH
 $(branch_problems)
 EOF_BRANCH
-  # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
-  # the old jobs.model and jobs.effort still work for one release, with a note.
+  # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
@@ -415,9 +421,7 @@ EOF_CHECKS
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_SCOPES
 $(scope_problems)
 EOF_SCOPES
-  [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
   missing_base_notes | sed 's/^/init: note: /'
-  host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
 # A flow hook entry an older init printed for the shared settings is the owner's to remove: the
 # file is committed, so init never edits it.

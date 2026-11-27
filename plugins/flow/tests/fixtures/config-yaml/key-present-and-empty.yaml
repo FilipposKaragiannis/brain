@@ -1,0 +1,6 @@
+base: main
+ready:
+  needs: []
+retro:
+  commit: false
+config_version: 1.40.0

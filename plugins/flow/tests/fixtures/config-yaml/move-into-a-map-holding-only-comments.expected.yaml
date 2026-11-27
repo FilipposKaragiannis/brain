@@ -1,0 +1,8 @@
+config_version: 9.9.9
+ready:
+  # needs: [priority, size]   # a commented example is not a key
+  # The priority is a label.
+  needs: [priority]
+# pick:
+github:
+  repo: acme/widgets

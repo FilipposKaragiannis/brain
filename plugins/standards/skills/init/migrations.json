@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "name": "doc-inside-default",
+      "op": "add_in_each",
+      "list": "languages",
+      "when": "comments.doc",
+      "key": "comments.doc_inside",
+      "value": ["interface", "enum"],
+      "reason": "the type kinds whose members may carry a doc comment, written as the default the hook already assumed"
+    }
+  ]
+}
