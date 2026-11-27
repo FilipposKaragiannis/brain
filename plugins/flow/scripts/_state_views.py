@@ -16,6 +16,7 @@ so a run or gate from before the records still shows.
 """
 import json
 from collections import namedtuple
+from collections.abc import Mapping
 
 import _state_join as join
 import _state_schema as schema
@@ -44,7 +45,7 @@ def view_paths(flow_home, item):
                      "%s/%s.json" % (view_folder(flow_home, join.GATE_ROWS), slug))
 
 
-def unrecorded_row(view):
+def unrecorded_row(view: Mapping) -> Mapping:
     return view if isinstance(view.get(schema.RECORD_ITEM_FIELD), str) else join.NO_ROW
 
 

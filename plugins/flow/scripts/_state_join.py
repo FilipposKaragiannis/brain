@@ -51,12 +51,12 @@ def record_state(record):
     return {key: record_value(record, state_key) for key, state_key in schema.STATE_KEYS.items()}
 
 
-def unrecorded_state(item):
+def unrecorded_state(item: dict) -> dict:
     given = item.get(STATE_FIELD)
     return given if isinstance(given, dict) else empty_state()
 
 
-def state_source(record):
+def state_source(record: Mapping) -> str:
     return FROM_RECORD if record is not NO_RECORD else FROM_TRACKER
 
 
