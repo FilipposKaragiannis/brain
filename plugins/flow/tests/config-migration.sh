@@ -7,7 +7,8 @@
 # label a fresh install writes, the session-start hook printing the report once, from the main
 # worktree and a linked one, the two ready keys moving under ready as ready_rules reads them, and
 # jobs.model and jobs.effort spread into each host's map as host_jobs_pair reads them, each with
-# the fallback that still reads them unmoved. Takes no argument. Exit 0 when every check passes, 1
+# the fallback that still reads them unmoved, the comments around moved keys, an old label with
+# nothing pending, --check on a refused file, and a second migration after a plugin update. Takes no argument. Exit 0 when every check passes, 1
 # on any failure.
 # shellcheck disable=SC2154 # _base_fixture.sh and _init_fixture.sh set plugin, work, here, plugin_copy, init and fails
 # shellcheck disable=SC2034 # the check conditions read these names, through eval in _base_fixture.sh's check
@@ -213,6 +214,8 @@ check "Init_NoHostMaps_OldModelGoes" '! project_keys jobs | grep -qx model'
 check "Init_NoHostMaps_OldEffortGoes" '! project_keys jobs | grep -qx effort'
 check "Init_NoHostMaps_ReportHasALineForClaudesModel" '[ -n "$(change_line_to jobs.model jobs.claude.model)" ]'
 check "Init_NoHostMaps_ReportHasALineForCodexsModel" '[ -n "$(change_line_to jobs.model jobs.codex.model)" ]'
+check "Init_NoHostMaps_ReportHasALineForClaudesEffort: the old effort lands in claude's map, because the report lists every change init made" '[ -n "$(change_line_to jobs.effort jobs.claude.effort)" ]'
+check "Init_NoHostMaps_ReportHasALineForCodexsEffort: the old effort lands in codex's map, because the report lists every change init made" '[ -n "$(change_line_to jobs.effort jobs.codex.effort)" ]'
 for roster_name in Sonnet Opus Fable Haiku; do
   roster_model="$(printf '%s' "$roster_name" | tr '[:upper:]' '[:lower:]')"
   new_project "jobs-$roster_model" "${config_body}jobs:\n  model: $roster_model\n"
@@ -253,6 +256,47 @@ check "Init_OldModelWithTrailingComment_CommentOnEveryTarget" '[ "$(grep -c "^  
 new_project jobs-codex-max "${config_body}jobs:\n  host: codex\n  model: $model_written\n  effort: max\n"
 run_init > "$work/jobs-codex-max.out" 2>&1
 check "Init_OldEffortMaxOnACodexProject_GapNamesTheMigratedLine" 'grep -qF ".flow/config.yaml:$(project_line jobs.codex.effort): jobs.codex.effort is max;" "$work/jobs-codex-max.out"'
+
+echo "comments around the keys that move"
+new_project moved-comments "${config_body}# Above github.\ngithub:\n  # Inside github, above the repo.\n  repo: acme/widgets\n  # Above ready_needs.\n  ready_needs: [priority, size]\n# Above jobs.\njobs:\n  # Inside jobs.\n  model: $model_written\n# At the end.\n"
+grep '^[[:space:]]*#' .flow/config.yaml > "$work/moved-comments.before"
+run_init >/dev/null 2>&1
+grep '^[[:space:]]*#' .flow/config.yaml > "$work/moved-comments.after"
+check "Init_CommentsAroundMovedKeys_IsMigrated: the ready key moved, because the comment check below means nothing on an untouched file" '[ -n "$(change_line github.ready_needs)" ]'
+check "Init_CommentsAroundMovedKeys_EveryCommentLineSurvives: no comment line around the moved and spread keys is lost, because the owner's notes are theirs" '! grep -vxFf "$work/moved-comments.after" "$work/moved-comments.before"'
+
+echo "a labelled config with nothing pending"
+new_project nothing-pending "config_version: $old_label\n${config_body}"
+cp .flow/config.yaml "$work/nothing-pending.before"
+run_init >/dev/null 2>&1
+check "Init_OldLabelNothingPending_LeavesTheBytes: an old label with no pending step stays as written, because init rewrites the label only with a change" 'cmp -s "$work/nothing-pending.before" .flow/config.yaml'
+check "Init_OldLabelNothingPending_WritesNoMigrationsFolder: no backup or report appears, because there was no change to record" '[ ! -e .flow/migrations ]'
+run_init --check > "$work/nothing-pending.check" 2>&1
+check "InitCheck_NothingPending_ListsNoPendingMigration: a config with nothing to migrate shows no migration drift, because drift means work init would do" '! grep -qF "pending migration" "$work/nothing-pending.check"'
+
+echo "--check on a refused config"
+new_project check-tabbed "${config_body}retro:\n\tcommit: false\n"
+tree_digest > "$work/check-tabbed.tree.before"
+run_init --check >/dev/null 2>&1
+check "InitCheck_RefusedConfig_LeavesTheTreeUnchanged: a file outside the subset changes nothing under --check, because --check never writes" '[ "$(tree_digest)" = "$(cat "$work/check-tabbed.tree.before")" ]'
+
+echo "a second migration after a plugin update"
+manifest="$plugin_copy/.claude-plugin/plugin.json"
+cp "$manifest" "$work/manifest.shipped"
+updated_version=99.0.0
+new_project second-migration "${config_body}retro:\n  commit: false\n"
+run_init >/dev/null 2>&1
+run_start >/dev/null 2>&1
+sed "s/\"version\": \"$copy_version\"/\"version\": \"$updated_version\"/" "$work/manifest.shipped" > "$manifest"
+printf 'github:\n  ready_needs: [priority]\n' >> .flow/config.yaml
+cp .flow/config.yaml "$work/second-migration.before"
+run_init >/dev/null 2>&1
+run_start > "$work/second-migration.start" 2>&1
+cp "$work/manifest.shipped" "$manifest"
+check "Init_SecondMigration_BackupNamedAfterTheLabelTheFirstWrote: the backup carries the version migrated from, because the owner restores by the version they had" 'cmp -s "$work/second-migration.before" ".flow/migrations/config.yaml.$copy_version.bak"'
+check "Init_SecondMigration_LabelBecomesTheUpdatedVersion: the label moves to the updated plugin's version, because the next backup is named after it" '[ "$(project_cfg config_version)" = "$updated_version" ]'
+check "SessionStart_AfterASecondMigration_PrintsTheNewChange: the second report prints, because each new report is shown once" 'grep -qF -- "$(change_line github.ready_needs)" "$work/second-migration.start"'
+check "SessionStart_AfterASecondMigration_LeavesOutTheEarlierChange: the first report is not shown again, because it was printed already" '! grep -qF -- "$(change_line retro.commit)" "$work/second-migration.start"'
 
 [ "$fails" -eq 0 ] && { echo "config-migration: ok"; exit 0; }
 echo "config-migration: $fails failed"; exit 1

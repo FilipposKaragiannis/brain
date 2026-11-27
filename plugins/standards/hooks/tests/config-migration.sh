@@ -32,6 +32,7 @@ steps = json.load(open(sys.argv[1]))["steps"]
 print(json.dumps(next(step["value"] for step in steps if step["name"] == "doc-inside-default")))' "$plugin_copy/skills/init/migrations.json")"
 old_label=1.4.1
 change_fields=4
+drift_exit=1
 written_key=languages.0.comments.doc_inside
 layout_indent=4
 migrations=.standards/migrations
@@ -128,9 +129,10 @@ new_project pending
 write_config
 installed_with_doc_inside_removed
 tree_digest > "$work/pending.before"
-"$init" --check > "$work/pending.check.out" 2>&1
+"$init" --check > "$work/pending.check.out" 2>&1; pending_exit=$?
 check "InitCheck_PendingStep_NamesItAsDrift" grep -qF -- "drift: .standards/config.json: pending migration: -	$written_key" "$work/pending.check.out"
 check "InitCheck_PendingStep_ChangesNothing" same_tree "$work/pending.before"
+check "InitCheck_PendingStep_ExitsOne: a pending step is drift, because a caller reads the exit code, not the text" [ "$pending_exit" = "$drift_exit" ]
 
 echo "init: a project that commits .standards/"
 new_project committed
